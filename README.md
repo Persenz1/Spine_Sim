@@ -51,6 +51,7 @@ spine-terrain delete-cache terrain_library <recipe_id> <region_id>
 spine-terrain rebuild-region terrain_library <recipe_id> <region_id>
 spine-terrain benchmark --output results/m1_validation/benchmark.json
 spine-terrain generate-suite results/m1_gpu_suite/terrain_library examples/m1_gpu_terrain_suite.json
+spine-terrain plot-region results/m1_gpu_suite/terrain_library <recipe_id> <region_id> output --overview-size-mm 10 --sphere-radius-um 100
 ```
 
 `run-case` 默认运行配置中的第一个 case，也可用 `--case-id` 精确选择。`resume` 跳过带有合法 `COMPLETE` 标记的 case；`retry-failed` 只选择已有 `execution_error` 摘要的 case。每个 case 独立执行，单个异常不会中断其他 case。
@@ -80,4 +81,5 @@ python -m unittest discover -s tests -v
 M0 的验收证据和风险覆盖见 [M0 测试报告](docs/M0_TEST_REPORT.md)。M1 的数据
 字段、缓存规则和下游接口见 [M1 数据字典](docs/M1_DATA_DICTIONARY.md)、
 [本地库说明](docs/M1_TERRAIN_LIBRARY.md) 和
-[M1→M2 交接](docs/M1_to_M2_handoff.md)。
+[M1→M2 交接](docs/M1_to_M2_handoff.md)；轻量预览命令见
+[M1 地形绘图](docs/M1_TERRAIN_PLOTTING.md)。

@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "spine-sim"
-version = "0.2.0"
+version = "0.2.1"
 description = "M0 foundation and M1 terrain geometry for the spine coupling simulator"
 requires-python = ">=3.11"
 dependencies = ["numpy>=1.26"]
@@ -13,6 +13,7 @@ dependencies = ["numpy>=1.26"]
 parquet = ["pyarrow>=15"]
 test = ["pytest>=8"]
 gpu-cuda13 = ["cupy-cuda13x[ctk]>=14.1,<15"]
+plot = ["matplotlib>=3.9,<4"]
 
 [project.scripts]
 spine-sim = "spine_sim.cli:main"

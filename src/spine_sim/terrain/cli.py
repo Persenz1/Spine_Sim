@@ -19,6 +19,7 @@ from .models import (
     TerrainRecipe,
     compute_campaign_region,
 )
+from .plotting import render_terrain_views
 from .suite import generate_terrain_suite, load_suite
 
 
@@ -86,6 +87,20 @@ def build_parser() -> argparse.ArgumentParser:
     suite.add_argument("--output", type=Path)
     suite.add_argument("--tile-rows", type=int, default=64)
     suite.add_argument("--overwrite", action="store_true")
+
+    plot = sub.add_parser("plot-region")
+    plot.add_argument("library", type=Path)
+    plot.add_argument("terrain_recipe_id")
+    plot.add_argument("region_id")
+    plot.add_argument("output", type=Path)
+    plot.add_argument("--center-x-mm", type=float)
+    plot.add_argument("--center-y-mm", type=float)
+    plot.add_argument("--overview-size-mm", type=float, default=10.0)
+    plot.add_argument("--sphere-radius-um", type=float, default=100.0)
+    plot.add_argument("--overview-max-points", type=int, default=1201)
+    plot.add_argument("--surface-max-points", type=int, default=181)
+    plot.add_argument("--dpi", type=int, default=180)
+    plot.add_argument("--prefix", default="terrain")
     return parser
 
 
@@ -224,6 +239,25 @@ def main(argv: Sequence[str] | None = None) -> int:
         )
         if args.output:
             atomic_write_json(args.output, result)
+    elif args.command == "plot-region":
+        result = render_terrain_views(
+            args.library,
+            args.terrain_recipe_id,
+            args.region_id,
+            args.output,
+            center_x_m=(
+                None if args.center_x_mm is None else args.center_x_mm * 1e-3
+            ),
+            center_y_m=(
+                None if args.center_y_mm is None else args.center_y_mm * 1e-3
+            ),
+            overview_size_m=args.overview_size_mm * 1e-3,
+            sphere_radius_m=args.sphere_radius_um * 1e-6,
+            overview_maximum_axis_points=args.overview_max_points,
+            surface_maximum_axis_points=args.surface_max_points,
+            dpi=args.dpi,
+            prefix=args.prefix,
+        )
     else:
         raise AssertionError(args.command)
 
