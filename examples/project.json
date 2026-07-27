@@ -1,0 +1,12 @@
+{
+  "schema_version": "1",
+  "module_version": "m0-0.1.0",
+  "results_root": "../results",
+  "backend": {
+    "preference": "auto",
+    "allow_gpu": true,
+    "device_index": 0
+  },
+  "absolute_tolerance": 1e-09,
+  "relative_tolerance": 1e-07
+}

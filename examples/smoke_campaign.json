@@ -1,0 +1,23 @@
+{
+  "name": "m0-smoke",
+  "module_version": "m0-0.1.0",
+  "callable": "spine_sim.examples.fake_module:run_case",
+  "workers": 2,
+  "mode": "small",
+  "cases": [
+    {
+      "module": "m2",
+      "module_version": "fake-1",
+      "parameters": {"seed": 11, "samples": 8},
+      "upstream_hash": "m0-smoke",
+      "tags": ["smoke"]
+    },
+    {
+      "module": "m2",
+      "module_version": "fake-1",
+      "parameters": {"seed": 12, "samples": 8},
+      "upstream_hash": "m0-smoke",
+      "tags": ["smoke"]
+    }
+  ]
+}

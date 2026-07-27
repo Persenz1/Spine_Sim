@@ -1,0 +1,20 @@
+[build-system]
+requires = ["setuptools>=69"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "spine-sim"
+version = "0.1.0"
+description = "M0 foundation and runtime skeleton for the spine coupling simulator"
+requires-python = ">=3.11"
+dependencies = ["numpy>=1.26"]
+
+[project.optional-dependencies]
+parquet = ["pyarrow>=15"]
+test = ["pytest>=8"]
+
+[project.scripts]
+spine-sim = "spine_sim.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
