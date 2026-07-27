@@ -149,6 +149,10 @@ class TerrainRenderTests(unittest.TestCase):
                 metadata["rendering"]["oblique_vertical_exaggeration"],
                 1.5,
             )
+            self.assertEqual(
+                metadata["rendering"]["sphere_transparency"],
+                0.0,
+            )
 
 
 if __name__ == "__main__":

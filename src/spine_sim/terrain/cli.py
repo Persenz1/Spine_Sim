@@ -99,6 +99,7 @@ def build_parser() -> argparse.ArgumentParser:
     plot.add_argument("--sphere-radius-um", type=float, default=100.0)
     plot.add_argument("--overview-max-points", type=int, default=1201)
     plot.add_argument("--surface-max-points", type=int, default=181)
+    plot.add_argument("--sphere-transparency", type=float, default=0.0)
     plot.add_argument("--dpi", type=int, default=180)
     plot.add_argument("--prefix", default="terrain")
     return parser
@@ -255,6 +256,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             sphere_radius_m=args.sphere_radius_um * 1e-6,
             overview_maximum_axis_points=args.overview_max_points,
             surface_maximum_axis_points=args.surface_max_points,
+            sphere_transparency=args.sphere_transparency,
             dpi=args.dpi,
             prefix=args.prefix,
         )

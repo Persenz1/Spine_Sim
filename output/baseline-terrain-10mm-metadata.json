@@ -42,6 +42,7 @@
     "dpi": 200,
     "oblique_vertical_exaggeration": 1.5,
     "overview_maximum_axis_points": 1201,
+    "sphere_transparency": 0.0,
     "sphere_view_axis_scale": "physical_1_to_1_no_z_exaggeration",
     "surface_maximum_axis_points": 181
   },

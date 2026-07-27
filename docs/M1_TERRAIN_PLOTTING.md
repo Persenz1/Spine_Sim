@@ -22,6 +22,7 @@ spine-terrain plot-region `
   --center-y-mm 0 `
   --overview-size-mm 10 `
   --sphere-radius-um 100 `
+  --sphere-transparency 0 `
   --prefix baseline-terrain-10mm
 ```
 
@@ -36,7 +37,7 @@ spine-terrain plot-region `
   相机朝实际支撑点方向旋转，避免接触位置被前景地形遮住。
   球心高度取固定 x-y 位置下、对离散地形节点不发生穿透的最低值；红色菱形
   为控制球心高度的支撑点。该图采用正投影，x、y、z 三轴为相同物理比例，
-  不放大 z 轴。
+  不放大 z 轴；球体默认为实心（透明度 0%）。
 
 默认 10 mm 全场包含原始 1001 × 1001 节点，3D 曲面再降至最多
 181 × 181 个显示节点。球尖落位

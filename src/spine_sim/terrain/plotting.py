@@ -520,6 +520,7 @@ def _render_true_scale_sphere(
     path: Path,
     *,
     maximum_axis_points: int,
+    sphere_transparency: float,
     dpi: int,
 ) -> None:
     import matplotlib.pyplot as plt
@@ -548,6 +549,7 @@ def _render_true_scale_sphere(
     sphere_z = center[2] + placement.radius_m * np.outer(
         np.ones_like(azimuth), np.cos(polar)
     )
+    sphere_alpha = 1.0 - sphere_transparency
 
     figure = plt.figure(figsize=(9.4, 7.2), layout="constrained")
     axis = figure.add_subplot(111, projection="3d")
@@ -568,7 +570,7 @@ def _render_true_scale_sphere(
         color="#ff8c00",
         linewidth=0.45,
         edgecolor="#7a3500",
-        alpha=0.94,
+        alpha=sphere_alpha,
         shade=True,
     )
     support_relative_um = np.array(
@@ -672,7 +674,7 @@ def _render_true_scale_sphere(
             Patch(facecolor="#2b8c6b", alpha=0.42, label="terrain"),
             Patch(
                 facecolor="#ff8c00",
-                alpha=0.94,
+                alpha=sphere_alpha,
                 label=f"{radius_label} sphere",
             ),
             Line2D(
@@ -702,6 +704,7 @@ def render_terrain_views(
     sphere_radius_m: float = 100e-6,
     overview_maximum_axis_points: int = 1201,
     surface_maximum_axis_points: int = 181,
+    sphere_transparency: float = 0.0,
     dpi: int = 180,
     prefix: str = "terrain",
 ) -> dict[str, Any]:
@@ -709,6 +712,8 @@ def render_terrain_views(
 
     if dpi < 72:
         raise ValueError("dpi must be at least 72")
+    if not 0.0 <= sphere_transparency < 1.0:
+        raise ValueError("sphere_transparency must be in [0, 1)")
     if not prefix or any(character in prefix for character in "\\/:*?\"<>|"):
         raise ValueError("prefix must be a non-empty filename-safe string")
 
@@ -782,6 +787,7 @@ def render_terrain_views(
         placement,
         paths["sphere_true_scale"],
         maximum_axis_points=surface_maximum_axis_points,
+        sphere_transparency=sphere_transparency,
         dpi=dpi,
     )
 
@@ -844,6 +850,7 @@ def render_terrain_views(
             "dpi": dpi,
             "oblique_vertical_exaggeration": vertical_exaggeration,
             "sphere_view_axis_scale": "physical_1_to_1_no_z_exaggeration",
+            "sphere_transparency": sphere_transparency,
         },
         "files": {name: path.name for name, path in paths.items()},
     }
