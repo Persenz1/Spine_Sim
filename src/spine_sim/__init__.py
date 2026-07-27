@@ -1,4 +1,4 @@
-"""Public M0/M1 interfaces for the spine coupling simulator."""
+"""Public M0-M2 interfaces for the spine coupling simulator."""
 
 from .core.config import (
     BackendConfig,
@@ -13,11 +13,21 @@ from .core.config import (
 from .core.frames import FrameMetadata, Wrench
 from .core.identity import identity, stable_hash
 from .core.states import Event, EventType, StateBundle
+from .contact import (
+    AxialMode,
+    ContactState,
+    PrescribedPoseConstitutiveCore,
+    SingleSpineExperiment,
+    SingleSpineState,
+    SpineParameters,
+)
 from .terrain.models import RegionSpec, TerrainRecipe, TrackGeometry
 
 __all__ = [
     "BackendConfig",
     "CampaignSpec",
+    "AxialMode",
+    "ContactState",
     "Event",
     "EventType",
     "FrameMetadata",
@@ -25,8 +35,12 @@ __all__ = [
     "M3CaseSpec",
     "M4CaseSpec",
     "ProjectConfig",
+    "PrescribedPoseConstitutiveCore",
     "RegionSpec",
     "StateBundle",
+    "SingleSpineExperiment",
+    "SingleSpineState",
+    "SpineParameters",
     "TerrainRecipe",
     "TerrainRecipeRef",
     "TerrainRegionSpec",
@@ -36,4 +50,4 @@ __all__ = [
     "stable_hash",
 ]
 
-__version__ = "0.2.0"
+__version__ = "0.3.0"
