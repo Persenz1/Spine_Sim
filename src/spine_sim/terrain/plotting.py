@@ -526,7 +526,6 @@ def _render_true_scale_sphere(
     import matplotlib.pyplot as plt
     from matplotlib.lines import Line2D
     from matplotlib.patches import Patch
-    from mpl_toolkits.mplot3d import proj3d
 
     x, y, height = _downsample_patch(
         patch, maximum_axis_points=maximum_axis_points
@@ -553,25 +552,28 @@ def _render_true_scale_sphere(
 
     figure = plt.figure(figsize=(9.4, 7.2), layout="constrained")
     axis = figure.add_subplot(111, projection="3d")
+    axis.computed_zorder = False
     axis.set_proj_type("ortho")
     axis.plot_surface(
         x_mesh,
         y_mesh,
         z_um,
-        cmap="viridis",
+        cmap="terrain",
         linewidth=0.0,
         antialiased=True,
-        alpha=0.42,
+        alpha=0.82,
+        zorder=1,
     )
     axis.plot_surface(
         sphere_x * 1e6,
         sphere_y * 1e6,
         sphere_z * 1e6,
-        color="#ff8c00",
-        linewidth=0.45,
-        edgecolor="#7a3500",
+        color="#f28e2b",
+        linewidth=0.25,
+        edgecolor="#9c4d00",
         alpha=sphere_alpha,
         shade=True,
+        zorder=10,
     )
     support_relative_um = np.array(
         [
@@ -586,7 +588,8 @@ def _render_true_scale_sphere(
         [center_um[1], support_relative_um[1]],
         [center_um[2], support_relative_um[2]],
         color="#b22222",
-        linewidth=3.0,
+        linewidth=2.0,
+        zorder=11,
     )
     axis.scatter(
         [support_relative_um[0]],
@@ -594,8 +597,9 @@ def _render_true_scale_sphere(
         [support_relative_um[2]],
         color="#b22222",
         marker="D",
-        s=75,
+        s=42,
         depthshade=False,
+        zorder=12,
     )
     radius_midpoint = 0.5 * (center_um + support_relative_um)
     axis.text(
@@ -604,6 +608,7 @@ def _render_true_scale_sphere(
         radius_midpoint[2],
         f" R = {placement.radius_m * 1e6:g} µm",
         color="#8b1a1a",
+        zorder=13,
     )
 
     x_limits = (float(x_um[0]), float(x_um[-1]))
@@ -629,27 +634,7 @@ def _render_true_scale_sphere(
             support_relative_um[0],
         )
     )
-    axis.view_init(elev=36.0, azim=support_angle_degrees)
-    projected_x, projected_y, _ = proj3d.proj_transform(
-        support_relative_um[0],
-        support_relative_um[1],
-        support_relative_um[2],
-        axis.get_proj(),
-    )
-    axis.annotate(
-        "support",
-        xy=(projected_x, projected_y),
-        xycoords=axis.transData,
-        xytext=(24, -28),
-        textcoords="offset points",
-        color="#9e1b1b",
-        weight="bold",
-        arrowprops={
-            "arrowstyle": "->",
-            "color": "#9e1b1b",
-            "linewidth": 1.8,
-        },
-    )
+    axis.view_init(elev=25.0, azim=support_angle_degrees - 90.0)
     axis.set_xlabel("x from sphere centre (µm)")
     axis.set_ylabel("y from sphere centre (µm)")
     axis.set_zlabel("height z (µm)")
@@ -671,9 +656,9 @@ def _render_true_scale_sphere(
     )
     axis.legend(
         handles=[
-            Patch(facecolor="#2b8c6b", alpha=0.42, label="terrain"),
+            Patch(facecolor="#8fbc6b", label="terrain"),
             Patch(
-                facecolor="#ff8c00",
+                facecolor="#f28e2b",
                 alpha=sphere_alpha,
                 label=f"{radius_label} sphere",
             ),
