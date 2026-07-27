@@ -1,14 +1,16 @@
-# Spine Sim — M0–M2 公共基础、地形与单刺接触
+# Spine Sim — M0–M3 地形、单刺与共同背板阵列
 
-当前仓库已完成 M0 公共基础、M1 地形几何和 M2 阶段 I。M1 提供解析地形、全局坐标可重建
+当前仓库已完成 M0 公共基础、M1 地形几何、M2 阶段 I 和 M3 阶段 I。M1 提供解析地形、全局坐标可重建
 随机场、10 μm 本地 memory-map 区域、5 μm 同 realization 复核路径、文件
 高度图、有限球针尖包络和 M2/M3 一维轨迹缓存。M2 提供规定安装座位姿的
 单刺本构、单边弹簧、二维梁、STICK/SLIDE 历史、初始预载 + 固定-Z 拖动、
-FREE/脱离/再接触、事件细化、能量审计和标准结果字段。阵列与整爪物理仍不在
-当前实现中。
+FREE/脱离/再接触、事件细化、能量审计和标准结果字段。M3 提供共同刚性背板
+\((u_x,u_Z)\)、一次总预载、固定共同 \(u_Z\) 拖动、全针 proposal/原子提交、
+局部事件处全阵列重评估、wrench 搬移、活动集、三类 \(N_\mathrm{eff}\)、载荷集中度、
+M3→M4 同状态样本和确定性平衡覆盖设计器。整爪 M4 尚未实现。
 
-正式 M2 参数筛选尚未启动：它受 M0–M4 全链冻结 manifest 和用户批准门禁约束。
-现有十种 M1 地形只做过 M2 smoke，不用于参数排名。
+正式 M2/M3 参数筛选尚未启动：它受 M0–M4 全链冻结 manifest、前序轮次和用户批准
+门禁约束。现有十种 M1 地形只做过 M2 与 M3 smoke，不用于参数排名。
 
 ## 环境
 
@@ -66,6 +68,13 @@ spine-m2 validate-analytic
 spine-m2 smoke-m1-suite results/m1_gpu_suite/suite_report.json
 ```
 
+M3 验收：
+
+```powershell
+spine-m3 validate-analytic
+spine-m3 smoke-m1-suite results/m1_gpu_suite/suite_report.json
+```
+
 M2 的稳定 Python 入口：
 
 ```python
@@ -81,6 +90,17 @@ trial = core.solve_pose((x_h, z_h), SingleSpineState(), commit=False)
 
 M3 必须从同一旧阵列状态对所有针调用 `commit=False`，然后在阵列层原子采纳
 proposal；不能复用独立单刺包装器的完整路径结果。
+
+M3 的稳定 Python 入口：
+
+```python
+from spine_sim.array import (
+    ArrayConfiguration,
+    ArrayExperimentSettings,
+    CommonBackplateArray,
+    CommonBackplateExperiment,
+)
+```
 
 `run-case` 默认运行配置中的第一个 case，也可用 `--case-id` 精确选择。`resume` 跳过带有合法 `COMPLETE` 标记的 case；`retry-failed` 只选择已有 `execution_error` 摘要的 case。每个 case 独立执行，单个异常不会中断其他 case。
 
@@ -113,3 +133,5 @@ M0 的验收证据和风险覆盖见 [M0 测试报告](docs/M0_TEST_REPORT.md)�
 [M1 地形绘图](docs/M1_TERRAIN_PLOTTING.md)。M2 的分支定义、字段和验收证据见
 [求解规格](docs/M2_solver_spec.md)、[数据字典](docs/M2_DATA_DICTIONARY.md)、
 [测试报告](docs/M2_TEST_REPORT.md) 和 [M2→M3 交接](docs/M2_to_M3_handoff.md)。
+M3 的字段、验收和下游约束见 [M3 数据字典](docs/M3_DATA_DICTIONARY.md)、
+[M3 测试报告](docs/M3_TEST_REPORT.md) 和 [M3→M4 交接](docs/M3_to_M4_handoff.md)。

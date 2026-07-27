@@ -568,7 +568,7 @@ def run_analytic_validation(output_path: str | Path | None = None) -> dict[str, 
         "gates": gates,
         "formal_random_screening_allowed": False,
         "formal_random_screening_blockers": [
-            "M3 and M4 are not implemented/frozen",
+            "M4 and the M0-M4 full chain are not implemented/frozen",
             "full_chain_frozen_manifest.json does not exist",
             "user approval to start M2 round 1 has not been recorded",
         ],
@@ -604,16 +604,26 @@ def run_m1_suite_smoke(
                 / "50um"
             ).glob("*.json")
         )
-        if len(metadata_candidates) != 1:
+        zero_y_candidates = []
+        for candidate in metadata_candidates:
+            metadata = json.loads(candidate.read_text(encoding="utf-8"))
+            if math.isclose(
+                float(metadata["y_global_m"]),
+                0.0,
+                rel_tol=0.0,
+                abs_tol=1e-12,
+            ):
+                zero_y_candidates.append((candidate, metadata))
+        if len(zero_y_candidates) != 1:
             conditions.append(
                 {
                     "name": condition["name"],
                     "passed": False,
-                    "reason": "expected exactly one saved 50um track",
+                    "reason": "expected exactly one saved y=0, 50um track",
                 }
             )
             continue
-        metadata = json.loads(metadata_candidates[0].read_text(encoding="utf-8"))
+        _metadata_path, metadata = zero_y_candidates[0]
         track = library.load_track(
             recipe_id,
             region_id,

@@ -1,0 +1,21 @@
+schema_version: "1"
+m3_module_version: "m3.0.0"
+status: "pending_user_approval_after_formal_round1"
+formal_round1_completed: false
+selected_candidate_count: 0
+selected_candidates: []
+conclusions:
+  stable_fixed_angle_advantage: "not_evaluated"
+  gradient_angle_benefit: "not_evaluated"
+  array_direction_effect: "not_evaluated"
+  array_scale_saturation: "not_evaluated"
+  compliance_improves_effective_pin_count: "not_evaluated"
+reason: >-
+  M3 Stage-I implementation and ten-terrain interface smoke cannot rank hardware.
+  The full-chain manifest, formal M2 results, approved M2 parameter packs and
+  explicit approval to start M3 round one are absent.
+required_next_action: >-
+  Complete and freeze M4/full-chain smoke, run the approved M2 formal workflow,
+  approve 4-6 representative M2 packs for M3, explicitly approve M3 round one,
+  close the project-terrain clearance boundary, then rebuild and run the balanced
+  80-120 hardware design. Stop after proposing 18-24 candidates for user review.

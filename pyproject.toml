@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "spine-sim"
-version = "0.3.0"
-description = "M0-M2 foundation, terrain geometry and single-spine contact simulator"
+version = "0.4.0"
+description = "M0-M3 foundation, terrain, single-spine and common-backplate array simulator"
 requires-python = ">=3.11"
 dependencies = ["numpy>=1.26"]
 
@@ -19,6 +19,7 @@ plot = ["matplotlib>=3.9,<4"]
 spine-sim = "spine_sim.cli:main"
 spine-terrain = "spine_sim.terrain.cli:main"
 spine-m2 = "spine_sim.contact.cli:main"
+spine-m3 = "spine_sim.array.cli:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]

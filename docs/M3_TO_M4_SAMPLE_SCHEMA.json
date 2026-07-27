@@ -1,0 +1,91 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "spine-sim://schemas/m3-to-m4-unit-sample-v1",
+  "title": "M3 to M4 same-state unit sample",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "seed",
+    "terrain_recipe_id",
+    "configuration_id",
+    "preload_n",
+    "path_position_m",
+    "normal_force_n",
+    "tangential_force_positive_n",
+    "tangential_force_negative_n",
+    "unit_moment_nm",
+    "active_set",
+    "contact_states",
+    "event_label",
+    "numerical_residual",
+    "model_level"
+  ],
+  "properties": {
+    "seed": {"type": "integer", "minimum": 0},
+    "terrain_recipe_id": {"type": "string", "minLength": 1},
+    "configuration_id": {"type": "string", "minLength": 1},
+    "preload_n": {"type": "number", "exclusiveMinimum": 0},
+    "path_position_m": {"type": "number", "minimum": 0},
+    "normal_force_n": {"type": "number", "minimum": 0},
+    "tangential_force_positive_n": {"type": "number", "minimum": 0},
+    "tangential_force_negative_n": {"type": "number", "minimum": 0},
+    "unit_moment_nm": {
+      "type": "array",
+      "items": {"type": "number"},
+      "minItems": 3,
+      "maxItems": 3
+    },
+    "active_set": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["nominal", "geometric", "positive_normal", "admissible", "target_load"],
+      "properties": {
+        "nominal": {"$ref": "#/$defs/indexArray"},
+        "geometric": {"$ref": "#/$defs/indexArray"},
+        "positive_normal": {"$ref": "#/$defs/indexArray"},
+        "admissible": {"$ref": "#/$defs/indexArray"},
+        "target_load": {"$ref": "#/$defs/indexArray"}
+      }
+    },
+    "contact_states": {
+      "type": "array",
+      "items": {
+        "enum": ["free", "first_contact_event", "stick", "slide", "detach_event", "recontact_event"]
+      }
+    },
+    "event_label": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["pin_index", "label"],
+        "properties": {
+          "pin_index": {"type": "integer", "minimum": 0},
+          "label": {
+            "enum": ["first_contact", "detach_to_free", "recontact", "slip_start", "hard_stop"]
+          }
+        }
+      }
+    },
+    "numerical_residual": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["maximum_local_geometry_m", "force_aggregation_n", "moment_aggregation_nm"],
+      "properties": {
+        "maximum_local_geometry_m": {"type": "number", "minimum": 0},
+        "force_aggregation_n": {"type": "number", "minimum": 0},
+        "moment_aggregation_nm": {"type": "number", "minimum": 0}
+      }
+    },
+    "model_level": {
+      "const": "project_model_P_common_rigid_backplate_quasistatic_v1"
+    }
+  },
+  "$defs": {
+    "indexArray": {
+      "type": "array",
+      "items": {"type": "integer", "minimum": 0},
+      "uniqueItems": true
+    }
+  }
+}

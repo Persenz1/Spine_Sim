@@ -1,4 +1,4 @@
-"""Public M0-M2 interfaces for the spine coupling simulator."""
+"""Public M0-M3 interfaces for the spine coupling simulator."""
 
 from .core.config import (
     BackendConfig,
@@ -22,12 +22,26 @@ from .contact import (
     SpineParameters,
 )
 from .terrain.models import RegionSpec, TerrainRecipe, TrackGeometry
+from .array import (
+    AngleLayout,
+    ArrayConfiguration,
+    ArrayExperimentSettings,
+    ArrayState,
+    CommonBackplateArray,
+    CommonBackplateExperiment,
+)
 
 __all__ = [
     "BackendConfig",
     "CampaignSpec",
     "AxialMode",
+    "AngleLayout",
+    "ArrayConfiguration",
+    "ArrayExperimentSettings",
+    "ArrayState",
     "ContactState",
+    "CommonBackplateArray",
+    "CommonBackplateExperiment",
     "Event",
     "EventType",
     "FrameMetadata",
@@ -50,4 +64,4 @@ __all__ = [
     "stable_hash",
 ]
 
-__version__ = "0.3.0"
+__version__ = "0.4.0"
