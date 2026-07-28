@@ -1,4 +1,72 @@
-# M3 阶段 I 测试与收敛报告（legacy fixed-Z，已失效）
+# M3 测试与收敛报告
+
+## 0. 当前权威状态
+
+**执行日期：** 2026-07-28
+**模块版本：** `m3.1.0`
+**模型等级：**
+`project_model_P_common_rigid_backplate_z_dynamic_continuous_total_preload_v2`
+**正式第一轮筛选：** 未启动
+
+生产 M3 已重建为持续恒定总外部预载下的共同刚性背板 Z 时域动力学。水平运动按
+规定速度推进；背板 Z、全部针轴向/横向模态和多接触冲量在同一全局状态中统一
+积分。首版俯仰/横滚显式锁定。
+
+## 1. 动态解析验收
+
+命令：
+
+```powershell
+spine-m3 validate-analytic
+```
+
+结果：11/11 通过。机器可读报告：
+`results/m3_validation/dynamic_analytic_validation.json`。
+
+| 门禁 | 结果 | 关键证据 |
+|---|---:|---|
+| 平面多针总反力时间平均 | 通过 | 0.5 N 总外载下稳态平均 0.4999978 N；瞬时范围 0.4637444–0.5009701 N，未强制逐步相等 |
+| 不同初始高度载荷转移 | 通过 | 两针初始反力 0.3295281/0.1704731 N，总和 0.5000012 N，不是平均预分配 |
+| 单针脱离及再接触 | 通过 | 目标针发生 DETACH、RECONTACT、IMPACT，阵列到达 `path_end`，未出现 `no_admissible_contact_equilibrium` |
+| 多针同时冲击 | 通过 | 同一全局步两针 IMPACT；总反力峰 12.0600 N，可显著高于 0.5 N 外载 |
+| 针遍历顺序不变 | 通过 | 正序、逆序、固定随机顺序的全局 proposal、point 和 state 完全一致 |
+| 原子拒绝步 | 通过 | 地形越界 proposal 无效，`proposal_state` 和拒绝 commit 均精确等于旧 `ArrayDynamicState` |
+| 内部时间步减半 | 通过 | 1/0.5 ms 的稳态总反力均值差 \(2.17\times10^{-5}\) N，稳态切向中位数差 \(1.51\times10^{-7}\) N |
+| 动力学与能量残余 | 通过 | 最大动力学残余 \(1.67\times10^{-16}\) N；最大单步能量残余 \(3.23\times10^{-8}\) J |
+| 2×5 与 5×2 身份 | 通过 | 构型 ID 和安装点布局均不同 |
+| wrench 搬移与聚合 | 通过 | 最大搬移误差和阵列聚合误差均为 0 |
+| 未冻结参数排名门禁 | 通过 | `model_state=parameter_unclosed` 且 `formal_ranking_eligible=false` |
+
+动态结果保存背板质量/阻尼、锁定转动声明、M2 模态质量/阻尼、接触设置、积分器与
+实际内部时间步。逐点保存背板状态、逐针状态/事件/力/冲量/wrench、阵列总 wrench、
+惯性与阻尼项、载荷共享、能量/功/耗散和残余。稳态切向统计与冲击峰在摘要中分开。
+
+## 2. 软件回归
+
+命令：
+
+```powershell
+$env:PYTHONPATH = (Resolve-Path src).Path
+python -m unittest discover -s tests -v
+```
+
+结果：共发现 66 项，63 项通过、3 项按环境条件跳过（CUDA/CuPy 两项、可选绘图
+依赖一项），0 失败。M3 专项测试 15/15 通过。JSON Schema 可解析，源码及测试通过 `compileall`，
+`git diff --check` 无错误。
+
+## 3. 排名和 campaign 状态
+
+解析夹具的背板/模态/接触/积分参数没有项目标定来源，项目地形杆体/锥段净空也未
+闭合；因此通过验收不等于打开正式排名。M2 获批参数包、全链冻结清单和“开始 M3
+第一轮筛选”的明确批准仍不存在。
+
+本次没有恢复或运行旧 M2/M3 fixed-Z 筛选，没有启动正式 M3 campaign。45 个已生成
+地形仅为库存，其中第二轮 30 个不代表获批。
+
+## 4. Legacy fixed-Z 历史归档
+
+以下历史章节全部属于 `m3.0.0` Legacy fixed-Z 迁移实现，不证明正式 M3 正确，
+不得支持阵列排名。
 
 > 2026-07-28 用户修订为持续总外部预载与共同背板动力学。本报告只验证旧迁移
 > 实现，不再证明正式 M3 正确，也不能支持阵列排名。
@@ -7,12 +75,12 @@
 **模块版本：** `m3.0.0`
 **正式第一轮筛选：** 未启动
 
-## 1. 解析与阵列门禁
+### L1. 解析与阵列门禁
 
-命令：
+历史迁移夹具现只能通过显式 Legacy 命令访问（本次未运行）：
 
 ```powershell
-spine-m3 validate-analytic
+spine-m3 validate-legacy-fixed-z
 ```
 
 结果：14/14 通过。
@@ -41,12 +109,12 @@ spine-m3 validate-analytic
 权威机器可读报告：
 `results/m3_validation/analytic_validation.json`。
 
-## 2. 十种现有 M1 地形阵列 smoke
+### L2. 十种现有 M1 地形阵列 smoke
 
 命令：
 
 ```powershell
-spine-m3 smoke-m1-suite results/m1_gpu_suite/suite_report.json `
+spine-m3 smoke-legacy-fixed-z results/m1_gpu_suite/suite_report.json `
   --drag-length-mm 0.2 --path-step-um 50
 ```
 
@@ -86,7 +154,7 @@ spine-m3 smoke-m1-suite results/m1_gpu_suite/suite_report.json `
 机器可读报告：
 `results/m3_validation/m1_ten_terrain_smoke.json`。
 
-## 3. 软件回归
+### L3. 软件回归
 
 新增 `tests/test_m3_array.py`，覆盖：
 
@@ -112,7 +180,7 @@ python -m unittest discover -s tests -v
 
 结果：58/58 通过。M2 十地形 smoke 在新增多 y track 后另行复跑，仍为 10/10 通过。
 
-## 4. 筛选门禁
+### L4. 筛选门禁
 
 `examples/m3_round1_design_draft.json` 使用一个明确标记的 fixture 参数包构造 126 个
 硬件候选，并由确定性平衡覆盖算法选择 100 个，用于验证设计器和关键二阶交互覆盖。

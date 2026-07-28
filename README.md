@@ -73,8 +73,10 @@ M3 验收：
 
 ```powershell
 spine-m3 validate-analytic
-spine-m3 smoke-m1-suite results/m1_gpu_suite/suite_report.json
 ```
+
+该命令只运行 `m3.1.0` 持续总外载阵列动力学解析验收，不运行旧 fixed-Z smoke，
+也不启动 45 个库存地形上的正式 campaign。
 
 M2 的稳定 Python 入口：
 
@@ -95,20 +97,23 @@ result = DynamicSingleSpineExperiment(
 ).run()
 ```
 
-`PrescribedPoseConstitutiveCore` 与 `LegacyFixedZExperiment` 只用于旧 M3 迁移和
+`LegacyPrescribedPoseConstitutiveCore` 与 `LegacyFixedZExperiment` 只用于旧 M3 迁移和
 静态解析夹具，不能生成正式 M2 排名。
 
-M3 当前入口仍是 legacy fixed-Z 迁移接口，必须按
-`docs/M2_to_M3_handoff.md` 重建后才能重新成为生产入口：
+M3 的稳定生产入口：
 
 ```python
 from spine_sim.array import (
     ArrayConfiguration,
-    ArrayExperimentSettings,
-    CommonBackplateArray,
-    CommonBackplateExperiment,
+    ArrayDynamicExperimentSettings,
+    DynamicCommonBackplateArray,
+    DynamicCommonBackplateExperiment,
 )
 ```
+
+`LegacyCommonBackplateArray`、`LegacyArrayExperimentSettings` 与
+`LegacyFixedZCommonBackplateExperiment` 只保留给迁移夹具，不能生成正式 M3
+结果或排名。
 
 `run-case` 默认运行配置中的第一个 case，也可用 `--case-id` 精确选择。`resume` 跳过带有合法 `COMPLETE` 标记的 case；`retry-failed` 只选择已有 `execution_error` 摘要的 case。每个 case 独立执行，单个异常不会中断其他 case。
 

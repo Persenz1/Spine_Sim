@@ -31,10 +31,10 @@ from .models import (
     SpineParameters,
     SpringState,
 )
-from .solver import PrescribedPoseConstitutiveCore
+from .solver import LegacyPrescribedPoseConstitutiveCore
 
-# The public production path now means continuous-preload dynamics.  Explicit
-# legacy names keep M3 compiling while it migrates to the dynamic unit API.
+# The public production path means continuous-preload dynamics. Explicit legacy
+# names remain only for migration fixtures; production M3 uses the dynamic unit.
 ExperimentSettings = DynamicExperimentSettings
 SingleSpineExperiment = DynamicSingleSpineExperiment
 
@@ -60,7 +60,7 @@ __all__ = [
     "PathPoint",
     "PathSummary",
     "PathTerminalState",
-    "PrescribedPoseConstitutiveCore",
+    "LegacyPrescribedPoseConstitutiveCore",
     "SingleSpineExperiment",
     "SingleSpineExperimentResult",
     "SingleSpineState",

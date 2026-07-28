@@ -41,7 +41,7 @@ class _StructuralBoundary(RuntimeError):
     pass
 
 
-class PrescribedPoseConstitutiveCore:
+class LegacyPrescribedPoseConstitutiveCore:
     """Pure single-step contact solve at a prescribed installation-seat pose."""
 
     def __init__(

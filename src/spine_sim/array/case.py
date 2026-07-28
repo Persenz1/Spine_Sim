@@ -1,4 +1,4 @@
-"""M0 runner adapter and same-state result serialization for M3 cases."""
+"""M0 runner adapter and same-time-state serialization for dynamic M3 cases."""
 
 from __future__ import annotations
 
@@ -9,13 +9,31 @@ from typing import Any, Mapping
 
 import numpy as np
 
-from spine_sim.contact import SolverSettings
+from spine_sim.contact import DynamicContactSettings, DynamicIntegratorSettings
 from spine_sim.runtime.runner import CaseOutput, RunContext
 from spine_sim.terrain import TerrainLibrary
 
-from .experiment import ArrayExperimentSettings, CommonBackplateExperiment
+from .dynamics import (
+    ArrayDynamicExperimentSettings,
+    DynamicCommonBackplateArray,
+    DynamicCommonBackplateExperiment,
+)
 from .models import M3_MODEL_LEVEL, M3_MODULE_VERSION, ArrayConfiguration
-from .solver import CommonBackplateArray
+
+
+_EXPLICIT_EXPERIMENT_PARAMETERS = {
+    "external_total_preload_n",
+    "drag_speed_m_s",
+    "backplate_mass_kg",
+    "backplate_vertical_damping_n_s_m",
+    "backplate_rotational_dofs",
+    "backplate_inertia_kg_m2",
+    "maximum_preload_approach_m",
+    "output_spacing_m",
+    "effective_pin_normal_force_min_n",
+}
+_EXPLICIT_CONTACT_PARAMETERS = set(DynamicContactSettings.__dataclass_fields__)
+_EXPLICIT_INTEGRATOR_PARAMETERS = set(DynamicIntegratorSettings.__dataclass_fields__)
 
 
 def _summary_dict(result) -> dict[str, Any]:
@@ -28,8 +46,9 @@ def _summary_dict(result) -> dict[str, Any]:
     summary["terrain_recipe_id"] = result.terrain_recipe_id
     summary["region_id"] = result.region_id
     summary["track_ids"] = list(result.track_ids)
-    summary["fixed_common_uz_m"] = result.fixed_common_uz_m
-    summary["target_preload_n"] = result.target_preload_n
+    summary["experiment"] = asdict(result.experiment)
+    summary["contact"] = asdict(result.contact)
+    summary["integrator"] = asdict(result.integrator)
     summary["assumptions"] = list(result.assumptions)
     summary["m3_module_version"] = M3_MODULE_VERSION
     summary["model_level"] = M3_MODEL_LEVEL
@@ -49,201 +68,264 @@ def _arrays(result) -> dict[str, np.ndarray]:
     def pin_numeric(getter, *, width: int | None = None):
         trailing = (pin_count,) if width is None else (pin_count, width)
         return numeric(
-            lambda point: [getter(response) for response in point.response.pin_responses],
+            lambda point: [getter(pin) for pin in point.pin_responses],
             trailing_shape=trailing,
         )
 
-    def active_mask(point, indices):
+    def active_mask(indices):
         mask = np.zeros(pin_count, dtype=np.bool_)
         mask[list(indices)] = True
         return mask
 
-    return {
+    arrays = {
+        "time_s": numeric(lambda point: point.time_s),
         "path_position_m": numeric(lambda point: point.path_position_m),
-        "common_ux_m": numeric(lambda point: point.response.common_ux_m),
-        "common_uz_m": numeric(lambda point: point.response.common_uz_m),
-        "unit_origin_xyz_m": numeric(
-            lambda point: point.response.unit_origin_xyz_m,
+        "backplate_position_xyz_m": numeric(
+            lambda point: point.backplate_position_xyz_m,
             trailing_shape=(3,),
         ),
-        "pin_holder_xyz_m": numeric(
-            lambda point: point.response.pin_holder_xyz_m,
-            trailing_shape=(pin_count, 3),
+        "backplate_velocity_xyz_m_s": numeric(
+            lambda point: point.backplate_velocity_xyz_m_s,
+            trailing_shape=(3,),
         ),
-        "pin_center_xz_m": pin_numeric(lambda response: response.center_xz_m, width=2),
+        "backplate_acceleration_xyz_m_s2": numeric(
+            lambda point: point.backplate_acceleration_xyz_m_s2,
+            trailing_shape=(3,),
+        ),
+        "external_total_preload_n": numeric(
+            lambda point: point.external_total_preload_n
+        ),
+        "pin_holder_xyz_m": pin_numeric(lambda pin: pin.holder_xyz_m, width=3),
+        "pin_center_xyz_m": pin_numeric(lambda pin: pin.center_xyz_m, width=3),
+        "pin_center_velocity_xyz_m_s": pin_numeric(
+            lambda pin: pin.center_velocity_xyz_m_s, width=3
+        ),
+        "pin_center_acceleration_xyz_m_s2": pin_numeric(
+            lambda pin: pin.center_acceleration_xyz_m_s2, width=3
+        ),
         "pin_support_xyz_m": pin_numeric(
-            lambda response: (
-                response.support_xyz_m
-                if response.support_xyz_m is not None
+            lambda pin: (
+                pin.support_xyz_m
+                if pin.support_xyz_m is not None
                 else (np.nan, np.nan, np.nan)
             ),
             width=3,
         ),
-        "pin_wrench_about_holder": pin_numeric(
-            lambda response: response.spine_on_plate_wrench_about_holder,
-            width=6,
+        "pin_gap_m": pin_numeric(lambda pin: pin.gap_m),
+        "pin_normal_force_n": pin_numeric(lambda pin: pin.normal_force_n),
+        "pin_tangential_force_n": pin_numeric(
+            lambda pin: pin.tangential_force_n
         ),
-        "pin_wrench_about_unit": numeric(
-            lambda point: point.response.pin_wrench_about_unit,
-            trailing_shape=(pin_count, 6),
+        "pin_normal_impulse_n_s": pin_numeric(
+            lambda pin: pin.normal_impulse_n_s
+        ),
+        "pin_tangential_impulse_n_s": pin_numeric(
+            lambda pin: pin.tangential_impulse_n_s
+        ),
+        "pin_impact_velocity_m_s": pin_numeric(
+            lambda pin: pin.impact_velocity_m_s
+        ),
+        "pin_axial_displacement_m": pin_numeric(
+            lambda pin: pin.axial_displacement_m
+        ),
+        "pin_transverse_displacement_m": pin_numeric(
+            lambda pin: pin.transverse_displacement_m
+        ),
+        "pin_axial_velocity_m_s": pin_numeric(
+            lambda pin: pin.axial_velocity_m_s
+        ),
+        "pin_transverse_velocity_m_s": pin_numeric(
+            lambda pin: pin.transverse_velocity_m_s
+        ),
+        "pin_wrench_about_holder": pin_numeric(
+            lambda pin: pin.spine_on_plate_wrench_about_holder, width=6
+        ),
+        "pin_wrench_about_unit": pin_numeric(
+            lambda pin: pin.spine_on_plate_wrench_about_unit, width=6
         ),
         "wall_on_unit_wrench_about_origin": numeric(
-            lambda point: point.response.wall_on_unit_wrench_about_origin,
+            lambda point: point.wall_on_unit_wrench_about_origin,
             trailing_shape=(6,),
         ),
         "active_thrust_wrench_about_origin": numeric(
-            lambda point: point.response.active_thrust_wrench_about_origin,
+            lambda point: point.active_thrust_wrench_about_origin,
             trailing_shape=(6,),
         ),
         "guide_reaction_wrench_about_origin": numeric(
-            lambda point: point.response.guide_reaction_wrench_about_origin,
+            lambda point: point.guide_reaction_wrench_about_origin,
             trailing_shape=(6,),
         ),
         "unit_normal_force_n": numeric(
-            lambda point: point.response.total_normal_force_n
+            lambda point: point.total_contact_reaction_z_n
         ),
         "tangential_force_positive_n": numeric(
-            lambda point: point.response.tangential_force_positive_n
+            lambda point: point.tangential_force_positive_n
         ),
         "tangential_force_negative_n": numeric(
-            lambda point: point.response.tangential_force_negative_n
+            lambda point: point.tangential_force_negative_n
         ),
         "unit_moment_nm": numeric(
-            lambda point: point.response.wall_on_unit_wrench_about_origin[3:],
+            lambda point: point.wall_on_unit_wrench_about_origin[3:],
             trailing_shape=(3,),
         ),
-        "pin_normal_force_n": pin_numeric(lambda response: response.normal_force_n),
-        "pin_tangential_force_n": pin_numeric(
-            lambda response: response.tangential_force_n
+        "active_pin_count": numeric(lambda point: point.active_pin_count),
+        "effective_load_pin_count": numeric(
+            lambda point: point.effective_load_pin_count
         ),
-        "pin_spring_compression_m": pin_numeric(
-            lambda response: response.spring_compression_m
+        "neff_normal": numeric(lambda point: point.sharing.neff_normal),
+        "neff_target_tangential": numeric(
+            lambda point: point.sharing.neff_target_tangential
         ),
-        "pin_geometry_residual_m": pin_numeric(
-            lambda response: response.residual.geometry_m
+        "neff_resultant": numeric(
+            lambda point: point.sharing.neff_resultant
+        ),
+        "max_mean_normal": numeric(
+            lambda point: point.sharing.max_mean_normal
+        ),
+        "max_mean_target_tangential": numeric(
+            lambda point: point.sharing.max_mean_target_tangential
+        ),
+        "max_mean_resultant": numeric(
+            lambda point: point.sharing.max_mean_resultant
+        ),
+        "gini_normal": numeric(lambda point: point.sharing.gini_normal),
+        "gini_target_tangential": numeric(
+            lambda point: point.sharing.gini_target_tangential
+        ),
+        "gini_resultant": numeric(
+            lambda point: point.sharing.gini_resultant
+        ),
+        "total_contact_reaction_z_n": numeric(
+            lambda point: point.total_contact_reaction_z_n
+        ),
+        "backplate_inertia_force_z_n": numeric(
+            lambda point: point.backplate_inertia_force_z_n
+        ),
+        "backplate_damping_force_z_n": numeric(
+            lambda point: point.backplate_damping_force_z_n
+        ),
+        "kinetic_energy_j": numeric(lambda point: point.kinetic_energy_j),
+        "structural_energy_j": numeric(lambda point: point.structural_energy_j),
+        "preload_work_increment_j": numeric(
+            lambda point: point.preload_work_increment_j
+        ),
+        "drive_work_increment_j": numeric(
+            lambda point: point.drive_work_increment_j
+        ),
+        "cumulative_preload_work_j": numeric(
+            lambda point: point.cumulative_preload_work_j
+        ),
+        "cumulative_drive_work_j": numeric(
+            lambda point: point.cumulative_drive_work_j
+        ),
+        "friction_dissipation_increment_j": numeric(
+            lambda point: point.friction_dissipation_increment_j
+        ),
+        "cumulative_friction_dissipation_j": numeric(
+            lambda point: point.cumulative_friction_dissipation_j
+        ),
+        "structural_damping_dissipation_increment_j": numeric(
+            lambda point: point.structural_damping_dissipation_increment_j
+        ),
+        "cumulative_structural_damping_dissipation_j": numeric(
+            lambda point: point.cumulative_structural_damping_dissipation_j
+        ),
+        "backplate_damping_dissipation_increment_j": numeric(
+            lambda point: point.backplate_damping_dissipation_increment_j
+        ),
+        "cumulative_backplate_damping_dissipation_j": numeric(
+            lambda point: point.cumulative_backplate_damping_dissipation_j
+        ),
+        "dynamic_residual_n": numeric(lambda point: point.dynamic_residual_n),
+        "energy_residual_j": numeric(lambda point: point.energy_residual_j),
+        "actual_time_step_s": numeric(
+            lambda point: point.actual_time_step_s
+        ),
+        "nonlinear_iterations": numeric(
+            lambda point: point.nonlinear_iterations
+        ),
+        "force_aggregation_residual_n": numeric(
+            lambda point: point.force_aggregation_residual_n
+        ),
+        "moment_aggregation_residual_nm": numeric(
+            lambda point: point.moment_aggregation_residual_nm
         ),
         "contact_state": np.asarray(
             [
-                [response.contact_state.value for response in point.response.pin_responses]
+                [pin.contact_state.value for pin in point.pin_responses]
                 for point in points
             ],
             dtype="U32",
         ).reshape((-1, pin_count)),
         "spring_state": np.asarray(
             [
-                [response.spring_state.value for response in point.response.pin_responses]
+                [pin.spring_state.value for pin in point.pin_responses]
                 for point in points
             ],
             dtype="U16",
         ).reshape((-1, pin_count)),
         "event_label": np.asarray(
             [
-                [response.event_label.value for response in point.response.pin_responses]
+                [pin.event_label.value for pin in point.pin_responses]
                 for point in points
             ],
             dtype="U24",
         ).reshape((-1, pin_count)),
         "active_nominal": np.asarray(
-            [
-                active_mask(point, point.response.activity_sets.nominal)
-                for point in points
-            ],
+            [active_mask(point.activity_sets.nominal) for point in points],
             dtype=np.bool_,
         ).reshape((-1, pin_count)),
         "active_geometric": np.asarray(
-            [
-                active_mask(point, point.response.activity_sets.geometric)
-                for point in points
-            ],
+            [active_mask(point.activity_sets.geometric) for point in points],
             dtype=np.bool_,
         ).reshape((-1, pin_count)),
         "active_positive_normal": np.asarray(
             [
-                active_mask(point, point.response.activity_sets.positive_normal)
+                active_mask(point.activity_sets.positive_normal)
                 for point in points
             ],
             dtype=np.bool_,
         ).reshape((-1, pin_count)),
         "active_admissible": np.asarray(
-            [
-                active_mask(point, point.response.activity_sets.admissible)
-                for point in points
-            ],
+            [active_mask(point.activity_sets.admissible) for point in points],
             dtype=np.bool_,
         ).reshape((-1, pin_count)),
         "active_target_load": np.asarray(
-            [
-                active_mask(point, point.response.activity_sets.target_load)
-                for point in points
-            ],
+            [active_mask(point.activity_sets.target_load) for point in points],
             dtype=np.bool_,
         ).reshape((-1, pin_count)),
-        "neff_normal": numeric(lambda point: point.response.sharing.neff_normal),
-        "neff_target_tangential": numeric(
-            lambda point: point.response.sharing.neff_target_tangential
-        ),
-        "neff_resultant": numeric(
-            lambda point: point.response.sharing.neff_resultant
-        ),
-        "max_mean_normal": numeric(
-            lambda point: point.response.sharing.max_mean_normal
-        ),
-        "max_mean_target_tangential": numeric(
-            lambda point: point.response.sharing.max_mean_target_tangential
-        ),
-        "max_mean_resultant": numeric(
-            lambda point: point.response.sharing.max_mean_resultant
-        ),
-        "gini_normal": numeric(lambda point: point.response.sharing.gini_normal),
-        "gini_target_tangential": numeric(
-            lambda point: point.response.sharing.gini_target_tangential
-        ),
-        "gini_resultant": numeric(
-            lambda point: point.response.sharing.gini_resultant
-        ),
-        "force_aggregation_residual_n": numeric(
-            lambda point: point.response.residual.force_aggregation_n
-        ),
-        "moment_aggregation_residual_nm": numeric(
-            lambda point: point.response.residual.moment_aggregation_nm
-        ),
-        "event_refined": np.asarray(
-            [point.event_refined for point in points],
-            dtype=np.bool_,
-        ),
         "numerical_state": np.asarray(
-            [point.response.numerical_state.value for point in points],
-            dtype="U24",
+            [point.numerical_state.value for point in points], dtype="U24"
         ),
         "model_state": np.asarray(
-            [point.response.model_state.value for point in points],
-            dtype="U24",
+            [point.model_state.value for point in points], dtype="U24"
         ),
     }
+    return arrays
 
 
 def _events(result, case_id: str) -> list[dict[str, Any]]:
     events: list[dict[str, Any]] = []
     sequence = 0
     for point in result.points:
-        for pin_index, label in point.response.event_labels:
-            response = point.response.pin_responses[pin_index]
+        for pin_index, label in point.event_labels:
+            pin = point.pin_responses[pin_index]
             events.append(
                 {
                     "sequence": sequence,
                     "case_id": case_id,
                     "event_type": label,
+                    "time_s": point.time_s,
                     "path_position_m": point.path_position_m,
                     "details": {
                         "pin_index": pin_index,
-                        "contact_state": response.contact_state.value,
-                        "spring_state": response.spring_state.value,
-                        "normal_force_n": response.normal_force_n,
+                        "contact_state": pin.contact_state.value,
+                        "spring_state": pin.spring_state.value,
+                        "normal_force_n": pin.normal_force_n,
+                        "normal_impulse_n_s": pin.normal_impulse_n_s,
                         "all_pin_normal_force_n": [
-                            item.normal_force_n
-                            for item in point.response.pin_responses
+                            item.normal_force_n for item in point.pin_responses
                         ],
-                        "event_refined": point.event_refined,
                     },
                 }
             )
@@ -282,21 +364,44 @@ def run_case(parameters: Mapping[str, Any], context: RunContext) -> CaseOutput:
         raise ValueError(
             "saved project-terrain M3 cases cannot disable rod clearance"
         )
-    system = CommonBackplateArray(
+
+    experiment_data = dict(parameters["experiment"])
+    contact_data = dict(parameters.get("contact", {}))
+    integrator_data = dict(parameters.get("integrator", {}))
+    unclosed = set(experiment_data.get("unclosed_parameter_names", ()))
+    unclosed.update(
+        f"experiment.{name}"
+        for name in _EXPLICIT_EXPERIMENT_PARAMETERS - set(experiment_data)
+    )
+    unclosed.update(
+        f"contact.{name}"
+        for name in _EXPLICIT_CONTACT_PARAMETERS - set(contact_data)
+    )
+    unclosed.update(
+        f"integrator.{name}"
+        for name in _EXPLICIT_INTEGRATOR_PARAMETERS - set(integrator_data)
+    )
+    experiment_data["unclosed_parameter_names"] = tuple(sorted(unclosed))
+    contact = DynamicContactSettings.from_mapping(contact_data)
+    integrator = DynamicIntegratorSettings.from_mapping(integrator_data)
+    experiment = ArrayDynamicExperimentSettings.from_mapping(experiment_data)
+    system = DynamicCommonBackplateArray(
         configuration,
         tracks,
         unit_origin_xy_m=tuple(parameters["unit_origin_xy_m"]),
-        solver_settings=SolverSettings(**dict(parameters.get("solver", {}))),
+        contact=contact,
     )
-    result = CommonBackplateExperiment(
+    result = DynamicCommonBackplateExperiment(
         system,
-        ArrayExperimentSettings(**dict(parameters["experiment"])),
+        experiment,
+        integrator,
     ).run()
     recipe = library.load_recipe(str(parameters["terrain_recipe_id"]))
     validation_passed = (
         result.summary.initial_preload_success
         and result.summary.numerical_state.value == "converged"
         and result.summary.run_terminal_state.value == "path_end"
+        and np.isfinite(result.summary.maximum_abs_dynamic_residual_n)
         and result.summary.maximum_force_aggregation_residual_n <= 1e-12
         and result.summary.maximum_moment_aggregation_residual_nm <= 1e-15
     )
@@ -308,24 +413,15 @@ def run_case(parameters: Mapping[str, Any], context: RunContext) -> CaseOutput:
         {
             "seed": np.full(point_count, recipe.seed, dtype=np.int64),
             "terrain_recipe_id": np.full(
-                point_count,
-                result.terrain_recipe_id,
-                dtype="U64",
+                point_count, result.terrain_recipe_id, dtype="U64"
             ),
             "configuration_id": np.full(
                 point_count,
                 result.configuration.configuration_id,
                 dtype="U64",
             ),
-            "preload_n": np.full(
-                point_count,
-                result.target_preload_n,
-                dtype=np.float64,
-            ),
             "model_level": np.full(
-                point_count,
-                M3_MODEL_LEVEL,
-                dtype="U80",
+                point_count, M3_MODEL_LEVEL, dtype="U96"
             ),
         }
     )
@@ -334,12 +430,9 @@ def run_case(parameters: Mapping[str, Any], context: RunContext) -> CaseOutput:
         arrays=arrays,
         events=_events(result, context.case_id),
         validation={
-            "passed": validation_passed,
-            "formal_ranking_eligible": (
-                validation_passed
-                and result.summary.model_state.value == "covered"
-            ),
-            "same_state_sample_contract": True,
+            "passed": bool(validation_passed),
+            "formal_ranking_eligible": result.summary.formal_ranking_eligible,
+            "same_time_state_sample_contract": True,
             "model_level": M3_MODEL_LEVEL,
         },
         stage_times_s={"m3_total": time.perf_counter() - started},

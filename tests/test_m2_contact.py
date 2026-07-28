@@ -12,7 +12,7 @@ from spine_sim.contact import (
     DynamicSingleSpineExperiment,
     DynamicSingleSpineUnit,
     LegacyFixedZExperiment,
-    PrescribedPoseConstitutiveCore,
+    LegacyPrescribedPoseConstitutiveCore,
     SingleSpineState,
     SpineParameters,
 )
@@ -80,7 +80,7 @@ class M2ModelAndCompatibilityTests(unittest.TestCase):
         self.assertEqual(unit.axial_response(5e-3)[3].value, "hard_stop")
 
     def test_legacy_prescribed_pose_core_remains_atomic_for_m3_migration(self):
-        core = PrescribedPoseConstitutiveCore(
+        core = LegacyPrescribedPoseConstitutiveCore(
             _fixture_parameters(),
             self.track,
         )

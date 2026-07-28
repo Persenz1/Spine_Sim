@@ -1,4 +1,4 @@
-"""M3 analytic gates and smoke validation on the saved ten-terrain M1 suite."""
+"""Legacy m3.0.0 fixed-Z validation retained as migration evidence only."""
 
 from __future__ import annotations
 
@@ -16,13 +16,16 @@ from spine_sim.contact.validation import _fixture_parameters, _fixture_track
 from spine_sim.io.results import atomic_write_json, utc_now
 from spine_sim.terrain import TerrainLibrary, TrackGeometry
 
-from .experiment import ArrayExperimentSettings, CommonBackplateExperiment
+from .experiment import (
+    LegacyArrayExperimentSettings as ArrayExperimentSettings,
+    LegacyFixedZCommonBackplateExperiment as CommonBackplateExperiment,
+)
 from .models import (
-    M3_MODULE_VERSION,
+    M3_LEGACY_MODULE_VERSION as M3_MODULE_VERSION,
     AngleLayout,
     ArrayConfiguration,
 )
-from .solver import CommonBackplateArray
+from .solver import LegacyCommonBackplateArray as CommonBackplateArray
 
 
 def _gate(
@@ -143,7 +146,7 @@ def _shift_fixture_track(
     )
 
 
-def run_analytic_validation(
+def run_legacy_analytic_validation(
     output_path: str | Path | None = None,
 ) -> dict[str, Any]:
     gates: list[dict[str, Any]] = []
@@ -670,7 +673,7 @@ def _valid_origin_interval(
     return lower, upper
 
 
-def run_m1_suite_smoke(
+def run_legacy_m1_suite_smoke(
     suite_report_path: str | Path,
     *,
     drag_length_m: float = 1e-3,

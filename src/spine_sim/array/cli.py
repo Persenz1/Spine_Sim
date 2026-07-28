@@ -1,4 +1,4 @@
-"""Command-line entry points for M3 validation and gated design preparation."""
+"""Command-line entry points for production dynamic and explicit legacy M3."""
 
 from __future__ import annotations
 
@@ -7,7 +7,11 @@ import json
 from pathlib import Path
 from typing import Sequence
 
-from .validation import run_analytic_validation, run_m1_suite_smoke
+from .dynamic_validation import run_dynamic_analytic_validation
+from .validation import (
+    run_legacy_analytic_validation,
+    run_legacy_m1_suite_smoke,
+)
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -17,9 +21,15 @@ def build_parser() -> argparse.ArgumentParser:
     analytic.add_argument(
         "--output",
         type=Path,
-        default=Path("results/m3_validation/analytic_validation.json"),
+        default=Path("results/m3_validation/dynamic_analytic_validation.json"),
     )
-    smoke = subcommands.add_parser("smoke-m1-suite")
+    legacy = subcommands.add_parser("validate-legacy-fixed-z")
+    legacy.add_argument(
+        "--output",
+        type=Path,
+        default=Path("results/m3_validation/legacy_fixed_z_validation.json"),
+    )
+    smoke = subcommands.add_parser("smoke-legacy-fixed-z")
     smoke.add_argument(
         "suite_report",
         type=Path,
@@ -29,7 +39,7 @@ def build_parser() -> argparse.ArgumentParser:
     smoke.add_argument(
         "--output",
         type=Path,
-        default=Path("results/m3_validation/m1_ten_terrain_smoke.json"),
+        default=Path("results/m3_validation/legacy_fixed_z_m1_smoke.json"),
     )
     smoke.add_argument("--drag-length-mm", type=float, default=1.0)
     smoke.add_argument("--path-step-um", type=float, default=50.0)
@@ -39,9 +49,11 @@ def build_parser() -> argparse.ArgumentParser:
 def main(argv: Sequence[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     if args.command == "validate-analytic":
-        report = run_analytic_validation(args.output)
+        report = run_dynamic_analytic_validation(args.output)
+    elif args.command == "validate-legacy-fixed-z":
+        report = run_legacy_analytic_validation(args.output)
     else:
-        report = run_m1_suite_smoke(
+        report = run_legacy_m1_suite_smoke(
             args.suite_report,
             drag_length_m=args.drag_length_mm * 1e-3,
             path_step_m=args.path_step_um * 1e-6,

@@ -1,4 +1,8 @@
-"""CPU-authoritative prescribed-pose solver for a rigid common backplate."""
+"""Legacy m3.0.0 prescribed-pose solver.
+
+This module is retained only for fixed-Z migration fixtures. Production M3
+uses :mod:`spine_sim.array.dynamics`.
+"""
 
 from __future__ import annotations
 
@@ -11,7 +15,7 @@ from spine_sim.contact import (
     ConstitutiveResponse,
     ContactState,
     EventLabel,
-    PrescribedPoseConstitutiveCore,
+    LegacyPrescribedPoseConstitutiveCore,
     SolverSettings,
 )
 from spine_sim.core.states import ModelState, NumericalState
@@ -20,9 +24,9 @@ from spine_sim.terrain import TrackGeometry
 from .models import (
     ActivitySets,
     ArrayConfiguration,
-    ArrayPoseResponse,
-    ArrayResidualAudit,
-    ArrayState,
+    LegacyArrayPoseResponse,
+    LegacyArrayResidualAudit,
+    LegacyArrayState,
     LoadSharingMetrics,
 )
 
@@ -57,8 +61,8 @@ def _gini(weights: np.ndarray) -> float:
     return float(coefficients @ ordered / (count * total))
 
 
-class CommonBackplateArray:
-    """Pure M3 array solve; every pin proposal sees the same old ArrayState."""
+class LegacyCommonBackplateArray:
+    """Legacy fixed-pose array solve retained for migration verification."""
 
     def __init__(
         self,
@@ -113,13 +117,15 @@ class CommonBackplateArray:
             ):
                 raise ValueError("every pin tip radius must match its M1 track")
         self.cores = tuple(
-            PrescribedPoseConstitutiveCore(parameters, track, self.solver_settings)
+            LegacyPrescribedPoseConstitutiveCore(
+                parameters, track, self.solver_settings
+            )
             for parameters, track in zip(self.pin_parameters, self.tracks)
         )
 
     @property
-    def empty_state(self) -> ArrayState:
-        return ArrayState.empty(self.configuration.pin_count)
+    def empty_state(self) -> LegacyArrayState:
+        return LegacyArrayState.empty(self.configuration.pin_count)
 
     def pin_holder_xz_m(
         self, pin_index: int, common_ux_m: float, common_uz_m: float
@@ -133,11 +139,11 @@ class CommonBackplateArray:
     def solve_pose(
         self,
         common_pose_m: tuple[float, float],
-        old_state: ArrayState | None = None,
+        old_state: LegacyArrayState | None = None,
         *,
         commit: bool = False,
         traversal_order: Sequence[int] | None = None,
-    ) -> ArrayPoseResponse:
+    ) -> LegacyArrayPoseResponse:
         """Compute all proposals first and only then expose an atomic array commit."""
 
         common_ux_m, common_uz_m = map(float, common_pose_m)
@@ -145,7 +151,9 @@ class CommonBackplateArray:
             raise ValueError("common pose must be finite")
         old = old_state or self.empty_state
         if len(old.pin_states) != self.configuration.pin_count:
-            raise ValueError("ArrayState pin count does not match the configuration")
+            raise ValueError(
+                "LegacyArrayState pin count does not match the configuration"
+            )
         if traversal_order is None:
             order = tuple(range(self.configuration.pin_count))
         else:
@@ -327,7 +335,7 @@ class CommonBackplateArray:
 
         proposal_valid = not invalid_reasons
         proposal = (
-            ArrayState(
+            LegacyArrayState(
                 tuple(response.proposal_state for response in pin_responses),
                 accepted_steps=old.accepted_steps + 1,
             )
@@ -350,7 +358,7 @@ class CommonBackplateArray:
             for response in pin_responses
             if math.isfinite(response.residual.force_decomposition_n)
         ]
-        residual = ArrayResidualAudit(
+        residual = LegacyArrayResidualAudit(
             force_aggregation_n=force_residual,
             moment_aggregation_nm=moment_residual,
             maximum_local_geometry_m=max(local_geometry, default=0.0),
@@ -361,7 +369,7 @@ class CommonBackplateArray:
             ),
         )
         zero_wrench = (0.0, 0.0, 0.0, 0.0, 0.0, 0.0)
-        return ArrayPoseResponse(
+        return LegacyArrayPoseResponse(
             common_ux_m=common_ux_m,
             common_uz_m=common_uz_m,
             unit_origin_xyz_m=tuple(float(value) for value in origin),

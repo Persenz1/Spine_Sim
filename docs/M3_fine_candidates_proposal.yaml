@@ -1,5 +1,5 @@
 schema_version: "1"
-m3_module_version: "m3.0.0"
+m3_module_version: "m3.1.0"
 status: "pending_user_approval_after_formal_round1"
 formal_round1_completed: false
 selected_candidate_count: 0
@@ -11,7 +11,8 @@ conclusions:
   array_scale_saturation: "not_evaluated"
   compliance_improves_effective_pin_count: "not_evaluated"
 reason: >-
-  M3 Stage-I implementation and ten-terrain interface smoke cannot rank hardware.
+  M3 dynamic Stage-I analytic acceptance cannot rank hardware. No legacy fixed-Z
+  screen was restored or rerun, and no formal M3 campaign was started.
   The full-chain manifest, formal M2 results, approved M2 parameter packs and
   explicit approval to start M3 round one are absent.
 required_next_action: >-

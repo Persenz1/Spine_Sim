@@ -1,70 +1,85 @@
-# M3 → M4 交接（legacy fixed-Z 接口，待动态版替换）
+# M3 → M4 动力学交接
 
-> 2026-07-28 起，M3→M4 必须包含同一时刻的背板动态状态、外部预载、惯性项、
-> 逐针冲击/接触状态和稳态/冲击分类。本文以下旧字段只能作为迁移参考。
+**来源版本：** `m3.1.0`
+**模型等级：**
+`project_model_P_common_rigid_backplate_z_dynamic_continuous_total_preload_v2`
 
 ## 冻结入口
 
-M4 读取 M3 保存的同状态样本，不在 M4 内实时重跑全部针，也不把不同点的最有利力、
-力矩和活动集拼在一起。
+M4 只读取 M3 保存的同一时刻样本，不在 M4 内重跑针单元，也不把不同时间、seed、
+预载或接触分支的有利力、力矩和活动集拼接。标准数组位于 M0 case 的
+`path.npz`；结构约束见 `M3_TO_M4_SAMPLE_SCHEMA.json`。
 
-标准数组位于 M0 case 的 `path.npz`。以相同点索引读取：
+同一点索引至少共同读取：
 
 ```text
 seed
 terrain_recipe_id
 configuration_id
-preload_n
+time_s
 path_position_m
-unit_normal_force_n
-tangential_force_positive_n
-tangential_force_negative_n
-unit_moment_nm
+external_total_preload_n
+backplate_position_xyz_m
+backplate_velocity_xyz_m_s
+backplate_acceleration_xyz_m_s2
+total_contact_reaction_z_n
+backplate_inertia_force_z_n
+backplate_damping_force_z_n
+pin_normal_force_n
+pin_tangential_force_n
+pin_normal_impulse_n_s
+pin_tangential_impulse_n_s
+pin_wrench_about_unit
+wall_on_unit_wrench_about_origin
 active_*
 contact_state
 event_label
-force_aggregation_residual_n
-moment_aggregation_residual_nm
+dynamic_residual_n
+energy_residual_j
+actual_time_step_s
 model_level
 ```
 
-结构约束见 `M3_TO_M4_SAMPLE_SCHEMA.json`。
+## 载荷语义
+
+- `external_total_preload_n` 是施加于整个共同背板的持续恒定外力，不是逐针预载；
+- `total_contact_reaction_z_n` 不要求逐点等于外载：脱离期可更小，冲击期可显著更大；
+- 首版共同背板只有 Z 动力学，x 是规定拖动运动，俯仰/横滚锁定；
+- M4 不得把背板惯性力、阻尼力或外载重复加入墙面接触 wrench；
+- 稳态承载样本和冲击样本必须按 `sample_class` 分开。冲击峰不得作为持续拉力包络。
 
 ## 坐标、作用对象和参考点
 
-- M3 单元局部系：`+x` 为拖动方向，`+z` 为墙面指向背板，`y=z×x`；
-- `wall_on_unit_wrench_about_origin` 的顺序是 `[Fx,Fy,Fz,Mx,My,Mz]`；
-- 参考点为当前共同背板单元中心 \(O_U\)；
-- 逐针输入是 M2 `spine_on_plate_wrench_about_holder`，M3 已执行
+- M3 单元局部系：`+x` 为拖动方向，`+z` 为墙面指向背板；
+- wrench 顺序是 `[Fx,Fy,Fz,Mx,My,Mz]`；
+- `pin_wrench_about_holder` 已关于当前逐针安装点；
+- `pin_wrench_about_unit` 已执行
   \((r_h-O_U)\times F\) 搬移；
+- `wall_on_unit_wrench_about_origin` 是同一时刻全部
+  `pin_wrench_about_unit` 的精确和；
 - M4 不得再次把逐针安装点力臂重复计矩；
-- 主动推力与导向反力保存在独立端口，不能重复加入墙面接触 wrench。
-
-## 法向与切向能力
-
-- `unit_normal_force_n` 是同一状态下各针非负 M2 包络法向力之和；
-- 正/负切向字段由同一个带符号单元 `Fx` 拆分，不是分别从不同路径点取峰值；
-- 当前 M3 是局部 x-z 主平面模型，没有单元局部 y 能力；
-- M4 对角加载只能在声明的轴向 ROM 边界内解释，不能虚构完整二维摩擦包络；
-- 只在样本实际覆盖的法向范围内插值，禁止向上外推。
+- 主动推力与导向反力是独立端口，不能冒充墙面接触能力。
 
 ## 模型门禁
 
-解析 M3 夹具为 `model_state=covered`。现有十个项目随机地形仍因二维杆体/锥段净空
-接口未闭合而是 `parameter_unclosed`，仅可用于接口 smoke，不能形成正式 M4 能力曲线。
+当前解析夹具的背板质量/阻尼、针模态参数、冲量接触参数和内部时间步没有项目标定
+来源，项目地形杆体/锥段净空也未闭合。因此结果为
+`model_state=parameter_unclosed`、`formal_ranking_eligible=false`，只能用于实现
+验收，不能形成正式 M4 能力曲线。
 
-正式 M4 能力输入还需：
+正式 M4 输入仍需：
 
-1. M2 正式轮次和用户批准参数包；
-2. M3 第一轮与细筛获批并完成；
-3. 项目地形净空闭合或经用户明确批准的保守边界；
-4. 目标 0.5/1/2 N 法向范围的同状态样本覆盖；
-5. 相关 case 的数值、模型和 run terminal 门禁通过。
+1. M2 正式轮次与用户批准参数包；
+2. M3 动力学时间步减半、接触参数敏感性和项目参数冻结；
+3. M3 第一轮及后续细筛获批并完成；
+4. 项目地形净空边界闭合；
+5. 目标 0.5/1/2 N 总外载范围的同状态样本覆盖；
+6. 相关 case 的 numerical/model/run-terminal 门禁全部通过。
 
-## 不得复用
+## 禁止复用
 
-- 不跨 seed、路径位置、预载或事件分支拼接；
-- 不使用 `active_thrust_wrench` 或 `guide_reaction_wrench` 冒充墙面能力；
-- 不把十地形 smoke 当作参数排序；
-- 不把首个针事件当作单元极限；
-- 不在缺少局部 y 响应时声称完整六维被动能力。
+- 禁止读取任何 legacy fixed-Z 样本作为正式能力；
+- 禁止跨样本拼接；
+- 禁止把瞬时冲击峰当作持续承载；
+- 禁止把首个单针事件当作阵列极限；
+- 禁止在缺少局部 y 响应时声称完整六维被动能力。

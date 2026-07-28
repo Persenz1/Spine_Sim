@@ -19,7 +19,7 @@ from .models import (
     SingleSpineExperimentResult,
     SingleSpineState,
 )
-from .solver import PrescribedPoseConstitutiveCore, _ACTIVE_STATES
+from .solver import LegacyPrescribedPoseConstitutiveCore, _ACTIVE_STATES
 
 
 @dataclass(frozen=True)
@@ -71,7 +71,7 @@ class SingleSpineExperiment:
 
     def __init__(
         self,
-        core: PrescribedPoseConstitutiveCore,
+        core: LegacyPrescribedPoseConstitutiveCore,
         settings: ExperimentSettings,
     ) -> None:
         self.core = core

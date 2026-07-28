@@ -1,4 +1,4 @@
-"""Initial total preload followed by fixed-common-Z array dragging."""
+"""Legacy initial-preload plus fixed-common-Z array migration fixture."""
 
 from __future__ import annotations
 
@@ -11,17 +11,17 @@ from spine_sim.contact import ContactState, EventLabel, PathTerminalState
 from spine_sim.core.states import ModelState, NumericalState
 
 from .models import (
-    ArrayExperimentResult,
-    ArrayPathPoint,
-    ArrayPathSummary,
-    ArrayPoseResponse,
-    ArrayState,
+    LegacyArrayExperimentResult,
+    LegacyArrayPathPoint,
+    LegacyArrayPathSummary,
+    LegacyArrayPoseResponse,
+    LegacyArrayState,
 )
-from .solver import CommonBackplateArray
+from .solver import LegacyCommonBackplateArray
 
 
 @dataclass(frozen=True)
-class ArrayExperimentSettings:
+class LegacyArrayExperimentSettings:
     drag_length_m: float
     path_step_m: float
     target_preload_n: float = 1.0
@@ -57,16 +57,16 @@ class ArrayExperimentSettings:
             raise ValueError("free_probe_spacing_m must be positive")
 
 
-class CommonBackplateExperiment:
+class LegacyFixedZCommonBackplateExperiment:
     def __init__(
         self,
-        system: CommonBackplateArray,
-        settings: ArrayExperimentSettings,
+        system: LegacyCommonBackplateArray,
+        settings: LegacyArrayExperimentSettings,
     ) -> None:
         self.system = system
         self.settings = settings
 
-    def run(self) -> ArrayExperimentResult:
+    def run(self) -> LegacyArrayExperimentResult:
         first_free = self._initial_free_pose()
         if not first_free.proposal_valid:
             return self._failed_result(
@@ -75,16 +75,16 @@ class CommonBackplateExperiment:
                 points=(),
             )
         preload = self._establish_preload(first_free.next_state, first_free.common_uz_m)
-        first_point = ArrayPathPoint(0.0, first_free, event_refined=True)
+        first_point = LegacyArrayPathPoint(0.0, first_free, event_refined=True)
         if preload is None:
             return self._failed_result(
                 PathTerminalState.INITIAL_PRELOAD_INFEASIBLE,
                 "initial_total_preload_infeasible",
                 points=(first_point,),
             )
-        points: list[ArrayPathPoint] = [
+        points: list[LegacyArrayPathPoint] = [
             first_point,
-            ArrayPathPoint(0.0, preload, event_refined=True),
+            LegacyArrayPathPoint(0.0, preload, event_refined=True),
         ]
         state = preload.next_state
         fixed_uz = preload.common_uz_m
@@ -124,7 +124,7 @@ class CommonBackplateExperiment:
                 )
                 for response, refined in segment:
                     points.append(
-                        ArrayPathPoint(
+                        LegacyArrayPathPoint(
                             path_position_m=response.common_ux_m,
                             response=response,
                             event_refined=refined,
@@ -147,7 +147,7 @@ class CommonBackplateExperiment:
                 current_ux = float(probe_ux)
         return self._result(fixed_uz, tuple(points), terminal, reason)
 
-    def _initial_free_pose(self) -> ArrayPoseResponse:
+    def _initial_free_pose(self) -> LegacyArrayPoseResponse:
         contact_heights: list[float] = []
         for index, (core, parameters) in enumerate(
             zip(self.system.cores, self.system.pin_parameters)
@@ -171,9 +171,9 @@ class CommonBackplateExperiment:
 
     def _establish_preload(
         self,
-        initial_state: ArrayState,
+        initial_state: LegacyArrayState,
         free_uz_m: float,
-    ) -> ArrayPoseResponse | None:
+    ) -> LegacyArrayPoseResponse | None:
         target = self.settings.target_preload_n
         approaches = np.geomspace(
             max(self.system.solver_settings.gap_tolerance_m, 1e-10),
@@ -197,7 +197,7 @@ class CommonBackplateExperiment:
             lower_approach = float(approach)
         if upper_approach is None:
             return None
-        best: ArrayPoseResponse | None = None
+        best: LegacyArrayPoseResponse | None = None
         for _ in range(self.system.solver_settings.root_max_iterations):
             middle = 0.5 * (lower_approach + upper_approach)
             candidate = self.system.solve_pose(
@@ -233,13 +233,13 @@ class CommonBackplateExperiment:
 
     def _advance_segment(
         self,
-        state: ArrayState,
+        state: LegacyArrayState,
         start_ux: float,
         end_ux: float,
         fixed_uz: float,
         *,
         depth: int = 0,
-    ) -> tuple[list[tuple[ArrayPoseResponse, bool]], ArrayState]:
+    ) -> tuple[list[tuple[LegacyArrayPoseResponse, bool]], LegacyArrayState]:
         trial = self.system.solve_pose(
             (end_ux, fixed_uz),
             state,
@@ -282,7 +282,9 @@ class CommonBackplateExperiment:
             state,
             commit=True,
         )
-        output: list[tuple[ArrayPoseResponse, bool]] = [(committed_event, True)]
+        output: list[tuple[LegacyArrayPoseResponse, bool]] = [
+            (committed_event, True)
+        ]
         if end_ux - event_ux <= self.system.solver_settings.event_tolerance_m:
             return output, committed_event.next_state
         remainder, final_state = self._advance_segment(
@@ -299,7 +301,7 @@ class CommonBackplateExperiment:
         self,
         pin_index: int,
         event: EventLabel,
-        state: ArrayState,
+        state: LegacyArrayState,
         start_ux: float,
         end_ux: float,
         fixed_uz: float,
@@ -347,11 +349,11 @@ class CommonBackplateExperiment:
     def _result(
         self,
         fixed_uz: float,
-        points: tuple[ArrayPathPoint, ...],
+        points: tuple[LegacyArrayPathPoint, ...],
         terminal: PathTerminalState,
         reason: str,
-    ) -> ArrayExperimentResult:
-        return ArrayExperimentResult(
+    ) -> LegacyArrayExperimentResult:
+        return LegacyArrayExperimentResult(
             configuration=self.system.configuration,
             terrain_recipe_id=self.system.terrain_recipe_id,
             region_id=self.system.region_id,
@@ -374,9 +376,9 @@ class CommonBackplateExperiment:
         terminal: PathTerminalState,
         reason: str,
         *,
-        points: tuple[ArrayPathPoint, ...],
-    ) -> ArrayExperimentResult:
-        return ArrayExperimentResult(
+        points: tuple[LegacyArrayPathPoint, ...],
+    ) -> LegacyArrayExperimentResult:
+        return LegacyArrayExperimentResult(
             configuration=self.system.configuration,
             terrain_recipe_id=self.system.terrain_recipe_id,
             region_id=self.system.region_id,
@@ -390,12 +392,12 @@ class CommonBackplateExperiment:
 
     def _summarize(
         self,
-        points: tuple[ArrayPathPoint, ...],
+        points: tuple[LegacyArrayPathPoint, ...],
         terminal: PathTerminalState,
         reason: str,
-    ) -> ArrayPathSummary:
+    ) -> LegacyArrayPathSummary:
         if not points:
-            return ArrayPathSummary(
+            return LegacyArrayPathSummary(
                 initial_preload_success=False,
                 total_contact_length_m=0.0,
                 effective_load_length_m=0.0,
@@ -506,7 +508,7 @@ class CommonBackplateExperiment:
             and abs(points[1].response.total_normal_force_n - self.settings.target_preload_n)
             <= self.settings.preload_force_tolerance_n
         )
-        return ArrayPathSummary(
+        return LegacyArrayPathSummary(
             initial_preload_success=preload_success,
             total_contact_length_m=contact_length,
             effective_load_length_m=effective_length,

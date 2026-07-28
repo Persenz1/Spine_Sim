@@ -1,44 +1,69 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "spine-sim://schemas/m3-to-m4-unit-sample-v1",
-  "title": "M3 to M4 same-state unit sample",
+  "$id": "spine-sim://schemas/m3-to-m4-dynamic-unit-sample-v2",
+  "title": "M3 to M4 same-time dynamic unit sample",
   "type": "object",
   "additionalProperties": false,
   "required": [
     "seed",
     "terrain_recipe_id",
     "configuration_id",
-    "preload_n",
+    "time_s",
     "path_position_m",
-    "normal_force_n",
-    "tangential_force_positive_n",
-    "tangential_force_negative_n",
-    "unit_moment_nm",
+    "external_total_preload_n",
+    "backplate_position_xyz_m",
+    "backplate_velocity_xyz_m_s",
+    "backplate_acceleration_xyz_m_s2",
+    "total_contact_reaction_z_n",
+    "backplate_inertia_force_z_n",
+    "backplate_damping_force_z_n",
+    "wall_on_unit_wrench_about_origin",
+    "pin_normal_force_n",
+    "pin_tangential_force_n",
+    "pin_normal_impulse_n_s",
+    "pin_tangential_impulse_n_s",
+    "pin_wrench_about_unit",
     "active_set",
     "contact_states",
     "event_label",
-    "numerical_residual",
+    "dynamic_residual_n",
+    "energy_residual_j",
+    "actual_time_step_s",
+    "sample_class",
     "model_level"
   ],
   "properties": {
     "seed": {"type": "integer", "minimum": 0},
     "terrain_recipe_id": {"type": "string", "minLength": 1},
     "configuration_id": {"type": "string", "minLength": 1},
-    "preload_n": {"type": "number", "exclusiveMinimum": 0},
+    "time_s": {"type": "number", "minimum": 0},
     "path_position_m": {"type": "number", "minimum": 0},
-    "normal_force_n": {"type": "number", "minimum": 0},
-    "tangential_force_positive_n": {"type": "number", "minimum": 0},
-    "tangential_force_negative_n": {"type": "number", "minimum": 0},
-    "unit_moment_nm": {
+    "external_total_preload_n": {"type": "number", "minimum": 0},
+    "backplate_position_xyz_m": {"$ref": "#/$defs/vector3"},
+    "backplate_velocity_xyz_m_s": {"$ref": "#/$defs/vector3"},
+    "backplate_acceleration_xyz_m_s2": {"$ref": "#/$defs/vector3"},
+    "total_contact_reaction_z_n": {"type": "number"},
+    "backplate_inertia_force_z_n": {"type": "number"},
+    "backplate_damping_force_z_n": {"type": "number"},
+    "wall_on_unit_wrench_about_origin": {"$ref": "#/$defs/wrench6"},
+    "pin_normal_force_n": {"$ref": "#/$defs/nonnegativeArray"},
+    "pin_tangential_force_n": {"$ref": "#/$defs/numberArray"},
+    "pin_normal_impulse_n_s": {"$ref": "#/$defs/nonnegativeArray"},
+    "pin_tangential_impulse_n_s": {"$ref": "#/$defs/numberArray"},
+    "pin_wrench_about_unit": {
       "type": "array",
-      "items": {"type": "number"},
-      "minItems": 3,
-      "maxItems": 3
+      "items": {"$ref": "#/$defs/wrench6"}
     },
     "active_set": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["nominal", "geometric", "positive_normal", "admissible", "target_load"],
+      "required": [
+        "nominal",
+        "geometric",
+        "positive_normal",
+        "admissible",
+        "target_load"
+      ],
       "properties": {
         "nominal": {"$ref": "#/$defs/indexArray"},
         "geometric": {"$ref": "#/$defs/indexArray"},
@@ -50,7 +75,15 @@
     "contact_states": {
       "type": "array",
       "items": {
-        "enum": ["free", "first_contact_event", "stick", "slide", "detach_event", "recontact_event"]
+        "enum": [
+          "free",
+          "first_contact_event",
+          "stick",
+          "slide",
+          "detach_event",
+          "recontact_event",
+          "impact_event"
+        ]
       }
     },
     "event_label": {
@@ -62,26 +95,48 @@
         "properties": {
           "pin_index": {"type": "integer", "minimum": 0},
           "label": {
-            "enum": ["first_contact", "detach_to_free", "recontact", "slip_start", "hard_stop"]
+            "enum": [
+              "first_contact",
+              "detach_to_free",
+              "recontact",
+              "impact",
+              "slip_start",
+              "stick_recovered",
+              "hard_stop"
+            ]
           }
         }
       }
     },
-    "numerical_residual": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": ["maximum_local_geometry_m", "force_aggregation_n", "moment_aggregation_nm"],
-      "properties": {
-        "maximum_local_geometry_m": {"type": "number", "minimum": 0},
-        "force_aggregation_n": {"type": "number", "minimum": 0},
-        "moment_aggregation_nm": {"type": "number", "minimum": 0}
-      }
-    },
+    "dynamic_residual_n": {"type": "number", "minimum": 0},
+    "energy_residual_j": {"type": "number"},
+    "actual_time_step_s": {"type": "number", "exclusiveMinimum": 0},
+    "sample_class": {"enum": ["steady", "impact", "other_event", "transient"]},
     "model_level": {
-      "const": "project_model_P_common_rigid_backplate_quasistatic_v1"
+      "const": "project_model_P_common_rigid_backplate_z_dynamic_continuous_total_preload_v2"
     }
   },
   "$defs": {
+    "vector3": {
+      "type": "array",
+      "items": {"type": "number"},
+      "minItems": 3,
+      "maxItems": 3
+    },
+    "wrench6": {
+      "type": "array",
+      "items": {"type": "number"},
+      "minItems": 6,
+      "maxItems": 6
+    },
+    "numberArray": {
+      "type": "array",
+      "items": {"type": "number"}
+    },
+    "nonnegativeArray": {
+      "type": "array",
+      "items": {"type": "number", "minimum": 0}
+    },
     "indexArray": {
       "type": "array",
       "items": {"type": "integer", "minimum": 0},

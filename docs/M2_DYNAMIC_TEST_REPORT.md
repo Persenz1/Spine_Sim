@@ -29,7 +29,7 @@
 59 passed, 9 subtests passed
 ```
 
-旧 `PrescribedPoseConstitutiveCore` 仍可编译并保持 proposal/commit 原子语义，供 M3
+旧 `LegacyPrescribedPoseConstitutiveCore` 仍可编译并保持 proposal/commit 原子语义，供 M3
 迁移；正式 M2 case 已切换到 `DynamicSingleSpineExperiment`。
 
 ## 3. 正式地形短程 smoke

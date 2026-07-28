@@ -29,7 +29,7 @@ from .models import (
     SpineParameters,
     SpringState,
 )
-from .solver import PrescribedPoseConstitutiveCore
+from .solver import LegacyPrescribedPoseConstitutiveCore
 
 
 @dataclass(frozen=True)
@@ -303,7 +303,7 @@ class _StepData:
 
 
 class DynamicSingleSpineUnit:
-    """Pure mechanics helper reusable by a future common-backplate M3."""
+    """Pure mechanics helper reused by the joint common-backplate M3 solver."""
 
     def __init__(
         self,
@@ -1044,7 +1044,7 @@ class DynamicSingleSpineExperiment:
                 ),
                 float(holder_x),
             )
-        core = PrescribedPoseConstitutiveCore(
+        core = LegacyPrescribedPoseConstitutiveCore(
             self.parameters,
             self.track,
             SolverSettings(),

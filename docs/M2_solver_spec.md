@@ -132,7 +132,7 @@ case identity。
 
 ## 9. 兼容边界
 
-旧 `PrescribedPoseConstitutiveCore` 可暂留给 M3 迁移和解析静态夹具，但必须标记
+旧 `LegacyPrescribedPoseConstitutiveCore` 可暂留给 M3 迁移和解析静态夹具，但必须标记
 `legacy_fixed_pose_quasistatic`，其完整路径结果永远
 `formal_ranking_eligible=false`。
 
