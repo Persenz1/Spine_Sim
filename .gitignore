@@ -6,6 +6,6 @@ __pycache__/
 build/
 dist/
 .venv/
+examples/
+output/
 results/
-output/m2_*.json
-output/m2_*.png
