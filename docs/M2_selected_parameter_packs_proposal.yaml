@@ -1,6 +1,6 @@
 schema_version: "1"
 m2_module_version: "m2.0.0"
-status: "pending_user_approval_after_round1"
+status: "invalidated_by_dynamic_constant_preload_rebuild"
 formal_round1_completed: false
 selected_parameter_packs: []
 reason: >-

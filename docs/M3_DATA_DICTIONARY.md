@@ -1,6 +1,6 @@
 # M3 数据字典
 
-**模块版本：** `m3.0.0`
+**模块版本：** `m3.0.0`（legacy fixed-Z；目标重建为动态恒载版本）
 **单位：** 除状态、索引、计数和无量纲指标外均为 SI。
 **模型等级：** `project_model_P_common_rigid_backplate_quasistatic_v1`
 
@@ -43,18 +43,21 @@ y_i=(row-(n_y-1)/2)s.
 `proposal_state`。`commit=true` 也不会逐针调用 M2 的提交路径，而是在全部 proposal
 检查通过后只切换阵列 `next_state`。
 
-### `ArrayExperimentSettings`
+### `ArrayDynamicExperimentSettings`（目标接口）
 
 | 字段 | 单位 | 含义 |
 |---|---|---|
-| `target_preload_n` | N | 只在起点搜索一次的总法向预载 |
-| `preload_force_tolerance_n` | N | 总预载接纳容差 |
-| `maximum_preload_approach_m` | m | 共同 uZ 最大接近量 |
-| `drag_length_m` | m | 固定共同 uZ 后的 +x 路径 |
-| `path_step_m` | m | 普通路径步长 |
-| `free_probe_spacing_m` | m/null | 存在 FREE 针时的再接触探测间距；默认最细 M1 track 分辨率 |
+| `external_total_preload_n` | N | 整个路径持续施加到背板的总外部预载 |
+| `drag_speed_m_s` | m/s | 规定共同 +x 速度 |
+| `backplate_mass_kg` | kg | 背板共同 Z 动力学质量 |
+| `backplate_inertia_kg_m2` | kg·m² | 若开放俯仰/横滚 |
+| `backplate_damping` | SI | 声明的平动/转动阻尼 |
+| `maximum_preload_approach_m` | m | 初始静态平衡搜索安全界 |
+| `drag_length_m` | m | 动态 +x 路径 |
+| `output_spacing_m` | m | 输出距离间距，不是内部时间步 |
+| `dynamic_integrator` | object | 与 M2 兼容的时域积分参数 |
 | `effective_unit_tangential_force_min_n` | N | 有效承载长度阈值 |
-| `refine_events` | bool | 是否对局部宏观事件定位并在事件共同位姿重评估全阵列 |
+| `refine_events` | bool | 是否定位接触、冲击和再接触事件 |
 
 ## 3. 单个共同位姿
 

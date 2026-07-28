@@ -1,6 +1,6 @@
 {
   "schema_version": "1",
-  "status": "draft_not_executable",
+  "status": "legacy_fixed_z_invalid_for_ranking",
   "m2_module_version": "m2.0.0",
   "campaign_name": "m2_round1_single_spine_screening",
   "gate": {

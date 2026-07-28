@@ -1,61 +1,59 @@
-# M2 → M3 交接
+# M2 → M3 动力学交接
 
-## 冻结入口
+## 1. 权威变更
 
-M3 只能调用规定安装座位姿核心，不得调用单刺完整试验包装器：
+M2/M3 的外部预载是整个拖动过程中持续存在的恒定外力。旧“起点一次预载后固定
+共同 Z”接口已失效。M3 不得继续调用旧 M2 fixed-pose 路径拼接阵列。
 
-```python
-from spine_sim.contact import (
-    PrescribedPoseConstitutiveCore,
-    SingleSpineState,
-    SpineParameters,
-)
+## 2. M2 提供给 M3 的单针单元
 
-core = PrescribedPoseConstitutiveCore(parameters, track)
-trial = core.solve_pose((x_h, z_h), old_state, commit=False)
-```
+M2 应暴露可由阵列统一组装的无隐藏状态接口：
 
-`trial.proposal_state` 是当前针的候选状态。M3 必须从同一个旧 `ArrayState` 对所有
-针试算；全部针通过后才一次性采纳各自 proposal。禁止先调用 `commit=True`
-改变部分针，再求其余针。
+- 单针广义质量/模态质量；
+- 给定背板位姿、速度与单针内部状态时的结构恢复力；
+- M1 包络 gap、法向、切向和接触雅可比；
+- 接触/摩擦力与状态 proposal；
+- 单针对背板的广义力和关于安装点的 wrench；
+- 结构、接触和耗散能；
+- 明确的 `commit=False/True` 或阵列级纯函数状态更新语义。
 
-## 力和 wrench 语义
+单针单元不能读取“每针目标预载”。外部总预载属于 M3 背板方程。
 
-- `wall_on_spine_force_xz_n`：墙面对针；
-- `spine_on_plate_wrench_about_holder`：针作用在板上的反力与力矩；
-- wrench 顺序 `[Fx,Fy,Fz,Mx,My,Mz]`；
-- 参考点是该针当前安装点；
-- M3 搬移到单元参考点后再求和；
-- 主平面映射为全局/单元局部三维时，局部 \(y\) 分量为零，不能据此虚构二维
-  切向能力。
+## 3. M3 必须求解的共同动力学
 
-## 状态提交
+阵列至少有共同背板竖向自由度 \(u_Z(t)\)，水平运动规定为
+\(u_x(t)=u_x^0+v_{\rm drag}t\)。若硬件允许俯仰/横滚，还需加入相应转动自由度和
+惯量。
 
-- `commit=False`：`next_state` 保持旧状态，proposal 可检查；
-- `commit=True`：只适合独立单刺包装器；M3 应由阵列层原子提交 proposal；
-- `proposal_valid=false` 时不得提交；
-- FREE/DETACH 的力和 wrench 严格为零，但下一共同位姿必须继续查询再接触；
-- `near_tie` 和 M1 模型警告不是物理失败。
+\[
+\mathbf M_B\ddot{\mathbf q}_B+
+\mathbf C_B\dot{\mathbf q}_B
+=\mathbf Q_{\rm preload}+
+\sum_i\mathbf Q_{i,\rm contact/structure}.
+\]
 
-## M3 必须检查
+恒定的是 `external_total_preload_n`。各针瞬时法向力以及总接触反力可以为零、波动
+或在冲击时超过外部预载。
 
-1. `numerical_state == converged`；
-2. `proposal_valid`；
-3. `model_state` 是否允许当前用途；
-4. `cap_gate_passed`；
-5. 几何、结构和力分解残余；
-6. 单边法向、摩擦和弹簧行程余量；
-7. 杆体净空是否已在项目地形上闭合。
+## 4. 禁止
 
-## 不得复用
+- 每针施加独立恒定法向力；
+- 每步强制 \(\sum_iN_i=P_A\)；
+- 初始预载后冻结背板 Z；
+- 独立运行每根针的 M2 完整路径再相加；
+- 某根针脱离时终止阵列；
+- 用旧 `no_admissible_contact_equilibrium` 代表阵列物理失败。
 
-- 不复用 `SingleSpineExperiment` 的独立路径结果拼阵列；
-- 不为每针独立搜索初始或拖动期 Z；
-- 不将 `initial_preload_infeasible` 用于阵列拖动脱离；
-- 不跨 seed、路径位置或状态拼接力和力矩。
+## 5. M3→M4 样本
 
-## 当前未闭合接口
+每个样本必须来自同一时间、同一背板状态和同一接触分支，并新增：
 
-`TrackGeometry` 不带二维原始高度查询，因此项目随机地形上的杆体/锥段净空仍标记
-为 `parameter_unclosed`。M3 正式能力样本前必须在 M1/M2 接口层补充只读净空查询
-或明确批准保守几何边界。
+- 时间、背板位置/速度/加速度；
+- 外部总预载；
+- 总接触反力；
+- 逐针接触力、冲击和状态；
+- 背板惯性力及力矩；
+- 动态能量与耗散；
+- 时间步和模型等级。
+
+M4 不得把瞬时冲击峰与稳态持续能力混为同一承载包络。
