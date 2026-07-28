@@ -80,19 +80,26 @@ M2 的稳定 Python 入口：
 
 ```python
 from spine_sim.contact import (
-    PrescribedPoseConstitutiveCore,
-    SingleSpineState,
-    SpineParameters,
+    DynamicContactSettings,
+    DynamicExperimentSettings,
+    DynamicIntegratorSettings,
+    DynamicSingleSpineExperiment,
 )
 
-core = PrescribedPoseConstitutiveCore(parameters, track)
-trial = core.solve_pose((x_h, z_h), SingleSpineState(), commit=False)
+result = DynamicSingleSpineExperiment(
+    parameters,
+    track,
+    DynamicExperimentSettings(...),
+    DynamicContactSettings(...),
+    DynamicIntegratorSettings(...),
+).run()
 ```
 
-M3 必须从同一旧阵列状态对所有针调用 `commit=False`，然后在阵列层原子采纳
-proposal；不能复用独立单刺包装器的完整路径结果。
+`PrescribedPoseConstitutiveCore` 与 `LegacyFixedZExperiment` 只用于旧 M3 迁移和
+静态解析夹具，不能生成正式 M2 排名。
 
-M3 的稳定 Python 入口：
+M3 当前入口仍是 legacy fixed-Z 迁移接口，必须按
+`docs/M2_to_M3_handoff.md` 重建后才能重新成为生产入口：
 
 ```python
 from spine_sim.array import (
@@ -133,6 +140,7 @@ M0 的验收证据和风险覆盖见 [M0 测试报告](docs/M0_TEST_REPORT.md)�
 [M1→M2 交接](docs/M1_to_M2_handoff.md)；轻量预览命令见
 [M1 地形绘图](docs/M1_TERRAIN_PLOTTING.md)。M2 的分支定义、字段和验收证据见
 [求解规格](docs/M2_solver_spec.md)、[数据字典](docs/M2_DATA_DICTIONARY.md)、
-[测试报告](docs/M2_TEST_REPORT.md) 和 [M2→M3 交接](docs/M2_to_M3_handoff.md)。
+[动态测试报告](docs/M2_DYNAMIC_TEST_REPORT.md)、[legacy 测试报告](docs/M2_TEST_REPORT.md)
+和 [M2→M3 交接](docs/M2_to_M3_handoff.md)。
 M3 的字段、验收和下游约束见 [M3 数据字典](docs/M3_DATA_DICTIONARY.md)、
 [M3 测试报告](docs/M3_TEST_REPORT.md) 和 [M3→M4 交接](docs/M3_to_M4_handoff.md)。

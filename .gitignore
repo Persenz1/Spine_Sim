@@ -7,3 +7,5 @@ build/
 dist/
 .venv/
 results/
+output/m2_*.json
+output/m2_*.png

@@ -9,7 +9,7 @@ import platform
 import time
 import traceback
 import tracemalloc
-from concurrent.futures import ProcessPoolExecutor, as_completed
+from concurrent.futures import FIRST_COMPLETED, ProcessPoolExecutor, wait
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any, Callable, Mapping
@@ -196,26 +196,10 @@ class CampaignRunner:
 
         worker_count = workers or self.campaign.workers
         backend_record = self.backend.as_dict()
-        results: list[dict[str, Any]] = []
-        if worker_count == 1:
-            results = [
-                _execute(self.campaign.callable, case, backend_record)
-                for case in selected
-            ]
-        elif selected:
-            context = multiprocessing.get_context("spawn")
-            with ProcessPoolExecutor(max_workers=worker_count, mp_context=context) as executor:
-                futures = {
-                    executor.submit(
-                        _execute, self.campaign.callable, case, backend_record
-                    ): case
-                    for case in selected
-                }
-                for future in as_completed(futures):
-                    results.append(future.result())
+        selected_by_id = {case.case_id: case for case in selected}
 
-        for result in results:
-            case = next(case for case in selected if case.case_id == result["case_id"])
+        def persist(result: dict[str, Any]) -> None:
+            case = selected_by_id[result["case_id"]]
             if result["ok"]:
                 output: CaseOutput = result["output"]
                 summary = dict(output.summary)
@@ -255,6 +239,44 @@ class CampaignRunner:
                     },
                     complete=False,
                 )
+
+        if worker_count == 1:
+            for case in selected:
+                persist(_execute(self.campaign.callable, case, backend_record))
+        elif selected:
+            # Keep only a small multiple of the worker count in flight. A formal
+            # campaign can contain thousands of array-heavy results, so retaining
+            # every Future until the campaign ends defeats per-case atomic writes
+            # and can exhaust the coordinator process.
+            context = multiprocessing.get_context("spawn")
+            case_iterator = iter(selected)
+            maximum_in_flight = 2 * worker_count
+            with ProcessPoolExecutor(
+                max_workers=worker_count, mp_context=context
+            ) as executor:
+                in_flight: dict[Any, BaseCaseSpec] = {}
+
+                def submit_next() -> bool:
+                    try:
+                        case = next(case_iterator)
+                    except StopIteration:
+                        return False
+                    future = executor.submit(
+                        _execute, self.campaign.callable, case, backend_record
+                    )
+                    in_flight[future] = case
+                    return True
+
+                for _ in range(min(maximum_in_flight, len(selected))):
+                    submit_next()
+                while in_flight:
+                    completed, _pending = wait(
+                        in_flight, return_when=FIRST_COMPLETED
+                    )
+                    for future in completed:
+                        in_flight.pop(future)
+                        persist(future.result())
+                        submit_next()
 
         records = self.store.list_records()
         index_format = self.store.write_campaign_index(records)

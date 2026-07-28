@@ -14,6 +14,7 @@ from .heightmap import (
     register_heightmap_source,
     sample_file_heightmap,
 )
+from .formal import generate_formal_terrain_batch
 from .library import TerrainLibrary
 from .models import (
     M1_MODULE_VERSION,
@@ -58,6 +59,7 @@ __all__ = [
     "extract_centered_patch",
     "forward_cap_gate",
     "generate_defined_geometry",
+    "generate_formal_terrain_batch",
     "generate_terrain_suite",
     "place_sphere_on_patch",
     "register_heightmap_source",

@@ -13,6 +13,7 @@ import numpy as np
 
 from spine_sim.io.results import atomic_write_json
 
+from .formal import generate_formal_terrain_batch
 from .library import TerrainLibrary
 from .models import (
     RegionSpec,
@@ -87,6 +88,14 @@ def build_parser() -> argparse.ArgumentParser:
     suite.add_argument("--output", type=Path)
     suite.add_argument("--tile-rows", type=int, default=64)
     suite.add_argument("--overwrite", action="store_true")
+
+    formal = sub.add_parser("generate-formal-batch")
+    formal.add_argument("library", type=Path)
+    formal.add_argument("batch", type=Path)
+    formal.add_argument("output", type=Path)
+    formal.add_argument("--tile-rows", type=int, default=256)
+    formal.add_argument("--backend", choices=("cpu", "cuda"), default="cuda")
+    formal.add_argument("--overwrite", action="store_true")
 
     plot = sub.add_parser("plot-region")
     plot.add_argument("library", type=Path)
@@ -240,6 +249,15 @@ def main(argv: Sequence[str] | None = None) -> int:
         )
         if args.output:
             atomic_write_json(args.output, result)
+    elif args.command == "generate-formal-batch":
+        result = generate_formal_terrain_batch(
+            args.library,
+            _read_json(args.batch),
+            output_path=args.output,
+            tile_rows=args.tile_rows,
+            backend=args.backend,
+            overwrite=args.overwrite,
+        )
     elif args.command == "plot-region":
         result = render_terrain_views(
             args.library,

@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "spine-sim"
-version = "0.4.0"
-description = "M0-M3 foundation, terrain, single-spine and common-backplate array simulator"
+version = "0.5.0"
+description = "Terrain and continuous-preload dynamic spine simulator"
 requires-python = ">=3.11"
 dependencies = ["numpy>=1.26"]
 

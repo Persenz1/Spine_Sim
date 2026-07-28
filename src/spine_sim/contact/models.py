@@ -15,8 +15,9 @@ from spine_sim.core.states import ModelState, NumericalState
 from .errors import ContactConfigurationError
 
 
-M2_MODULE_VERSION = "m2.0.0"
-M2_MODEL_LEVEL = "project_model_P_main_plane_quasistatic_v1"
+M2_MODULE_VERSION = "m2.1.0"
+M2_MODEL_LEVEL = "project_model_P_main_plane_dynamic_constant_preload_v2"
+M2_LEGACY_MODEL_LEVEL = "legacy_fixed_pose_quasistatic_v1"
 
 
 class AxialMode(StrEnum):
@@ -31,6 +32,7 @@ class ContactState(StrEnum):
     SLIDE = "slide"
     DETACH_EVENT = "detach_event"
     RECONTACT_EVENT = "recontact_event"
+    IMPACT_EVENT = "impact_event"
 
 
 class SpringState(StrEnum):
@@ -55,6 +57,8 @@ class EventLabel(StrEnum):
     RECONTACT = "recontact"
     SLIP_START = "slip_start"
     HARD_STOP = "hard_stop"
+    IMPACT = "impact"
+    STICK_RECOVERED = "stick_recovered"
 
 
 @dataclass(frozen=True)
@@ -76,6 +80,12 @@ class SpineParameters:
     beam_enabled: bool = True
     material_assumption: str = "unfrozen_high_carbon_steel_proxy_E200GPa_nu0.29"
     rod_clearance_mode: str = "unclosed"
+    density_kg_m3: float = 7850.0
+    axial_modal_mass_factor: float = 1.0 / 3.0
+    transverse_modal_mass_factor: float = 0.236
+    axial_damping_ratio: float = 0.05
+    transverse_damping_ratio: float = 0.05
+    yield_strength_pa: float | None = None
 
     def __post_init__(self) -> None:
         try:
@@ -90,6 +100,9 @@ class SpineParameters:
             "spring_travel_m",
             "young_modulus_pa",
             "shear_correction",
+            "density_kg_m3",
+            "axial_modal_mass_factor",
+            "transverse_modal_mass_factor",
         )
         for name in positive:
             value = float(getattr(self, name))
@@ -127,6 +140,19 @@ class SpineParameters:
         if self.rod_clearance_mode not in {"unclosed", "disabled_analytic_fixture"}:
             raise ContactConfigurationError(
                 "rod_clearance_mode must be unclosed or disabled_analytic_fixture"
+            )
+        for name in ("axial_damping_ratio", "transverse_damping_ratio"):
+            value = float(getattr(self, name))
+            if not math.isfinite(value) or value < 0.0:
+                raise ContactConfigurationError(
+                    f"{name} must be finite and non-negative"
+                )
+        if self.yield_strength_pa is not None and (
+            not math.isfinite(self.yield_strength_pa)
+            or self.yield_strength_pa <= 0.0
+        ):
+            raise ContactConfigurationError(
+                "yield_strength_pa must be null or finite and positive"
             )
 
     @property
@@ -176,6 +202,18 @@ class SpineParameters:
             self.shear_correction * self.shear_modulus_pa * self.area_m2
         )
         return bending + shear
+
+    @property
+    def spine_mass_kg(self) -> float:
+        return self.density_kg_m3 * self.area_m2 * self.exposed_length_m
+
+    @property
+    def axial_modal_mass_kg(self) -> float:
+        return self.axial_modal_mass_factor * self.spine_mass_kg
+
+    @property
+    def transverse_modal_mass_kg(self) -> float:
+        return self.transverse_modal_mass_factor * self.spine_mass_kg
 
     def as_dict(self) -> dict[str, Any]:
         value = asdict(self)
