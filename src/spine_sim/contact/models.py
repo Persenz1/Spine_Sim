@@ -15,7 +15,7 @@ from spine_sim.core.states import ModelState, NumericalState
 from .errors import ContactConfigurationError
 
 
-M2_MODULE_VERSION = "m2.1.0"
+M2_MODULE_VERSION = "m2.2.0"
 M2_MODEL_LEVEL = "project_model_P_main_plane_dynamic_constant_preload_v2"
 M2_LEGACY_MODEL_LEVEL = "legacy_fixed_pose_quasistatic_v1"
 
@@ -137,9 +137,14 @@ class SpineParameters:
             raise ContactConfigurationError(
                 "rigid axial mode requires spring_stiffness_n_m=None"
             )
-        if self.rod_clearance_mode not in {"unclosed", "disabled_analytic_fixture"}:
+        if self.rod_clearance_mode not in {
+            "unclosed",
+            "disabled_analytic_fixture",
+            "proxy_cylindrical_shank_postcheck",
+        }:
             raise ContactConfigurationError(
-                "rod_clearance_mode must be unclosed or disabled_analytic_fixture"
+                "rod_clearance_mode must be unclosed, disabled_analytic_fixture, "
+                "or proxy_cylindrical_shank_postcheck"
             )
         for name in ("axial_damping_ratio", "transverse_damping_ratio"):
             value = float(getattr(self, name))

@@ -286,10 +286,6 @@ class LegacyPrescribedPoseConstitutiveCore:
             )
         transverse_force = float(required @ self._b) / self._cb
         force = -axial_force * self._a + transverse_force * self._b
-        if float(np.linalg.norm(force)) > self.settings.max_contact_force_n:
-            raise _StructuralBoundary(
-                "structural_boundary: STICK force exceeds the configured safety limit"
-            )
         normal = np.asarray(geometry.normal_xz, dtype=np.float64)
         tangent = np.asarray(geometry.tangent_xz, dtype=np.float64)
         normal_force = float(force @ normal)
@@ -326,6 +322,10 @@ class LegacyPrescribedPoseConstitutiveCore:
             )
         friction_limit = self.parameters.static_friction * max(normal_force, 0.0)
         if abs(tangential_force) <= friction_limit + self.settings.force_tolerance_n:
+            if float(np.linalg.norm(force)) > self.settings.max_contact_force_n:
+                raise _StructuralBoundary(
+                    "structural_boundary: STICK force exceeds the configured safety limit"
+                )
             event = EventLabel.NONE
             if (
                 spring_state is SpringState.HARD_STOP

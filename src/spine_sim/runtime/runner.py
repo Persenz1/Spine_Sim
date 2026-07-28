@@ -97,9 +97,11 @@ def _execute(
     reference: str,
     case: BaseCaseSpec,
     backend: Mapping[str, Any],
+    profile_python_memory: bool = True,
 ) -> dict[str, Any]:
     started = time.perf_counter()
-    tracemalloc.start()
+    if profile_python_memory:
+        tracemalloc.start()
     try:
         function = _load_callable(reference)
         context = RunContext(case_id=case.case_id, backend=backend)
@@ -111,7 +113,7 @@ def _execute(
         )
         if not isinstance(output, CaseOutput):
             raise TypeError("case callable must return CaseOutput")
-        current, peak = tracemalloc.get_traced_memory()
+        peak = tracemalloc.get_traced_memory()[1] if profile_python_memory else 0
         return {
             "ok": True,
             "case_id": case.case_id,
@@ -121,7 +123,7 @@ def _execute(
             "peak_python_bytes": peak,
         }
     except BaseException as exc:
-        current, peak = tracemalloc.get_traced_memory()
+        peak = tracemalloc.get_traced_memory()[1] if profile_python_memory else 0
         return {
             "ok": False,
             "case_id": case.case_id,
@@ -132,7 +134,8 @@ def _execute(
             "peak_python_bytes": peak,
         }
     finally:
-        tracemalloc.stop()
+        if profile_python_memory:
+            tracemalloc.stop()
 
 
 class CampaignRunner:
@@ -197,6 +200,7 @@ class CampaignRunner:
         worker_count = workers or self.campaign.workers
         backend_record = self.backend.as_dict()
         selected_by_id = {case.case_id: case for case in selected}
+        profile_python_memory = self.campaign.mode != "formal"
 
         def persist(result: dict[str, Any]) -> None:
             case = selected_by_id[result["case_id"]]
@@ -242,7 +246,14 @@ class CampaignRunner:
 
         if worker_count == 1:
             for case in selected:
-                persist(_execute(self.campaign.callable, case, backend_record))
+                persist(
+                    _execute(
+                        self.campaign.callable,
+                        case,
+                        backend_record,
+                        profile_python_memory,
+                    )
+                )
         elif selected:
             # Keep only a small multiple of the worker count in flight. A formal
             # campaign can contain thousands of array-heavy results, so retaining
@@ -262,7 +273,11 @@ class CampaignRunner:
                     except StopIteration:
                         return False
                     future = executor.submit(
-                        _execute, self.campaign.callable, case, backend_record
+                        _execute,
+                        self.campaign.callable,
+                        case,
+                        backend_record,
+                        profile_python_memory,
                     )
                     in_flight[future] = case
                     return True

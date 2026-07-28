@@ -135,6 +135,7 @@ class DynamicExperimentSettings:
     maximum_preload_approach_m: float = 8e-3
     output_spacing_m: float = 10e-6
     effective_normal_force_min_n: float = 0.05
+    initial_preload_force_tolerance_n: float = 1e-4
 
     def __post_init__(self) -> None:
         positive = (
@@ -174,6 +175,13 @@ class DynamicExperimentSettings:
         ):
             raise ContactConfigurationError(
                 "effective_normal_force_min_n must be finite and non-negative"
+            )
+        if (
+            not math.isfinite(self.initial_preload_force_tolerance_n)
+            or self.initial_preload_force_tolerance_n <= 0.0
+        ):
+            raise ContactConfigurationError(
+                "initial_preload_force_tolerance_n must be finite and positive"
             )
 
     @classmethod
@@ -256,6 +264,9 @@ class DynamicPathSummary:
     ever_loaded: bool
     contact_fraction: float
     effective_load_fraction: float
+    contact_length_m: float
+    effective_load_length_m: float
+    maximum_continuous_load_length_m: float
     global_pull_force_peak_n: float
     global_pull_force_steady_peak_n: float
     global_pull_force_median_n: float
@@ -300,6 +311,89 @@ class _StepData:
     state: DynamicState
     point: DynamicPathPoint
     active: bool
+
+
+class _PathStatistics:
+    """Event-unbiased streaming statistics over every accepted time step."""
+
+    def __init__(self, capacity: int, effective_force_min_n: float) -> None:
+        self.pull_n = np.empty(capacity, dtype=np.float64)
+        self.normal_n = np.empty(capacity, dtype=np.float64)
+        self.impact = np.empty(capacity, dtype=np.bool_)
+        self.count = 0
+        self.effective_force_min_n = effective_force_min_n
+        self.active_count = 0
+        self.effective_count = 0
+        self.contact_length_m = 0.0
+        self.effective_length_m = 0.0
+        self.maximum_continuous_length_m = 0.0
+        self._current_continuous_length_m = 0.0
+        self.holder_z_min_m = math.inf
+        self.holder_z_max_m = -math.inf
+        self.holder_speed_peak_m_s = 0.0
+        self.holder_acceleration_peak_m_s2 = 0.0
+        self.impact_velocity_peak_m_s = 0.0
+        self.maximum_bending_stress_pa = 0.0
+        self.minimum_euler_buckling_margin_n = math.inf
+        self.maximum_abs_dynamic_residual_n = 0.0
+        self.maximum_abs_energy_residual_j = 0.0
+        self.event_counts = {name.value: 0 for name in EventLabel}
+
+    def observe(self, point: DynamicPathPoint, path_increment_m: float) -> None:
+        normal = float(point.normal_force_n)
+        pull = abs(float(point.spine_on_plate_wrench_about_holder[0]))
+        is_active = normal > 0.0
+        is_effective = normal >= self.effective_force_min_n
+        self.normal_n[self.count] = normal
+        self.pull_n[self.count] = pull
+        self.impact[self.count] = point.impact_velocity_m_s > 0.0
+        self.count += 1
+        self.active_count += int(is_active)
+        self.effective_count += int(is_effective)
+        if is_active:
+            self.contact_length_m += path_increment_m
+        if is_effective:
+            self.effective_length_m += path_increment_m
+            self._current_continuous_length_m += path_increment_m
+            self.maximum_continuous_length_m = max(
+                self.maximum_continuous_length_m,
+                self._current_continuous_length_m,
+            )
+        else:
+            self._current_continuous_length_m = 0.0
+        holder_z = float(point.holder_xz_m[1])
+        self.holder_z_min_m = min(self.holder_z_min_m, holder_z)
+        self.holder_z_max_m = max(self.holder_z_max_m, holder_z)
+        self.holder_speed_peak_m_s = max(
+            self.holder_speed_peak_m_s,
+            abs(float(point.holder_velocity_xz_m_s[1])),
+        )
+        self.holder_acceleration_peak_m_s2 = max(
+            self.holder_acceleration_peak_m_s2,
+            abs(float(point.holder_acceleration_xz_m_s2[1])),
+        )
+        self.impact_velocity_peak_m_s = max(
+            self.impact_velocity_peak_m_s,
+            float(point.impact_velocity_m_s),
+        )
+        self.maximum_bending_stress_pa = max(
+            self.maximum_bending_stress_pa,
+            float(point.bending_stress_pa),
+        )
+        self.minimum_euler_buckling_margin_n = min(
+            self.minimum_euler_buckling_margin_n,
+            float(point.euler_buckling_margin_n),
+        )
+        self.maximum_abs_dynamic_residual_n = max(
+            self.maximum_abs_dynamic_residual_n,
+            abs(float(point.dynamic_residual_n)),
+        )
+        self.maximum_abs_energy_residual_j = max(
+            self.maximum_abs_energy_residual_j,
+            abs(float(point.energy_residual_j)),
+        )
+        for label in point.event_labels:
+            self.event_counts[label] = self.event_counts.get(label, 0) + 1
 
 
 class DynamicSingleSpineUnit:
@@ -516,47 +610,116 @@ class DynamicSingleSpineExperiment:
         v0: NDArray[np.float64],
         dt: float,
     ) -> tuple[NDArray[np.float64], NDArray[np.float64], NDArray[np.float64], int]:
-        v = v0.copy()
-        iterations = 0
-        for iterations in range(1, 21):
-            q = q0 + dt * v
-            (
-                damping,
-                tangent,
-                axial_force,
-                _axial_energy,
-                _spring_state,
-                _compression,
-            ) = self._damping_and_tangent(q)
-            restoring = np.array(
-                [
-                    0.0,
-                    axial_force,
-                    self.unit.transverse_stiffness_n_m * q[2],
-                ],
-                dtype=np.float64,
+        # The three free modes are diagonal.  Solve their backward-Euler
+        # equations exactly instead of iterating across the axial spring's
+        # LOWER/INTERIOR/HARD-STOP kinks.  The old fixed-point Newton loop could
+        # bounce between the soft spring and very stiff beam branches and return
+        # an unconverged state without saying so.
+        holder_mass = self._mass[0]
+        holder_damping = self.experiment.holder_vertical_damping_n_s_m
+        holder_velocity = (
+            holder_mass * v0[0] / dt
+            - self.experiment.constant_preload_n
+        ) / (holder_mass / dt + holder_damping)
+
+        axial_mass = self._mass[1]
+
+        def linear_mode_velocity(
+            *,
+            position: float,
+            velocity: float,
+            mass: float,
+            stiffness: float,
+            damping_ratio: float,
+            offset_force: float = 0.0,
+        ) -> tuple[float, float]:
+            damping = 2.0 * damping_ratio * math.sqrt(stiffness * mass)
+            solved_velocity = (
+                mass * velocity / dt
+                - stiffness * position
+                - offset_force
+            ) / (mass / dt + damping + stiffness * dt)
+            return solved_velocity, position + dt * solved_velocity
+
+        p = self.parameters
+        ca = p.axial_compliance_m_n
+        axial_candidates: list[tuple[float, float, float, float]] = []
+
+        def add_axial_candidate(
+            stiffness: float,
+            offset: float,
+            lower: float,
+            upper: float,
+        ) -> None:
+            velocity, position = linear_mode_velocity(
+                position=float(q0[1]),
+                velocity=float(v0[1]),
+                mass=axial_mass,
+                stiffness=stiffness,
+                damping_ratio=p.axial_damping_ratio,
+                offset_force=offset,
             )
-            external = np.array(
-                [-self.experiment.constant_preload_n, 0.0, 0.0],
-                dtype=np.float64,
+            violation = max(lower - position, 0.0, position - upper)
+            axial_candidates.append(
+                (violation, velocity, position, stiffness)
             )
-            residual = (
-                self._mass * (v - v0) / dt
-                + damping * v
-                + restoring
-                - external
+
+        beam_stiffness = 1.0 / ca
+        if p.axial_mode.value == "rigid":
+            add_axial_candidate(
+                beam_stiffness,
+                0.0,
+                -math.inf,
+                math.inf,
             )
-            diagonal = self._mass / dt + damping + dt * tangent
-            update = residual / diagonal
-            v -= update
-            if float(np.max(np.abs(update))) <= 1e-11:
-                break
+        else:
+            spring_stiffness = float(p.spring_stiffness_n_m)
+            interior_stiffness = 1.0 / (ca + 1.0 / spring_stiffness)
+            hard_start = (
+                p.spring_travel_m
+                + ca * spring_stiffness * p.spring_travel_m
+            )
+            add_axial_candidate(
+                beam_stiffness,
+                0.0,
+                -math.inf,
+                0.0,
+            )
+            add_axial_candidate(
+                interior_stiffness,
+                0.0,
+                0.0,
+                hard_start,
+            )
+            add_axial_candidate(
+                beam_stiffness,
+                -p.spring_travel_m / ca,
+                hard_start,
+                math.inf,
+            )
+        _, axial_velocity, _axial_position, _ = min(
+            axial_candidates,
+            key=lambda candidate: candidate[0],
+        )
+
+        transverse_stiffness = self.unit.transverse_stiffness_n_m
+        transverse_velocity, _ = linear_mode_velocity(
+            position=float(q0[2]),
+            velocity=float(v0[2]),
+            mass=self._mass[2],
+            stiffness=transverse_stiffness,
+            damping_ratio=p.transverse_damping_ratio,
+        )
+        v = np.array(
+            [holder_velocity, axial_velocity, transverse_velocity],
+            dtype=np.float64,
+        )
         q = q0 + dt * v
         damping, tangent, *_ = self._damping_and_tangent(q)
         effective_inverse = 1.0 / (
             self._mass + dt * damping + dt**2 * tangent
         )
-        return q, v, effective_inverse, iterations
+        return q, v, effective_inverse, 1
 
     def _contact_project(
         self,
@@ -1097,7 +1260,10 @@ class DynamicSingleSpineExperiment:
                 continue
             best = candidate
             vertical_force = candidate.wall_on_spine_force_xz_n[1]
-            if abs(vertical_force - target) <= 1e-7:
+            if (
+                abs(vertical_force - target)
+                <= self.experiment.initial_preload_force_tolerance_n
+            ):
                 break
             if vertical_force < target:
                 lower = middle
@@ -1115,7 +1281,7 @@ class DynamicSingleSpineExperiment:
         if (
             not committed.proposal_valid
             or abs(committed.wall_on_spine_force_xz_n[1] - target)
-            > 1e-5
+            > self.experiment.initial_preload_force_tolerance_n
         ):
             raise RuntimeError(
                 "initial_preload_infeasible: external preload root rejected"
@@ -1226,6 +1392,11 @@ class DynamicSingleSpineExperiment:
             return self._failed_result(
                 "numerical_failure: maximum_steps would be exceeded"
             )
+        statistics = _PathStatistics(
+            steps + 1,
+            self.experiment.effective_normal_force_min_n,
+        )
+        statistics.observe(initial_point, 0.0)
         termination_reason = "path_end"
         terminal = PathTerminalState.PATH_END
         for _ in range(steps):
@@ -1256,10 +1427,23 @@ class DynamicSingleSpineExperiment:
             path_position = (
                 self.experiment.drag_speed_m_s * state.time_s
             )
-            has_event = bool(step.point.event_labels)
+            statistics.observe(
+                step.point,
+                self.experiment.drag_speed_m_s * dt,
+            )
+            major_event = any(
+                label
+                in {
+                    EventLabel.DETACH_TO_FREE.value,
+                    EventLabel.RECONTACT.value,
+                    EventLabel.IMPACT.value,
+                    EventLabel.HARD_STOP.value,
+                }
+                for label in step.point.event_labels
+            )
             if (
                 state.time_s + 1e-12 >= next_output
-                or has_event
+                or major_event
                 or state.time_s + 1e-12 >= total_time
             ):
                 points.append(
@@ -1276,6 +1460,7 @@ class DynamicSingleSpineExperiment:
             terminal=terminal,
             reason=termination_reason,
             accepted_steps=state.accepted_steps,
+            statistics=statistics,
         )
         return DynamicSingleSpineResult(
             parameters=self.parameters,
@@ -1302,6 +1487,11 @@ class DynamicSingleSpineExperiment:
             if "initial_preload_infeasible" in reason
             else PathTerminalState.NUMERICAL_FAILURE
         )
+        numerical_state = (
+            NumericalState.CONVERGED
+            if terminal is PathTerminalState.INITIAL_PRELOAD_INFEASIBLE
+            else NumericalState.NONCONVERGED
+        )
         summary = DynamicPathSummary(
             preload_mode="continuous_external_force",
             constant_preload_n=self.experiment.constant_preload_n,
@@ -1311,6 +1501,9 @@ class DynamicSingleSpineExperiment:
             ever_loaded=False,
             contact_fraction=0.0,
             effective_load_fraction=0.0,
+            contact_length_m=0.0,
+            effective_load_length_m=0.0,
+            maximum_continuous_load_length_m=0.0,
             global_pull_force_peak_n=0.0,
             global_pull_force_steady_peak_n=0.0,
             global_pull_force_median_n=0.0,
@@ -1331,7 +1524,7 @@ class DynamicSingleSpineExperiment:
             rejected_steps=0,
             time_step_convergence_checked=False,
             contact_parameter_convergence_checked=False,
-            numerical_state=NumericalState.NONCONVERGED,
+            numerical_state=numerical_state,
             model_state=self._model_state(),
             run_terminal_state=terminal,
             termination_reason=reason,
@@ -1355,54 +1548,33 @@ class DynamicSingleSpineExperiment:
         terminal: PathTerminalState,
         reason: str,
         accepted_steps: int,
+        statistics: _PathStatistics | None = None,
     ) -> DynamicPathSummary:
-        normal = np.asarray(
-            [point.normal_force_n for point in points],
-            dtype=np.float64,
-        )
-        pull = np.abs(
-            np.asarray(
-                [
-                    point.spine_on_plate_wrench_about_holder[0]
-                    for point in points
-                ],
-                dtype=np.float64,
+        if statistics is None:
+            statistics = _PathStatistics(
+                len(points),
+                self.experiment.effective_normal_force_min_n,
             )
-        )
+            previous_position = points[0].path_position_m
+            for point in points:
+                increment = max(0.0, point.path_position_m - previous_position)
+                statistics.observe(point, increment)
+                previous_position = point.path_position_m
+        normal = statistics.normal_n[: statistics.count]
+        pull = statistics.pull_n[: statistics.count]
+        impact = statistics.impact[: statistics.count]
         active = normal > 0.0
         effective = normal >= self.experiment.effective_normal_force_min_n
-        impact = np.asarray(
-            [point.impact_velocity_m_s > 0.0 for point in points],
-            dtype=np.bool_,
-        )
         steady_pull = pull[~impact]
-        event_counts = {name.value: 0 for name in EventLabel}
-        for point in points:
-            for label in point.event_labels:
-                event_counts[label] = event_counts.get(label, 0) + 1
-        holder_z = np.asarray(
-            [point.holder_xz_m[1] for point in points],
-            dtype=np.float64,
-        )
-        holder_speed = np.abs(
-            np.asarray(
-                [point.holder_velocity_xz_m_s[1] for point in points],
-                dtype=np.float64,
-            )
-        )
-        holder_acceleration = np.abs(
-            np.asarray(
-                [
-                    point.holder_acceleration_xz_m_s2[1]
-                    for point in points
-                ],
-                dtype=np.float64,
-            )
-        )
         model_state = self._model_state()
         numerical_state = (
             NumericalState.CONVERGED
-            if terminal is PathTerminalState.PATH_END
+            if terminal
+            in {
+                PathTerminalState.PATH_END,
+                PathTerminalState.STRUCTURAL_BOUNDARY,
+                PathTerminalState.TERRAIN_BOUNDS,
+            }
             else NumericalState.NONCONVERGED
         )
         formal_eligible = (
@@ -1418,8 +1590,15 @@ class DynamicSingleSpineExperiment:
             initial_preload_success=True,
             ever_contacted=bool(np.any(active)),
             ever_loaded=bool(np.any(effective)),
-            contact_fraction=float(np.mean(active)),
-            effective_load_fraction=float(np.mean(effective)),
+            contact_fraction=statistics.active_count / statistics.count,
+            effective_load_fraction=(
+                statistics.effective_count / statistics.count
+            ),
+            contact_length_m=statistics.contact_length_m,
+            effective_load_length_m=statistics.effective_length_m,
+            maximum_continuous_load_length_m=(
+                statistics.maximum_continuous_length_m
+            ),
             global_pull_force_peak_n=float(np.max(pull)),
             global_pull_force_steady_peak_n=(
                 float(np.max(steady_pull)) if steady_pull.size else 0.0
@@ -1432,28 +1611,24 @@ class DynamicSingleSpineExperiment:
                 float(np.max(normal)),
             ),
             holder_z_range_m=(
-                float(np.min(holder_z)),
-                float(np.max(holder_z)),
+                statistics.holder_z_min_m,
+                statistics.holder_z_max_m,
             ),
-            holder_speed_peak_m_s=float(np.max(holder_speed)),
-            holder_acceleration_peak_m_s2=float(
-                np.max(holder_acceleration)
+            holder_speed_peak_m_s=statistics.holder_speed_peak_m_s,
+            holder_acceleration_peak_m_s2=(
+                statistics.holder_acceleration_peak_m_s2
             ),
-            impact_velocity_peak_m_s=float(
-                max(point.impact_velocity_m_s for point in points)
+            impact_velocity_peak_m_s=statistics.impact_velocity_peak_m_s,
+            event_counts=statistics.event_counts,
+            maximum_bending_stress_pa=statistics.maximum_bending_stress_pa,
+            minimum_euler_buckling_margin_n=(
+                statistics.minimum_euler_buckling_margin_n
             ),
-            event_counts=event_counts,
-            maximum_bending_stress_pa=float(
-                max(point.bending_stress_pa for point in points)
+            maximum_abs_dynamic_residual_n=(
+                statistics.maximum_abs_dynamic_residual_n
             ),
-            minimum_euler_buckling_margin_n=float(
-                min(point.euler_buckling_margin_n for point in points)
-            ),
-            maximum_abs_dynamic_residual_n=float(
-                max(abs(point.dynamic_residual_n) for point in points)
-            ),
-            maximum_abs_energy_residual_j=float(
-                max(abs(point.energy_residual_j) for point in points)
+            maximum_abs_energy_residual_j=(
+                statistics.maximum_abs_energy_residual_j
             ),
             internal_time_step_s=self.integrator.time_step_s,
             accepted_steps=accepted_steps,

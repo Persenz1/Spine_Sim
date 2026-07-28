@@ -11,6 +11,7 @@ import numpy as np
 
 from spine_sim.runtime.runner import CaseOutput, RunContext
 from spine_sim.terrain import TerrainLibrary
+from spine_sim.core.states import ModelState
 
 from .dynamics import (
     DynamicContactSettings,
@@ -20,6 +21,18 @@ from .dynamics import (
     DynamicSingleSpineResult,
 )
 from .models import M2_MODULE_VERSION, SpineParameters
+
+
+def _json_finite(value):
+    if isinstance(value, float):
+        return value if np.isfinite(value) else None
+    if isinstance(value, tuple):
+        return tuple(_json_finite(item) for item in value)
+    if isinstance(value, list):
+        return [_json_finite(item) for item in value]
+    if isinstance(value, dict):
+        return {key: _json_finite(item) for key, item in value.items()}
+    return value
 
 
 def _summary_dict(result) -> dict[str, Any]:
@@ -37,7 +50,7 @@ def _summary_dict(result) -> dict[str, Any]:
         summary["track_id"] = result.track_id
         summary["assumptions"] = list(result.assumptions)
         summary["m2_module_version"] = M2_MODULE_VERSION
-        return summary
+        return _json_finite(summary)
     summary = asdict(result.summary)
     summary["numerical_state"] = result.summary.numerical_state.value
     summary["model_state"] = result.summary.model_state.value
@@ -47,7 +60,7 @@ def _summary_dict(result) -> dict[str, Any]:
     summary["fixed_holder_z_m"] = result.fixed_holder_z_m
     summary["assumptions"] = list(result.assumptions)
     summary["m2_module_version"] = M2_MODULE_VERSION
-    return summary
+    return _json_finite(summary)
 
 
 def _legacy_arrays(result) -> dict[str, np.ndarray]:
@@ -323,6 +336,85 @@ def _arrays(result) -> dict[str, np.ndarray]:
     return _legacy_arrays(result)
 
 
+def _proxy_rod_clearance(
+    *,
+    library: TerrainLibrary,
+    track,
+    result: DynamicSingleSpineResult,
+    sample_count: int = 24,
+) -> np.ndarray:
+    """Conservative, low-cost shank clearance audit for the M2 proxy model.
+
+    The dynamic contact law still acts at the finite spherical tip.  This
+    diagnostic samples a cylindrical shank beginning one shank radius behind
+    the sphere centre and extending to the holder.  It is a post-check, not a
+    distributed rod-contact model.
+    """
+
+    if sample_count < 2:
+        raise ValueError("rod-clearance sample_count must be at least two")
+    height = library.open_region(
+        track.terrain_recipe_id,
+        track.region_id,
+    )
+    region = library.load_region_spec(
+        track.terrain_recipe_id,
+        track.region_id,
+    )
+    points = result.points
+    if not points:
+        return np.empty(0, dtype=np.float64)
+    rod_radius = 0.5 * result.parameters.diameter_m
+    start = min(rod_radius, result.parameters.exposed_length_m)
+    distances = np.linspace(
+        start,
+        result.parameters.exposed_length_m,
+        sample_count,
+        dtype=np.float64,
+    )
+    axis_x, axis_z = result.parameters.axis_xz
+    y_float = (
+        track.y_global_m - region.origin_y_m
+    ) / region.resolution_y_m
+    if y_float < 0.0 or y_float > height.shape[0] - 1:
+        raise ValueError("rod-clearance y coordinate lies outside terrain region")
+    y0 = min(int(np.floor(y_float)), height.shape[0] - 2)
+    ty = y_float - y0
+    minimum = np.empty(len(points), dtype=np.float64)
+    chunk_size = 2048
+    for first in range(0, len(points), chunk_size):
+        chunk = points[first : first + chunk_size]
+        center_x = np.asarray(
+            [point.center_xz_m[0] for point in chunk],
+            dtype=np.float64,
+        )
+        center_z = np.asarray(
+            [point.center_xz_m[1] for point in chunk],
+            dtype=np.float64,
+        )
+        sample_x = center_x[:, None] - axis_x * distances[None, :]
+        sample_z = center_z[:, None] - axis_z * distances[None, :]
+        x_float = (sample_x - region.origin_x_m) / region.resolution_x_m
+        if np.any(x_float < 0.0) or np.any(x_float > height.shape[1] - 1):
+            raise ValueError("rod-clearance x coordinate lies outside terrain region")
+        x0 = np.minimum(
+            np.floor(x_float).astype(np.int64),
+            height.shape[1] - 2,
+        )
+        tx = x_float - x0
+        h00 = np.asarray(height[y0, x0], dtype=np.float64)
+        h01 = np.asarray(height[y0, x0 + 1], dtype=np.float64)
+        h10 = np.asarray(height[y0 + 1, x0], dtype=np.float64)
+        h11 = np.asarray(height[y0 + 1, x0 + 1], dtype=np.float64)
+        terrain_z = (
+            (1.0 - ty) * ((1.0 - tx) * h00 + tx * h01)
+            + ty * ((1.0 - tx) * h10 + tx * h11)
+        )
+        clearance = sample_z - rod_radius - terrain_z
+        minimum[first : first + len(chunk)] = np.min(clearance, axis=1)
+    return minimum
+
+
 def _events(result, case_id: str) -> list[dict[str, Any]]:
     if isinstance(result, DynamicSingleSpineResult):
         events: list[dict[str, Any]] = []
@@ -434,12 +526,57 @@ def run_case(parameters: Mapping[str, Any], context: RunContext) -> CaseOutput:
     ).run()
     summary = _summary_dict(result)
     arrays = _arrays(result)
+    rod_clearance = None
+    rod_collision = None
+    minimum_rod_clearance = None
+    if (
+        spine.rod_clearance_mode == "proxy_cylindrical_shank_postcheck"
+        and result.points
+    ):
+        rod_clearance = _proxy_rod_clearance(
+            library=library,
+            track=track,
+            result=result,
+        )
+        arrays["rod_clearance_m"] = rod_clearance
+        minimum_rod_clearance = float(np.min(rod_clearance))
+        rod_collision = bool(minimum_rod_clearance < 0.0)
+    summary.update(
+        {
+            "ranking_scope": "project_model_proxy",
+            "requires_experimental_calibration": True,
+            "rod_clearance_checked": rod_clearance is not None,
+            "rod_collision_detected": rod_collision,
+            "minimum_rod_clearance_m": minimum_rod_clearance,
+            "rod_clearance_assumption": (
+                "cylindrical_shank_begins_one_radius_behind_tip_center"
+                if rod_clearance is not None
+                else None
+            ),
+        }
+    )
+    yield_ok = (
+        spine.yield_strength_pa is not None
+        and result.summary.maximum_bending_stress_pa
+        <= spine.yield_strength_pa
+    )
+    buckling_ok = result.summary.minimum_euler_buckling_margin_n >= 0.0
+    clearance_ok = rod_collision is False
+    path_ok = (
+        result.summary.initial_preload_success
+        and result.summary.numerical_state.value == "converged"
+        and result.summary.run_terminal_state.value == "path_end"
+    )
+    project_model_baseline_eligible = (
+        path_ok
+        and result.summary.model_state is ModelState.COVERED
+        and yield_ok
+        and buckling_ok
+        and clearance_ok
+    )
+    energy_residual = result.summary.maximum_abs_energy_residual_j
     validation = {
-        "passed": (
-            result.summary.initial_preload_success
-            and result.summary.numerical_state.value == "converged"
-            and result.summary.run_terminal_state.value == "path_end"
-        ),
+        "passed": path_ok,
         "maximum_abs_geometry_residual_m": (
             float(
                 max(
@@ -449,9 +586,17 @@ def run_case(parameters: Mapping[str, Any], context: RunContext) -> CaseOutput:
             )
         ),
         "maximum_abs_energy_residual_j": (
-            result.summary.maximum_abs_energy_residual_j
+            energy_residual if np.isfinite(energy_residual) else None
         ),
         "formal_ranking_eligible": result.summary.formal_ranking_eligible,
+        "project_model_baseline_eligible": project_model_baseline_eligible,
+        "ranking_scope": "project_model_proxy",
+        "requires_experimental_calibration": True,
+        "constraint_checks": {
+            "yield_ok": yield_ok,
+            "buckling_ok": buckling_ok,
+            "rod_clearance_ok": clearance_ok,
+        },
     }
     return CaseOutput(
         summary=summary,
