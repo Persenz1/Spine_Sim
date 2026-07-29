@@ -30,8 +30,6 @@ def build_parser() -> argparse.ArgumentParser:
     existing.add_argument(
         "catalog",
         type=Path,
-        nargs="?",
-        default=Path("results/m2_formal_terrains/terrain_catalog.json"),
     )
     existing.add_argument(
         "--output",

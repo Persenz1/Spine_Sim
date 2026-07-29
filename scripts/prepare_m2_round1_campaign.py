@@ -18,9 +18,9 @@ Build a new dynamic campaign only after the holder mass, damping, contact
 parameters, and production time-step convergence gates are frozen.
 
 See:
-  docs/M2_DYNAMIC_CONSTANT_PRELOAD_SPEC.md
-  docs/M2_to_M3_handoff.md
-  docs/M2_DYNAMIC_TEST_REPORT.md
+  docs/m2/M2_DYNAMIC_CONSTANT_PRELOAD_SPEC.md
+  docs/m2/M2_to_M3_handoff.md
+  docs/m2/M2_DYNAMIC_TEST_REPORT.md
 """.strip()
 
 

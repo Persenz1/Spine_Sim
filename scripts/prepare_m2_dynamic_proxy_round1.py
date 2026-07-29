@@ -190,7 +190,7 @@ def main() -> int:
     parser.add_argument(
         "--catalog",
         type=Path,
-        default=Path("results/m2_formal_terrains/terrain_catalog.json"),
+        required=True,
     )
     parser.add_argument(
         "--output",

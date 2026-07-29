@@ -1,17 +1,18 @@
 # Spine Sim — M0/M1 基础与 M2/M3 动态恒载重建
 
-M0 公共基础和 M1 地形几何继续有效。M1 提供解析地形、全局坐标可重建随机场、
-10 μm 本地 memory-map 区域、5 μm 同 realization 复核路径、文件高度图、有限球
-针尖包络和一维轨迹缓存。
+M0 公共基础和 M1 地形几何继续有效。M1 提供解析地形、全局坐标可重建验证随机场、
+砂纸/红砖/混凝土材料特定地形、memory-map 二维区域、文件高度图、有限球针尖
+包络和一维轨迹缓存。当前尚未生成正式 M1 catalog。
 
 2026-07-28 用户确认旧 M2/M3 的“初始一次预载 + fixed-Z 拖动”边界错误。权威
 模型现为：整个路径持续施加恒定外部法向预载、规定 \(+x\) 拖动速度，并对安装座/
-共同背板 Z、针体变形、脱离、冲击和再接触做时域动力学求解。旧 M2/M3 代码暂作为
-迁移兼容层，其结果一律不能正式排名。新基线见
-`docs/M2_DYNAMIC_CONSTANT_PRELOAD_SPEC.md`。
+共同背板 Z、针体变形、脱离、冲击和再接触做时域动力学求解。当前实现版本为
+M2 `m2.2.0`、M3 `m3.3.0`；fixed-Z 类只作为迁移兼容层，其结果一律不能正式排名。
+物理基线见
+[`docs/m2/M2_DYNAMIC_CONSTANT_PRELOAD_SPEC.md`](docs/m2/M2_DYNAMIC_CONSTANT_PRELOAD_SPEC.md)。
 
-旧 fixed-Z 边界下的所有 M2/M3 筛选与 smoke 只保留为历史诊断，正式参数筛选必须
-等待动态恒载 M2/M3 重新验收。
+旧 fixed-Z 边界下的所有 M2/M3 筛选与 smoke 只保留为历史诊断。正式参数筛选必须
+等待新 M1 catalog、材料/动力学标定和 M2/M3 收敛门全部闭合。
 
 ## 环境
 
@@ -24,6 +25,12 @@ M0 公共基础和 M1 地形几何继续有效。M1 提供解析地形、全局�
 
 ```powershell
 python -m pip install -e .
+```
+
+开发与测试：
+
+```powershell
+python -m pip install -e ".[test]"
 ```
 
 若正式 campaign 要求 Parquet：
@@ -48,6 +55,9 @@ spine-sim resume examples/smoke_campaign.json --output results
 spine-sim retry-failed examples/smoke_campaign.json --output results
 spine-sim summarize results/<campaign_id>
 ```
+
+上述 `examples/` 输入配置随仓库提交，干净克隆后可直接使用。M2 代理 campaign
+配置和 M3 设计/收敛计划由对应 `scripts/prepare_*.py` 生成，不作为固定输入提交。
 
 M1 地形命令：
 
@@ -105,7 +115,7 @@ spine-terrain validate-material reports/terrain_validation/P100 `
 忽略的 `data/raw/`。新扫描通过 `scripts/calibrate_terrain_profile.py` 生成可审查
 的单样本标定 JSON；脚本不会覆盖原始文件，也不会自动把单样本升级成 validated。
 实现范围、数据来源、验证状态与限制见
-[`docs/terrain/03_material_generation_implementation.md`](docs/terrain/03_material_generation_implementation.md)。
+[`docs/research/terrain/03_material_generation_implementation.md`](docs/research/terrain/03_material_generation_implementation.md)。
 
 M2 验收：
 
@@ -114,18 +124,22 @@ spine-m2 validate-analytic
 spine-m2 smoke-m1-suite results/m1_gpu_suite/suite_report.json
 ```
 
+第一条是当前 `m2.2.0` 解析验收。第二条只用于 `defined_geometry` 历史接口 smoke，
+必须先用已提交的 `examples/m1_gpu_terrain_suite.json` 重新生成 suite；它不是当前
+材料地形或正式 campaign 验收。
+
 M3 验收：
 
 ```powershell
 spine-m3 validate-analytic
-spine-m3 smoke-existing-m1 results/m2_formal_terrains/terrain_catalog.json `
-  --drag-length-mm 0.1 --seed 32001
+spine-m3 smoke-existing-m1 <current_m1_catalog.json> `
+  --drag-length-mm 0.1 --seed <available_seed>
 ```
 
-解析命令只运行 `m3.2.0` 持续总外载阵列动力学验收。第二条命令只用一个现有
-terrain condition 做 2×2/4×4/6×6 短程接口 smoke；两者都不运行旧 fixed-Z
-路径，也不启动正式 campaign。完整设计与分片说明见
-`docs/M3_DESIGN_AND_RUN_PLAN.md`。
+解析命令只运行 `m3.3.0` 持续总外载阵列动力学验收。第二条命令只用当前 M1
+catalog 的一个 terrain condition 做 2×2/4×4/6×6 短程接口 smoke；两者都不运行
+旧 fixed-Z 路径，也不启动正式 campaign。完整设计与分片说明见
+[`docs/m3/M3_DESIGN_AND_RUN_PLAN.md`](docs/m3/M3_DESIGN_AND_RUN_PLAN.md)。
 
 M2 的稳定 Python 入口：
 
@@ -181,20 +195,25 @@ records = runner.run(resume=True)
 
 ## 测试
 
-无需 pytest：
+完整测试（会收集 `unittest` 和 pytest 风格测试）：
 
 ```powershell
 $env:PYTHONPATH = (Resolve-Path src).Path
+.\.venv\Scripts\python.exe -m pytest -q
+```
+
+只安装标准库时可运行 unittest 子集，但它不会收集仓库中的 pytest 函数式测试：
+
+```powershell
 python -m unittest discover -s tests -v
 ```
 
-M0 的验收证据和风险覆盖见 [M0 测试报告](docs/M0_TEST_REPORT.md)。M1 的数据
-字段、缓存规则和下游接口见 [M1 数据字典](docs/M1_DATA_DICTIONARY.md)、
-[本地库说明](docs/M1_TERRAIN_LIBRARY.md) 和
-[M1→M2 交接](docs/M1_to_M2_handoff.md)；轻量预览命令见
-[M1 地形绘图](docs/M1_TERRAIN_PLOTTING.md)。M2 的分支定义、字段和验收证据见
-[求解规格](docs/M2_solver_spec.md)、[数据字典](docs/M2_DATA_DICTIONARY.md)、
-[动态测试报告](docs/M2_DYNAMIC_TEST_REPORT.md)、[legacy 测试报告](docs/M2_TEST_REPORT.md)
-和 [M2→M3 交接](docs/M2_to_M3_handoff.md)。
-M3 的字段、验收和下游约束见 [M3 数据字典](docs/M3_DATA_DICTIONARY.md)、
-[M3 测试报告](docs/M3_TEST_REPORT.md) 和 [M3→M4 交接](docs/M3_to_M4_handoff.md)。
+文档总入口见 [工程文档导航](docs/README.md)。M0 的验收证据和风险覆盖见
+[M0 测试报告](docs/m0/M0_TEST_REPORT.md)。M1 的数据字段、缓存规则和下游接口见
+[M1 数据字典](docs/m1/M1_DATA_DICTIONARY.md)、
+[本地库说明](docs/m1/M1_TERRAIN_LIBRARY.md) 和
+[M1→M2 交接](docs/m1/M1_to_M2_handoff.md)；轻量预览命令见
+[M1 地形绘图](docs/m1/M1_TERRAIN_PLOTTING.md)。M2 的现行规格与历史留档分别从
+[M2 文档入口](docs/m2/README.md) 和
+[旧 900-case 报告](docs/m2/archive/M2_M220_900_CASE_ARCHIVE.md) 进入。
+M3 的继续工作、字段、验收和下游约束见 [M3 文档入口](docs/m3/README.md)。
