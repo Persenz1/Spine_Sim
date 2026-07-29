@@ -1,6 +1,6 @@
 # M1 数据字典
 
-M1 模块版本为 `m1.0.0`；材料生成算法版本为 `material-terrain-v1`。除布尔量、
+M1 模块版本为 `m1.0.0`；材料生成算法版本为 `material-terrain-v2`。除布尔量、
 索引和无量纲斜率外，所有数值均为 SI。身份由 M0 的规范 JSON 和 SHA-256 规则
 生成；算法语义变化必须提升相应算法版本。
 
@@ -9,7 +9,7 @@ M1 模块版本为 `m1.0.0`；材料生成算法版本为 `material-terrain-v1`�
 | 字段 | 类型/单位 | 含义 |
 |---|---|---|
 | `generator_name` | enum | `defined_geometry` 或 `material_hybrid` |
-| `generator_version` | string | 前者为 defined-geometry 版本，后者固定为 `material-terrain-v1` |
+| `generator_version` | string | 前者为 defined-geometry 版本，后者固定为 `material-terrain-v2` |
 | `seed` | non-negative int | realization 标识，不是顺序 RNG 初态 |
 | `global_origin_x_m/y_m` | m | 规范网格全局索引原点 |
 | `canonical_dx_m/dy_m` | m | defined-geometry 固定 5 μm；材料 recipe 为本次输出步距的一半 |
@@ -35,7 +35,9 @@ M1 模块版本为 `m1.0.0`；材料生成算法版本为 `material-terrain-v1`�
 `material_hybrid` 由统一材料 API 生成。砂纸可选择实测 crop 或材料特定合成，
 红砖和混凝土当前使用材料特定合成；profile、数据来源和验证等级见
 [`../research/terrain/03_material_generation_implementation.md`](../research/terrain/03_material_generation_implementation.md)。
-当前 `TerrainLibrary.generate_region()` 的材料分支只支持 CPU。
+`generate_terrain()`、`generate-material` 和
+`TerrainLibrary.generate_region()` 的材料分支均支持 `cpu/cuda`；CUDA metadata
+必须记录实际 provider、device、runtime 和显存峰值。
 
 ## Terrain
 

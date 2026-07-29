@@ -1,9 +1,10 @@
 # M1 未闭合问题与建议
 
-1. 2026-07-27 的 `defined_geometry` 基线曾在 RTX 4060 Ti/CuPy 14.1.1 上通过
-   CUDA 夹具；原始十工况库现已删除。材料特定 `material_hybrid` 地形当前只支持
-   CPU。迁移 GPU、CuPy 主版本或 CUDA runtime 时必须重新保存 provider、device
-   和 CPU/GPU 重叠容差结果。
+1. 2026-07-27 的 `defined_geometry` 基线和 2026-07-29 的
+   `material-terrain-v2` 材料生成均已在 RTX 4060 Ti/CuPy 14.1.1 上运行 CUDA
+   夹具。迁移 GPU、CuPy 主版本或 CUDA runtime 时必须重新保存 provider、device
+   和 CPU/GPU 重叠容差结果。实测砂纸 patch quilting 仍是 CPU 阶段，是批量
+   生成的主要剩余加速点之一。
 2. 杆体检查只是保守的中心线/圆柱低成本净空诊断，不是杆体分布接触。没有
    露出长度和半径时保留 `model_unclosed_rod_collision`，不得翻译成无挂接。
 3. 完整球仍是局部针尖代理。M2 必须调用前向球冠门控；锥段、真实过渡圆角和

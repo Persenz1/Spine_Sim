@@ -101,7 +101,7 @@ spine-terrain list-materials
 spine-terrain generate-material output/P100_seed12345.npz `
   --material sandpaper --subtype P100 `
   --size-x-mm 50 --size-y-mm 50 --resolution-um 5 `
-  --seed 12345 --mode synthetic `
+  --seed 12345 --mode synthetic --backend cuda `
   --library terrain_library
 
 # 三个 seed 的高度、PSD、相关长度、坡度、峰/坑和伪影验证

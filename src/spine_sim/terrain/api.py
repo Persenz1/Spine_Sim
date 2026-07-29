@@ -27,6 +27,7 @@ from .profiles import load_material_profile
 
 
 TerrainMode = Literal["measured", "synthetic", "auto"]
+TerrainBackend = Literal["cpu", "cuda"]
 
 
 @dataclass(frozen=True)
@@ -88,15 +89,7 @@ class Terrain:
             production_dx_m=self.dx,
             production_dy_m=self.dy,
             target_rms_height_m=float(
-                np.sqrt(
-                    np.mean(
-                        (
-                            np.asarray(self.height, dtype=np.float64)
-                            - float(np.mean(self.height, dtype=np.float64))
-                        )
-                        ** 2
-                    )
-                )
+                np.std(self.height, dtype=np.float64)
             ),
             correlation_length_x_m=self.dx,
             correlation_length_y_m=self.dy,
@@ -189,6 +182,7 @@ def generate_terrain(
     mode: TerrainMode = "synthetic",
     measured_path: str | Path | None = None,
     measured_options: Mapping[str, Any] | None = None,
+    backend: TerrainBackend = "cpu",
 ) -> Terrain:
     """Generate a reproducible red-brick, concrete, or sandpaper height field.
 
@@ -203,6 +197,10 @@ def generate_terrain(
     if mode not in {"measured", "synthetic", "auto"}:
         raise TerrainConfigurationError(
             "mode must be 'measured', 'synthetic', or 'auto'"
+        )
+    if backend not in {"cpu", "cuda"}:
+        raise TerrainConfigurationError(
+            "backend must be 'cpu' or 'cuda'"
         )
     profile = load_material_profile(material, subtype)
     shape = _grid_shape(size_x_m, size_y_m, resolution_m)
@@ -231,6 +229,23 @@ def generate_terrain(
     else:
         resolved_mode = "synthetic"
 
+    cupy_module: Any | None = None
+    if resolved_mode == "synthetic" and backend == "cuda":
+        try:
+            import cupy as cp  # type: ignore
+        except ImportError as exc:
+            raise TerrainConfigurationError(
+                "CUDA material generation requested but CuPy is not installed"
+            ) from exc
+        if cp.cuda.runtime.getDeviceCount() < 1:
+            raise TerrainConfigurationError(
+                "CUDA material generation requested but no CUDA device is available"
+            )
+        cp.cuda.Device().synchronize()
+        cp.get_default_memory_pool().free_all_blocks()
+        cp.get_default_pinned_memory_pool().free_all_blocks()
+        cupy_module = cp
+
     if resolved_mode == "synthetic":
         if material == "sandpaper":
             height, generation_record = generate_sandpaper(
@@ -239,6 +254,7 @@ def generate_terrain(
                 resolution_m=resolution_m,
                 rng=rng,
                 source_path=measured_path,
+                backend=backend,
             )
         elif material == "red_brick":
             height, generation_record = generate_red_brick(
@@ -246,6 +262,7 @@ def generate_terrain(
                 shape=shape,
                 resolution_m=resolution_m,
                 rng=rng,
+                backend=backend,
             )
         elif material == "concrete":
             height, generation_record = generate_concrete(
@@ -253,10 +270,61 @@ def generate_terrain(
                 shape=shape,
                 resolution_m=resolution_m,
                 rng=rng,
+                backend=backend,
             )
         else:  # load_material_profile has already rejected this path
             raise AssertionError(material)
         mask = np.ones(shape, dtype=np.bool_)
+
+    resolved_backend = (
+        backend if resolved_mode == "synthetic" else "cpu"
+    )
+    backend_record: dict[str, Any] = {
+        "requested": backend,
+        "resolved": resolved_backend,
+    }
+    if cupy_module is not None:
+        cupy_module.cuda.Device().synchronize()
+        properties = cupy_module.cuda.runtime.getDeviceProperties(0)
+        device_name = properties["name"]
+        if isinstance(device_name, bytes):
+            device_name = device_name.decode(errors="replace")
+        pool = cupy_module.get_default_memory_pool()
+        pinned_pool = cupy_module.get_default_pinned_memory_pool()
+        backend_record.update(
+            {
+                "provider": "cupy",
+                "cupy_version": cupy_module.__version__,
+                "device_index": 0,
+                "device_name": str(device_name),
+                "cuda_runtime_version": int(
+                    cupy_module.cuda.runtime.runtimeGetVersion()
+                ),
+                "cuda_driver_version": int(
+                    cupy_module.cuda.runtime.driverGetVersion()
+                ),
+                "gpu_memory_pool_used_bytes": int(pool.used_bytes()),
+                "gpu_memory_pool_peak_cached_bytes": int(pool.total_bytes()),
+                "gpu_pinned_pool_cached_blocks": int(
+                    pinned_pool.n_free_blocks()
+                ),
+                "implementation": (
+                    "cuda_tiled_correlated_fields_and_feature_stamping_"
+                    "with_cpu_measured_quilting"
+                ),
+            }
+        )
+    else:
+        backend_record.update(
+            {
+                "provider": "numpy",
+                "implementation": (
+                    "measured_crop_cpu"
+                    if resolved_mode == "measured"
+                    else "numpy_material_generator"
+                ),
+            }
+        )
 
     height = np.asarray(height, dtype=np.float32)
     mask = np.asarray(mask, dtype=np.bool_)
@@ -274,6 +342,7 @@ def generate_terrain(
         "seed": int(seed),
         "requested_mode": mode,
         "resolved_mode": resolved_mode,
+        "generation_backend": backend_record,
         "profile_status": profile["status"],
         "parameter_basis": profile["parameter_basis"],
         "profile_hash": profile["profile_hash"],

@@ -20,7 +20,7 @@ from .errors import TerrainConfigurationError
 
 M1_MODULE_VERSION = "m1.0.0"
 DEFINED_GEOMETRY_VERSION = "defined-geometry-v1-canonical5um-stride2-nodal"
-MATERIAL_TERRAIN_VERSION = "material-terrain-v1"
+MATERIAL_TERRAIN_VERSION = "material-terrain-v2"
 ENVELOPE_ALGORITHM_VERSION = "finite-sphere-envelope-v1"
 CANONICAL_SPACING_M = 5e-6
 PRODUCTION_SPACING_M = 10e-6

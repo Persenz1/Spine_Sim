@@ -275,10 +275,6 @@ class TerrainLibrary:
 
         region.validate_against(recipe)
         if recipe.generator_name == "material_hybrid":
-            if backend != "cpu":
-                raise TerrainConfigurationError(
-                    "material_hybrid currently supports the CPU backend only"
-                )
             from .api import generate_terrain
 
             terrain = generate_terrain(
@@ -289,6 +285,7 @@ class TerrainLibrary:
                 resolution_m=region.resolution_x_m,
                 seed=recipe.seed,
                 mode=str(recipe.generation_mode),  # type: ignore[arg-type]
+                backend=backend,
             )
             if terrain.metadata["profile_hash"] != recipe.profile_hash:
                 raise TerrainConfigurationError(
@@ -441,7 +438,10 @@ class TerrainLibrary:
                 "shape": list(region.shape),
                 "dtype": "float32",
                 "coordinate_storage": "origin_spacing_shape_only_no_meshgrid",
-                "generation_backend": "material_api_cpu",
+                "generation_backend": str(
+                    terrain.metadata["generation_backend"]["resolved"]
+                ),
+                "backend": dict(terrain.metadata["generation_backend"]),
                 "production_sampling": recipe.production_sampling,
                 "material": terrain.material,
                 "subtype": terrain.subtype,

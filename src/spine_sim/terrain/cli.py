@@ -136,6 +136,9 @@ def build_parser() -> argparse.ArgumentParser:
     material.add_argument(
         "--mode", choices=("measured", "synthetic", "auto"), default="synthetic"
     )
+    material.add_argument(
+        "--backend", choices=("cpu", "cuda"), default="cpu"
+    )
     material.add_argument("--measured-path", type=Path)
     material.add_argument("--library", type=Path)
     material.add_argument("--origin-x-mm", type=float, default=0.0)
@@ -155,6 +158,9 @@ def build_parser() -> argparse.ArgumentParser:
         "--seed", action="append", type=int, dest="seeds"
     )
     validate_material.add_argument("--measured-path", type=Path)
+    validate_material.add_argument(
+        "--backend", choices=("cpu", "cuda"), default="cpu"
+    )
     return parser
 
 
@@ -244,6 +250,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             seed=args.seed,
             mode=args.mode,
             measured_path=args.measured_path,
+            backend=args.backend,
         )
         artifact = save_terrain(args.output, terrain)
         result: dict[str, Any] = {
@@ -252,6 +259,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             "subtype": terrain.subtype,
             "profile_status": terrain.metadata["profile_status"],
             "resolved_mode": terrain.resolved_mode,
+            "generation_backend": terrain.metadata["generation_backend"],
             "shape_yx": list(terrain.height.shape),
             "dtype": str(terrain.height.dtype),
         }
@@ -283,6 +291,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 seed=seed,
                 mode="synthetic",
                 measured_path=args.measured_path,
+                backend=args.backend,
             )
             for seed in seeds
         ]

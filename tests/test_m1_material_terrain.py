@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import importlib.util
 import tempfile
 import unittest
 from pathlib import Path
@@ -22,6 +23,7 @@ from spine_sim.terrain.measured import (
     load_measured_surface,
     resample_measured_patch,
 )
+from spine_sim.terrain.material_generators import add_irregular_features
 
 
 class MaterialProfileTests(unittest.TestCase):
@@ -81,6 +83,98 @@ class MaterialGenerationTests(unittest.TestCase):
         self.assertFalse(np.array_equal(first.height, second.height))
         self.assertEqual(
             first.metadata["profile_hash"], second.metadata["profile_hash"]
+        )
+
+    @unittest.skipUnless(
+        importlib.util.find_spec("cupy"),
+        "CuPy/GPU is unavailable",
+    )
+    def test_cuda_material_generation_matches_cpu_and_records_device(self) -> None:
+        cpu = generate_terrain(
+            material="red_brick",
+            subtype="fired_brick_standard",
+            size_x_m=0.6e-3,
+            size_y_m=0.4e-3,
+            resolution_m=10e-6,
+            seed=913,
+            mode="synthetic",
+            backend="cpu",
+        )
+        cuda = generate_terrain(
+            material="red_brick",
+            subtype="fired_brick_standard",
+            size_x_m=0.6e-3,
+            size_y_m=0.4e-3,
+            resolution_m=10e-6,
+            seed=913,
+            mode="synthetic",
+            backend="cuda",
+        )
+        np.testing.assert_allclose(
+            cuda.height,
+            cpu.height,
+            rtol=2e-6,
+            atol=2e-10,
+        )
+        backend = cuda.metadata["generation_backend"]
+        self.assertEqual(backend["resolved"], "cuda")
+        self.assertEqual(backend["provider"], "cupy")
+        self.assertIn("NVIDIA", backend["device_name"])
+        self.assertGreater(
+            backend["gpu_memory_pool_peak_cached_bytes"],
+            0,
+        )
+
+    @unittest.skipUnless(
+        importlib.util.find_spec("cupy"),
+        "CuPy/GPU is unavailable",
+    )
+    def test_cuda_irregular_feature_stamping_is_reproducible(self) -> None:
+        common = {
+            "dx_m": 10e-6,
+            "dy_m": 10e-6,
+            "density_per_m2": 10_000_000.0,
+            "diameter_median_m": 0.25e-3,
+            "diameter_log_sigma": 0.25,
+            "aspect_ratio_median": 1.4,
+            "aspect_ratio_log_sigma": 0.2,
+            "amplitude_median_m": 0.2e-3,
+            "amplitude_log_sigma": 0.3,
+            "edge_power": 1.2,
+            "boundary_roughness": 0.15,
+            "sign_mode": "mixed",
+            "positive_probability": 0.6,
+            "cluster_probability": 0.2,
+        }
+        cpu = np.zeros((201, 201), dtype=np.float32)
+        first_cuda = np.zeros_like(cpu)
+        second_cuda = np.zeros_like(cpu)
+        cpu_record = add_irregular_features(
+            cpu,
+            rng=np.random.Generator(np.random.PCG64(412)),
+            backend="cpu",
+            **common,
+        )
+        first_record = add_irregular_features(
+            first_cuda,
+            rng=np.random.Generator(np.random.PCG64(412)),
+            backend="cuda",
+            **common,
+        )
+        second_record = add_irregular_features(
+            second_cuda,
+            rng=np.random.Generator(np.random.PCG64(412)),
+            backend="cuda",
+            **common,
+        )
+        self.assertEqual(first_record, cpu_record)
+        self.assertEqual(second_record, first_record)
+        np.testing.assert_array_equal(second_cuda, first_cuda)
+        np.testing.assert_allclose(
+            first_cuda,
+            cpu,
+            rtol=2e-4,
+            atol=5e-8,
         )
 
     @unittest.skipUnless(

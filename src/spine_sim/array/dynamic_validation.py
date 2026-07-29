@@ -838,7 +838,7 @@ def run_existing_m1_terrain_smoke(
             ),
             output_spacing_m=min(20e-6, drag_length_m),
             unclosed_parameter_names=(
-                "existing_defined_geometry_smoke_not_three_family_catalog",
+                "existing_M1_smoke_not_formal_300_catalog",
                 "dynamic_parameters_not_experimentally_calibrated",
             ),
         )
@@ -916,7 +916,7 @@ def run_existing_m1_terrain_smoke(
         ),
         "formal_ranking_eligible": False,
         "limitations": [
-            "current catalog is the existing defined_geometry inventory",
+            "the selected existing M1 condition is an interface-smoke input",
             "short smoke path is not the required 100 mm trend experiment",
             "this is not the planned 3-family x 100-seed paired catalog",
             "large-array contact-stabilization injection convergence is open",
