@@ -7,7 +7,10 @@ import json
 from pathlib import Path
 from typing import Sequence
 
-from .dynamic_validation import run_dynamic_analytic_validation
+from .dynamic_validation import (
+    run_dynamic_analytic_validation,
+    run_existing_m1_terrain_smoke,
+)
 from .validation import (
     run_legacy_analytic_validation,
     run_legacy_m1_suite_smoke,
@@ -23,6 +26,20 @@ def build_parser() -> argparse.ArgumentParser:
         type=Path,
         default=Path("results/m3_validation/dynamic_analytic_validation.json"),
     )
+    existing = subcommands.add_parser("smoke-existing-m1")
+    existing.add_argument(
+        "catalog",
+        type=Path,
+        nargs="?",
+        default=Path("results/m2_formal_terrains/terrain_catalog.json"),
+    )
+    existing.add_argument(
+        "--output",
+        type=Path,
+        default=Path("results/m3_validation/existing_m1_smoke.json"),
+    )
+    existing.add_argument("--drag-length-mm", type=float, default=0.1)
+    existing.add_argument("--seed", type=int)
     legacy = subcommands.add_parser("validate-legacy-fixed-z")
     legacy.add_argument(
         "--output",
@@ -50,6 +67,13 @@ def main(argv: Sequence[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     if args.command == "validate-analytic":
         report = run_dynamic_analytic_validation(args.output)
+    elif args.command == "smoke-existing-m1":
+        report = run_existing_m1_terrain_smoke(
+            args.catalog,
+            output_path=args.output,
+            drag_length_m=args.drag_length_mm * 1e-3,
+            seed=args.seed,
+        )
     elif args.command == "validate-legacy-fixed-z":
         report = run_legacy_analytic_validation(args.output)
     else:

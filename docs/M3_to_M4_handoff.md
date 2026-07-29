@@ -1,8 +1,8 @@
 # M3 → M4 动力学交接
 
-**来源版本：** `m3.1.0`
+**来源版本：** `m3.2.0`
 **模型等级：**
-`project_model_P_common_rigid_backplate_z_dynamic_continuous_total_preload_v2`
+`project_model_P_common_rigid_backplate_z_dynamic_continuous_total_preload_v3`
 
 ## 冻结入口
 
@@ -69,11 +69,11 @@ model_level
 
 正式 M4 输入仍需：
 
-1. M2 正式轮次与用户批准参数包；
-2. M3 动力学时间步减半、接触参数敏感性和项目参数冻结；
-3. M3 第一轮及后续细筛获批并完成；
-4. 项目地形净空边界闭合；
-5. 目标 0.5/1/2 N 总外载范围的同状态样本覆盖；
+1. M1 砂纸/红砖/混凝土各 100 seed 的正式配对 catalog；
+2. M3 动力学时间步减半、接触/沉降阻尼敏感性和项目参数冻结；
+3. 1344 种完整构型在 0.5/1/2 N、100 mm 协议下完成配对分析；
+4. 最终候选同 realization 的 10/5 μm 地形收敛；
+5. 项目地形净空边界和粗糙面大阵列能量残差闭合；
 6. 相关 case 的 numerical/model/run-terminal 门禁全部通过。
 
 ## 禁止复用

@@ -39,6 +39,7 @@ from .models import (
     ArrayDynamicStepProposal,
     LoadSharingMetrics,
     PinDynamicResponse,
+    SettlementTracePoint,
 )
 
 
@@ -85,6 +86,15 @@ class ArrayDynamicExperimentSettings:
     backplate_rotational_dofs: str = "locked"
     backplate_inertia_kg_m2: None = None
     maximum_preload_approach_m: float = 8e-3
+    preload_ramp_time_s: float = 0.25
+    preload_ramp_profile: str = "minimum_jerk_quintic"
+    settlement_damping_scale: float = 10.0
+    settling_reaction_force_tolerance_n: float = 0.01
+    settling_reaction_force_relative_tolerance: float = 0.02
+    settling_dynamic_residual_tolerance_n: float = 1e-8
+    settling_stable_steps: int = 20
+    dynamic_residual_tolerance_n: float = 1e-3
+    coupled_projection_relaxation: float = 0.8
     output_spacing_m: float = 10e-6
     effective_pin_normal_force_min_n: float = 0.05
     unclosed_parameter_names: tuple[str, ...] = (
@@ -92,6 +102,9 @@ class ArrayDynamicExperimentSettings:
     )
     time_step_convergence_checked: bool = False
     contact_parameter_convergence_checked: bool = False
+    settlement_damping_convergence_checked: bool = False
+    terrain_resolution_convergence_checked: bool = False
+    physical_calibration_completed: bool = False
 
     def __post_init__(self) -> None:
         for name in (
@@ -99,6 +112,8 @@ class ArrayDynamicExperimentSettings:
             "drag_speed_m_s",
             "backplate_mass_kg",
             "maximum_preload_approach_m",
+            "preload_ramp_time_s",
+            "settlement_damping_scale",
             "output_spacing_m",
         ):
             value = float(getattr(self, name))
@@ -108,6 +123,11 @@ class ArrayDynamicExperimentSettings:
             "external_total_preload_n",
             "backplate_vertical_damping_n_s_m",
             "effective_pin_normal_force_min_n",
+            "settling_reaction_force_tolerance_n",
+            "settling_reaction_force_relative_tolerance",
+            "settling_dynamic_residual_tolerance_n",
+            "dynamic_residual_tolerance_n",
+            "coupled_projection_relaxation",
         ):
             value = float(getattr(self, name))
             if not math.isfinite(value) or value < 0.0:
@@ -116,9 +136,21 @@ class ArrayDynamicExperimentSettings:
                 )
         if not math.isfinite(self.initial_common_ux_m):
             raise ContactConfigurationError("initial_common_ux_m must be finite")
+        if self.preload_ramp_profile != "minimum_jerk_quintic":
+            raise ContactConfigurationError(
+                "preload_ramp_profile currently supports minimum_jerk_quintic only"
+            )
+        if not 0.0 < self.coupled_projection_relaxation <= 1.0:
+            raise ContactConfigurationError(
+                "coupled_projection_relaxation must lie in (0, 1]"
+            )
+        if self.settling_stable_steps < 1:
+            raise ContactConfigurationError(
+                "settling_stable_steps must be positive"
+            )
         if self.backplate_rotational_dofs != "locked":
             raise ContactConfigurationError(
-                "m3.1.0 opens common backplate Z only; rotations must be locked"
+                "m3.2.0 opens common backplate Z only; rotations must be locked"
             )
         if self.backplate_inertia_kg_m2 is not None:
             raise ContactConfigurationError(
@@ -181,7 +213,9 @@ class DynamicCommonBackplateArray:
             float(unit_origin_xy_m[0]),
             float(unit_origin_xy_m[1]),
         )
-        self.contact = contact or DynamicContactSettings()
+        self.contact = contact or DynamicContactSettings(
+            projection_iterations=20
+        )
         if (
             not math.isfinite(target_load_threshold_n)
             or target_load_threshold_n < 0.0
@@ -285,6 +319,7 @@ class DynamicCommonBackplateArray:
         self,
         q: NDArray[np.float64],
         settings: ArrayDynamicExperimentSettings,
+        damping_scale: float = 1.0,
     ) -> tuple[
         NDArray[np.float64],
         NDArray[np.float64],
@@ -333,6 +368,7 @@ class DynamicCommonBackplateArray:
                 axial_energy
                 + 0.5 * transverse_stiffness * q[transverse] ** 2
             )
+        damping *= damping_scale
         return (
             damping,
             tangent,
@@ -347,6 +383,8 @@ class DynamicCommonBackplateArray:
         state: ArrayDynamicState,
         settings: ArrayDynamicExperimentSettings,
         dt: float,
+        applied_external_total_preload_n: float,
+        damping_scale: float,
     ) -> tuple[
         NDArray[np.float64],
         NDArray[np.float64],
@@ -357,23 +395,124 @@ class DynamicCommonBackplateArray:
     ]:
         q0, v0 = self._pack_state(state)
         mass = self._mass(settings.backplate_mass_kg)
-        external = np.zeros(self.dof_count, dtype=np.float64)
-        external[0] = -settings.external_total_preload_n
-        v = v0.copy()
-        iterations = 0
-        for iterations in range(1, 31):
-            q = q0 + dt * v
-            damping, tangent, restoring, *_ = self._structure(q, settings)
-            residual = mass * (v - v0) / dt + damping * v + restoring - external
-            diagonal = mass / dt + damping + dt * tangent
-            update = residual / diagonal
-            v -= update
-            if float(np.max(np.abs(update))) <= 1e-11:
-                break
+        v = np.empty(self.dof_count, dtype=np.float64)
+        plate_damping = (
+            settings.backplate_vertical_damping_n_s_m * damping_scale
+        )
+        v[0] = (
+            mass[0] * v0[0] / dt - applied_external_total_preload_n
+        ) / (mass[0] / dt + plate_damping)
+
+        def linear_mode_velocity(
+            *,
+            position: float,
+            velocity: float,
+            mode_mass: float,
+            stiffness: float,
+            damping_ratio: float,
+            offset_force: float = 0.0,
+        ) -> tuple[float, float]:
+            damping = (
+                2.0
+                * damping_ratio
+                * math.sqrt(stiffness * mode_mass)
+                * damping_scale
+            )
+            solved_velocity = (
+                mode_mass * velocity / dt
+                - stiffness * position
+                - offset_force
+            ) / (
+                mode_mass / dt
+                + damping
+                + stiffness * dt
+            )
+            return solved_velocity, position + dt * solved_velocity
+
+        for index, (unit, parameters) in enumerate(
+            zip(self.units, self.pin_parameters)
+        ):
+            axial, transverse = self._pin_dofs(index)
+            compliance = parameters.axial_compliance_m_n
+            beam_stiffness = 1.0 / compliance
+            candidates: list[tuple[float, float]] = []
+
+            def add_candidate(
+                stiffness: float,
+                offset_force: float,
+                lower: float,
+                upper: float,
+            ) -> None:
+                velocity, position = linear_mode_velocity(
+                    position=float(q0[axial]),
+                    velocity=float(v0[axial]),
+                    mode_mass=float(mass[axial]),
+                    stiffness=stiffness,
+                    damping_ratio=parameters.axial_damping_ratio,
+                    offset_force=offset_force,
+                )
+                violation = max(
+                    lower - position,
+                    0.0,
+                    position - upper,
+                )
+                candidates.append((violation, velocity))
+
+            if parameters.axial_mode.value == "rigid":
+                add_candidate(
+                    beam_stiffness,
+                    0.0,
+                    -math.inf,
+                    math.inf,
+                )
+            else:
+                spring_stiffness = float(
+                    parameters.spring_stiffness_n_m
+                )
+                interior_stiffness = 1.0 / (
+                    compliance + 1.0 / spring_stiffness
+                )
+                hard_start = (
+                    parameters.spring_travel_m
+                    + compliance
+                    * spring_stiffness
+                    * parameters.spring_travel_m
+                )
+                add_candidate(
+                    beam_stiffness,
+                    0.0,
+                    -math.inf,
+                    0.0,
+                )
+                add_candidate(
+                    interior_stiffness,
+                    0.0,
+                    0.0,
+                    hard_start,
+                )
+                add_candidate(
+                    beam_stiffness,
+                    -parameters.spring_travel_m / compliance,
+                    hard_start,
+                    math.inf,
+                )
+            v[axial] = min(candidates, key=lambda item: item[0])[1]
+            transverse_stiffness = unit.transverse_stiffness_n_m
+            v[transverse], _position = linear_mode_velocity(
+                position=float(q0[transverse]),
+                velocity=float(v0[transverse]),
+                mode_mass=float(mass[transverse]),
+                stiffness=transverse_stiffness,
+                damping_ratio=parameters.transverse_damping_ratio,
+            )
         q = q0 + dt * v
-        damping, tangent, *_ = self._structure(q, settings)
+        damping, tangent, *_ = self._structure(
+            q,
+            settings,
+            damping_scale,
+        )
         effective_inverse = 1.0 / (mass + dt * damping + dt**2 * tangent)
-        return q, v, q0, v0, effective_inverse, iterations
+        return q, v, q0, v0, effective_inverse, 1
 
     def _pin_kinematics(
         self,
@@ -438,7 +577,9 @@ class DynamicCommonBackplateArray:
             output[index] = _ContactGeometry(
                 pin_index=index,
                 geometry=geometry,
-                gap_m=float(center_free[1] - geometry.envelope_height_m),
+                gap_m=float(
+                    center_query[1] - geometry.envelope_height_m
+                ),
                 normal=normal,
                 tangent=tangent,
                 normal_jacobian=self._global_jacobian(index, normal),
@@ -586,6 +727,12 @@ class DynamicCommonBackplateArray:
         self, settings: ArrayDynamicExperimentSettings
     ) -> tuple[str, ...]:
         names = set(settings.unclosed_parameter_names)
+        if not settings.physical_calibration_completed:
+            names.add("m3.physical_calibration_completed")
+        if not settings.terrain_resolution_convergence_checked:
+            names.add("m3.terrain_resolution_convergence_checked")
+        if not settings.settlement_damping_convergence_checked:
+            names.add("m3.settlement_damping_scale_not_converged")
         for parameters in self.pin_parameters:
             if parameters.rod_clearance_mode == "unclosed":
                 names.add("base_spine.rod_clearance_mode")
@@ -594,6 +741,301 @@ class DynamicCommonBackplateArray:
             if "unfrozen" in parameters.material_assumption.lower():
                 names.add("base_spine.material_assumption")
         return tuple(sorted(names))
+
+    def _refine_dynamic_equilibrium(
+        self,
+        *,
+        settings: ArrayDynamicExperimentSettings,
+        q0: NDArray[np.float64],
+        v0: NDArray[np.float64],
+        free_q: NDArray[np.float64],
+        free_v: NDArray[np.float64],
+        q: NDArray[np.float64],
+        v: NDArray[np.float64],
+        contacts: Sequence[_ContactGeometry],
+        normal_impulses: NDArray[np.float64],
+        tangential_impulses: NDArray[np.float64],
+        sticking: Sequence[bool],
+        applied_preload_n: float,
+        damping_scale: float,
+        dt: float,
+        residual_tolerance_n: float,
+    ) -> tuple[
+        NDArray[np.float64],
+        NDArray[np.float64],
+        NDArray[np.float64],
+        NDArray[np.float64],
+        int,
+    ]:
+        """KKT correction that preserves active contact velocity constraints."""
+
+        q_refined = q.copy()
+        v_refined = v.copy()
+        pn = normal_impulses.copy()
+        pt = tangential_impulses.copy()
+        mass = self._mass(settings.backplate_mass_kg)
+        external = np.zeros(self.dof_count, dtype=np.float64)
+        external[0] = -applied_preload_n
+        maximum_iterations = 20
+        for iteration in range(1, maximum_iterations + 1):
+            active = [
+                index
+                for index, impulse in enumerate(pn)
+                if impulse > 1e-16
+            ]
+            active_pin_indices = {
+                contacts[index].pin_index for index in active
+            }
+
+            def linear_velocity(
+                *,
+                position: float,
+                velocity: float,
+                mode_mass: float,
+                stiffness: float,
+                damping_ratio: float,
+                offset_force: float = 0.0,
+            ) -> tuple[float, float]:
+                damping_value = (
+                    2.0
+                    * damping_ratio
+                    * math.sqrt(stiffness * mode_mass)
+                    * damping_scale
+                )
+                solved = (
+                    mode_mass * velocity / dt
+                    - stiffness * position
+                    - offset_force
+                ) / (
+                    mode_mass / dt
+                    + damping_value
+                    + stiffness * dt
+                )
+                return solved, position + dt * solved
+
+            # Contact-free pin modes are diagonal.  Re-solve their nonsmooth
+            # axial branches exactly after every common-plate/contact update.
+            for pin_index, (unit, parameters) in enumerate(
+                zip(self.units, self.pin_parameters)
+            ):
+                if pin_index in active_pin_indices:
+                    continue
+                axial, transverse = self._pin_dofs(pin_index)
+                compliance = parameters.axial_compliance_m_n
+                beam_stiffness = 1.0 / compliance
+                candidates: list[tuple[float, float]] = []
+
+                def add_candidate(
+                    stiffness: float,
+                    offset_force: float,
+                    lower: float,
+                    upper: float,
+                ) -> None:
+                    solved, position = linear_velocity(
+                        position=float(q0[axial]),
+                        velocity=float(v0[axial]),
+                        mode_mass=float(mass[axial]),
+                        stiffness=stiffness,
+                        damping_ratio=parameters.axial_damping_ratio,
+                        offset_force=offset_force,
+                    )
+                    candidates.append(
+                        (
+                            max(
+                                lower - position,
+                                0.0,
+                                position - upper,
+                            ),
+                            solved,
+                        )
+                    )
+
+                if parameters.axial_mode.value == "rigid":
+                    add_candidate(
+                        beam_stiffness,
+                        0.0,
+                        -math.inf,
+                        math.inf,
+                    )
+                else:
+                    spring_stiffness = float(
+                        parameters.spring_stiffness_n_m
+                    )
+                    interior_stiffness = 1.0 / (
+                        compliance + 1.0 / spring_stiffness
+                    )
+                    hard_start = (
+                        parameters.spring_travel_m
+                        + compliance
+                        * spring_stiffness
+                        * parameters.spring_travel_m
+                    )
+                    add_candidate(
+                        beam_stiffness,
+                        0.0,
+                        -math.inf,
+                        0.0,
+                    )
+                    add_candidate(
+                        interior_stiffness,
+                        0.0,
+                        0.0,
+                        hard_start,
+                    )
+                    add_candidate(
+                        beam_stiffness,
+                        -parameters.spring_travel_m / compliance,
+                        hard_start,
+                        math.inf,
+                    )
+                v_refined[axial] = min(
+                    candidates,
+                    key=lambda item: item[0],
+                )[1]
+                v_refined[transverse], _position = linear_velocity(
+                    position=float(q0[transverse]),
+                    velocity=float(v0[transverse]),
+                    mode_mass=float(mass[transverse]),
+                    stiffness=unit.transverse_stiffness_n_m,
+                    damping_ratio=parameters.transverse_damping_ratio,
+                )
+                q_refined[axial] = q0[axial] + dt * v_refined[axial]
+                q_refined[transverse] = (
+                    q0[transverse] + dt * v_refined[transverse]
+                )
+            damping, tangent, restoring, *_ = self._structure(
+                q_refined,
+                settings,
+                damping_scale,
+            )
+            generalized_contact = np.zeros(
+                self.dof_count,
+                dtype=np.float64,
+            )
+            for index in active:
+                generalized_contact += (
+                    contacts[index].normal_jacobian * pn[index]
+                    + contacts[index].tangent_jacobian * pt[index]
+                ) / dt
+            residual = (
+                mass * (v_refined - v0) / dt
+                + damping * v_refined
+                + restoring
+                - external
+                - generalized_contact
+            )
+            if (
+                float(np.max(np.abs(residual)))
+                <= residual_tolerance_n
+            ):
+                return q_refined, v_refined, pn, pt, iteration
+            correction_residual = residual.copy()
+            for pin_index in range(self.pin_count):
+                if pin_index in active_pin_indices:
+                    continue
+                axial, transverse = self._pin_dofs(pin_index)
+                correction_residual[axial] = 0.0
+                correction_residual[transverse] = 0.0
+            velocity_tangent = mass / dt + damping + dt * tangent
+            effective_inverse = 1.0 / (
+                mass + dt * damping + dt**2 * tangent
+            )
+            if not active:
+                velocity_update = -correction_residual / velocity_tangent
+                v_refined += velocity_update
+                q_refined = q0 + dt * v_refined
+                continue
+
+            stick = [index for index in active if sticking[index]]
+            rows = [contacts[index].normal_jacobian for index in active]
+            rows.extend(contacts[index].tangent_jacobian for index in stick)
+            columns: list[NDArray[np.float64]] = []
+            slide_ratios: dict[int, float] = {}
+            for index in active:
+                column = contacts[index].normal_jacobian.copy()
+                if not sticking[index]:
+                    ratio = (
+                        pt[index] / pn[index]
+                        if pn[index] > 1e-16
+                        else 0.0
+                    )
+                    slide_ratios[index] = ratio
+                    column += ratio * contacts[index].tangent_jacobian
+                columns.append(column)
+            columns.extend(
+                contacts[index].tangent_jacobian for index in stick
+            )
+            matrix = np.asarray(
+                [
+                    [
+                        float(row @ (effective_inverse * column))
+                        for column in columns
+                    ]
+                    for row in rows
+                ],
+                dtype=np.float64,
+            )
+            rhs = dt * np.asarray(
+                [
+                    float(row @ (effective_inverse * correction_residual))
+                    for row in rows
+                ],
+                dtype=np.float64,
+            )
+            try:
+                impulse_update = np.linalg.solve(matrix, rhs)
+            except np.linalg.LinAlgError:
+                impulse_update, *_ = np.linalg.lstsq(
+                    matrix,
+                    rhs,
+                    rcond=1e-12,
+                )
+            generalized_impulse_update = np.zeros(
+                self.dof_count,
+                dtype=np.float64,
+            )
+            invalid_active_index: int | None = None
+            for position, index in enumerate(active):
+                delta_normal = float(impulse_update[position])
+                proposed_normal = pn[index] + delta_normal
+                if proposed_normal < -1e-14:
+                    invalid_active_index = index
+                    break
+                pn[index] = max(0.0, proposed_normal)
+                if not sticking[index]:
+                    pt[index] = slide_ratios[index] * pn[index]
+                generalized_impulse_update += (
+                    columns[position] * delta_normal
+                )
+            if invalid_active_index is not None:
+                pn[invalid_active_index] = 0.0
+                pt[invalid_active_index] = 0.0
+                freed_pin = contacts[invalid_active_index].pin_index
+                freed_axial, freed_transverse = self._pin_dofs(
+                    freed_pin
+                )
+                for dof in (freed_axial, freed_transverse):
+                    q_refined[dof] = free_q[dof]
+                    v_refined[dof] = free_v[dof]
+                continue
+            else:
+                for position, index in enumerate(stick):
+                    delta_tangent = float(
+                        impulse_update[len(active) + position]
+                    )
+                    pt[index] += delta_tangent
+                    generalized_impulse_update += (
+                        contacts[index].tangent_jacobian
+                        * delta_tangent
+                    )
+                velocity_update = (
+                    -dt * effective_inverse * correction_residual
+                    + effective_inverse * generalized_impulse_update
+                )
+                v_refined += velocity_update
+                q_refined = q0 + dt * v_refined
+                continue
+        return q_refined, v_refined, pn, pt, maximum_iterations
 
     def _model_state(
         self, settings: ArrayDynamicExperimentSettings
@@ -631,12 +1073,33 @@ class DynamicCommonBackplateArray:
         common_ux_m: float,
         drag_speed_m_s: float,
         dt: float,
+        applied_external_total_preload_n: float | None = None,
+        damping_scale: float = 1.0,
+        enforce_dynamic_residual_gate: bool = True,
         traversal_order: Sequence[int] | None = None,
     ) -> ArrayDynamicStepProposal:
         """Build one global proposal without mutating any state or pin history."""
 
         if not math.isfinite(dt) or dt <= 0.0:
             raise ContactConfigurationError("dt must be finite and positive")
+        applied_preload = (
+            settings.external_total_preload_n
+            if applied_external_total_preload_n is None
+            else float(applied_external_total_preload_n)
+        )
+        if (
+            not math.isfinite(applied_preload)
+            or applied_preload < 0.0
+            or applied_preload > settings.external_total_preload_n + 1e-12
+        ):
+            raise ContactConfigurationError(
+                "applied_external_total_preload_n must be finite and lie "
+                "between zero and the configured total preload"
+            )
+        if not math.isfinite(damping_scale) or damping_scale <= 0.0:
+            raise ContactConfigurationError(
+                "damping_scale must be finite and positive"
+            )
         if traversal_order is None:
             order = tuple(range(self.pin_count))
         else:
@@ -653,7 +1116,13 @@ class DynamicCommonBackplateArray:
                 v0,
                 effective_inverse,
                 nonlinear_iterations,
-            ) = self._free_implicit_step(state, settings, dt)
+            ) = self._free_implicit_step(
+                state,
+                settings,
+                dt,
+                applied_preload,
+                damping_scale,
+            )
             q = q_free.copy()
             v = v_free.copy()
             contacts: tuple[_ContactGeometry, ...] = ()
@@ -664,12 +1133,47 @@ class DynamicCommonBackplateArray:
             for projection_iterations in range(
                 1, self.contact.projection_iterations + 1
             ):
+                if projection_iterations == 1:
+                    base_q = q_free
+                    base_v = v_free
+                    projection_effective_inverse = effective_inverse
+                else:
+                    mass = self._mass(settings.backplate_mass_kg)
+                    damping, tangent, restoring, *_ = self._structure(
+                        q,
+                        settings,
+                        damping_scale,
+                    )
+                    external = np.zeros(
+                        self.dof_count,
+                        dtype=np.float64,
+                    )
+                    external[0] = -applied_preload
+                    no_contact_residual = (
+                        mass * (v - v0) / dt
+                        + damping * v
+                        + restoring
+                        - external
+                    )
+                    velocity_tangent = (
+                        mass / dt + damping + dt * tangent
+                    )
+                    base_v = v - no_contact_residual / velocity_tangent
+                    base_q = q0 + dt * base_v
+                    projection_effective_inverse = (
+                        1.0
+                        / (
+                            mass
+                            + dt * damping
+                            + dt**2 * tangent
+                        )
+                    )
                 all_geometry = self._contact_geometries(
                     state,
                     common_ux_m,
                     drag_speed_m_s,
-                    q_free,
-                    v_free,
+                    base_q,
+                    base_v,
                     q,
                     order,
                 )
@@ -685,7 +1189,7 @@ class DynamicCommonBackplateArray:
                 )
                 pn, pt, sticking = self._solve_coupled_impulses(
                     contacts,
-                    effective_inverse,
+                    projection_effective_inverse,
                     dt,
                     drag_speed_m_s,
                 )
@@ -697,20 +1201,59 @@ class DynamicCommonBackplateArray:
                         item.normal_jacobian * normal_impulse
                         + item.tangent_jacobian * tangent_impulse
                     )
-                v_new = v_free + effective_inverse * generalized_impulse
-                q_new = q0 + dt * v_new
-                if float(np.max(np.abs(q_new - q))) <= 1e-12:
-                    q = q_new
+                v_new = (
+                    base_v
+                    + projection_effective_inverse * generalized_impulse
+                )
+                q_candidate = q0 + dt * v_new
+                if float(np.max(np.abs(q_candidate - q))) <= 1e-12:
+                    q = q_candidate
                     v = v_new
                     break
-                q = q_new
-                v = v_new
+                q = (
+                    q
+                    + settings.coupled_projection_relaxation
+                    * (q_candidate - q)
+                )
+                v = (q - q0) / dt
 
+            (
+                q,
+                v,
+                pn,
+                pt,
+                refinement_iterations,
+            ) = self._refine_dynamic_equilibrium(
+                settings=settings,
+                q0=q0,
+                v0=v0,
+                free_q=q_free,
+                free_v=v_free,
+                q=q,
+                v=v,
+                contacts=contacts,
+                normal_impulses=pn,
+                tangential_impulses=pt,
+                sticking=sticking,
+                applied_preload_n=applied_preload,
+                damping_scale=damping_scale,
+                dt=dt,
+                residual_tolerance_n=(
+                    settings.dynamic_residual_tolerance_n
+                    if enforce_dynamic_residual_gate
+                    else settings.settling_dynamic_residual_tolerance_n
+                ),
+            )
             point, new_state = self._assemble_step(
                 state,
                 settings,
                 common_ux_m=common_ux_m,
                 drag_speed_m_s=drag_speed_m_s,
+                applied_external_total_preload_n=applied_preload,
+                damping_scale=damping_scale,
+                enforce_dynamic_residual_gate=(
+                    enforce_dynamic_residual_gate
+                ),
                 dt=dt,
                 q0=q0,
                 v0=v0,
@@ -721,7 +1264,8 @@ class DynamicCommonBackplateArray:
                 tangential_impulses=pt,
                 sticking=sticking,
                 nonlinear_iterations=nonlinear_iterations
-                + projection_iterations,
+                + projection_iterations
+                + refinement_iterations,
             )
         except ContactGeometryError as exc:
             return ArrayDynamicStepProposal(
@@ -769,6 +1313,9 @@ class DynamicCommonBackplateArray:
         *,
         common_ux_m: float,
         drag_speed_m_s: float,
+        applied_external_total_preload_n: float,
+        damping_scale: float,
+        enforce_dynamic_residual_gate: bool,
         dt: float,
         q0: NDArray[np.float64],
         v0: NDArray[np.float64],
@@ -789,7 +1336,7 @@ class DynamicCommonBackplateArray:
             spring_states,
             compression,
             structural_energy_by_pin,
-        ) = self._structure(q, settings)
+        ) = self._structure(q, settings, damping_scale)
         (
             _damping0,
             _tangent0,
@@ -797,7 +1344,7 @@ class DynamicCommonBackplateArray:
             _spring0,
             _compression0,
             structural_energy0_by_pin,
-        ) = self._structure(q0, settings)
+        ) = self._structure(q0, settings, damping_scale)
         contact_by_pin = {
             item.pin_index: (item, normal_impulse, tangent_impulse, stick)
             for item, normal_impulse, tangent_impulse, stick in zip(
@@ -816,7 +1363,7 @@ class DynamicCommonBackplateArray:
             ) / dt
 
         external = np.zeros(self.dof_count, dtype=np.float64)
-        external[0] = -settings.external_total_preload_n
+        external[0] = -applied_external_total_preload_n
         residual_vector = (
             mass * acceleration
             + damping * v
@@ -1109,7 +1656,7 @@ class DynamicCommonBackplateArray:
         structural_energy = float(np.sum(structural_energy_by_pin))
         structural_energy0 = float(np.sum(structural_energy0_by_pin))
         preload_work = (
-            -settings.external_total_preload_n * (q[0] - q0[0])
+            -applied_external_total_preload_n * (q[0] - q0[0])
         )
         structural_damping_dissipation = float(
             np.sum(damping[1:] * v[1:] ** 2) * dt
@@ -1184,7 +1731,7 @@ class DynamicCommonBackplateArray:
                 float(v[0]),
             ),
             backplate_acceleration_xyz_m_s2=(0.0, 0.0, float(acceleration[0])),
-            external_total_preload_n=settings.external_total_preload_n,
+            external_total_preload_n=applied_external_total_preload_n,
             pin_responses=tuple(pin_responses),
             wall_on_unit_wrench_about_origin=tuple(
                 float(value) for value in unit_wrench
@@ -1242,7 +1789,32 @@ class DynamicCommonBackplateArray:
             model_state=model_state,
             event_labels=tuple(event_labels),
         )
+        if enforce_dynamic_residual_gate and (
+            not math.isfinite(point.dynamic_residual_n)
+            or abs(point.dynamic_residual_n)
+            > settings.dynamic_residual_tolerance_n
+        ):
+            raise RuntimeError(
+                "numerical_failure: dynamic residual gate exceeded: "
+                f"{point.dynamic_residual_n:.9g} N > "
+                f"{settings.dynamic_residual_tolerance_n:.9g} N"
+            )
         return point, new_state
+
+
+class _SettlementFailure(RuntimeError):
+    def __init__(
+        self,
+        *,
+        category: str,
+        code: str,
+        message: str,
+        trace: Sequence[SettlementTracePoint],
+    ) -> None:
+        super().__init__(message)
+        self.category = category
+        self.code = code
+        self.trace = tuple(trace)
 
 
 class DynamicCommonBackplateExperiment:
@@ -1258,37 +1830,77 @@ class DynamicCommonBackplateExperiment:
         self.settings = settings
         self.integrator = integrator or DynamicIntegratorSettings()
 
-    def _settle(self) -> tuple[ArrayDynamicState, ArrayDynamicPathPoint]:
+    @staticmethod
+    def _minimum_jerk_ramp_fraction(time_s: float, duration_s: float) -> float:
+        ratio = min(1.0, max(0.0, time_s / duration_s))
+        return ratio**3 * (10.0 - 15.0 * ratio + 6.0 * ratio**2)
+
+    def _settle_with_trace(
+        self,
+    ) -> tuple[
+        ArrayDynamicState,
+        ArrayDynamicPathPoint,
+        tuple[SettlementTracePoint, ...],
+    ]:
         state = self.system.initial_state(self.settings)
         initial_z = state.backplate_position_z_m
         dt = self.integrator.time_step_s
-        minimum_steps = int(math.ceil(self.integrator.settling_time_s / dt))
+        minimum_settling_time = max(
+            self.integrator.settling_time_s,
+            self.settings.preload_ramp_time_s,
+        )
+        minimum_steps = int(math.ceil(minimum_settling_time / dt))
         maximum_steps = int(
             math.ceil(self.integrator.maximum_settling_time_s / dt)
         )
         stable_steps = 0
         last_point: ArrayDynamicPathPoint | None = None
+        trace: list[SettlementTracePoint] = []
+        force_tolerance = max(
+            self.settings.settling_reaction_force_tolerance_n,
+            self.settings.settling_reaction_force_relative_tolerance
+            * self.settings.external_total_preload_n,
+        )
         for step_index in range(maximum_steps):
+            next_time = state.time_s + dt
+            ramp_fraction = self._minimum_jerk_ramp_fraction(
+                next_time,
+                self.settings.preload_ramp_time_s,
+            )
+            applied_preload = (
+                self.settings.external_total_preload_n * ramp_fraction
+            )
             proposal = self.system.propose_step(
                 state,
                 self.settings,
                 common_ux_m=self.settings.initial_common_ux_m,
                 drag_speed_m_s=0.0,
                 dt=dt,
+                applied_external_total_preload_n=applied_preload,
+                damping_scale=self.settings.settlement_damping_scale,
+                enforce_dynamic_residual_gate=False,
             )
             if not proposal.proposal_valid or proposal.point is None:
-                raise RuntimeError(
-                    "initial_preload_infeasible:"
-                    + proposal.rejection_reason
+                reason = proposal.rejection_reason
+                if reason.startswith("terrain_bounds:"):
+                    category = "geometry_out_of_bounds"
+                    code = "settlement_terrain_bounds"
+                elif reason.startswith("structural_boundary:"):
+                    category = "physical_boundary"
+                    code = "settlement_structural_boundary"
+                else:
+                    category = "numerical_failure"
+                    code = "settlement_step_rejected"
+                raise _SettlementFailure(
+                    category=category,
+                    code=code,
+                    message=reason,
+                    trace=trace,
                 )
             next_state = self.system.commit_step(state, proposal, accept=True)
-            if (
+            actual_approach = (
                 initial_z - next_state.backplate_position_z_m
-                > self.settings.maximum_preload_approach_m
-            ):
-                raise RuntimeError(
-                    "initial_preload_infeasible: maximum approach exceeded"
-                )
+            )
             state = next_state
             last_point = proposal.point
             speeds = [
@@ -1296,33 +1908,131 @@ class DynamicCommonBackplateExperiment:
                 *(abs(value) for value in state.pin_axial_velocity_m_s),
                 *(abs(value) for value in state.pin_transverse_velocity_m_s),
             ]
-            if max(speeds) <= self.integrator.settling_velocity_tolerance_m_s:
+            maximum_speed = max(speeds)
+            reaction_error = abs(
+                last_point.total_contact_reaction_z_n - applied_preload
+            )
+            ramp_complete = ramp_fraction >= 1.0 - 1e-12
+            velocity_gate = (
+                maximum_speed
+                <= self.integrator.settling_velocity_tolerance_m_s
+            )
+            force_gate = reaction_error <= force_tolerance
+            residual_gate = (
+                abs(last_point.dynamic_residual_n)
+                <= self.settings.settling_dynamic_residual_tolerance_n
+            )
+            contact_gate = (
+                self.settings.external_total_preload_n == 0.0
+                or last_point.total_contact_reaction_z_n > 0.0
+            )
+            if (
+                ramp_complete
+                and velocity_gate
+                and force_gate
+                and residual_gate
+                and contact_gate
+            ):
                 stable_steps += 1
             else:
                 stable_steps = 0
+            trace.append(
+                SettlementTracePoint(
+                    time_s=float(state.time_s),
+                    ramp_fraction=float(ramp_fraction),
+                    applied_total_preload_n=float(applied_preload),
+                    damping_scale=float(
+                        self.settings.settlement_damping_scale
+                    ),
+                    backplate_position_z_m=float(
+                        state.backplate_position_z_m
+                    ),
+                    actual_approach_m=float(actual_approach),
+                    maximum_mode_speed_m_s=float(maximum_speed),
+                    total_contact_reaction_z_n=float(
+                        last_point.total_contact_reaction_z_n
+                    ),
+                    contact_reaction_error_n=float(reaction_error),
+                    dynamic_residual_n=float(last_point.dynamic_residual_n),
+                    active_pin_count=int(last_point.active_pin_count),
+                    stable_steps=int(stable_steps),
+                )
+            )
+            if actual_approach > self.settings.maximum_preload_approach_m:
+                raise _SettlementFailure(
+                    category="physical_boundary",
+                    code="maximum_preload_approach_exceeded",
+                    message=(
+                        "settlement maximum approach exceeded: "
+                        f"{actual_approach:.9g} m > "
+                        f"{self.settings.maximum_preload_approach_m:.9g} m"
+                    ),
+                    trace=trace,
+                )
             if (
                 step_index + 1 >= minimum_steps
-                and stable_steps >= 20
-                and (
-                    self.settings.external_total_preload_n == 0.0
-                    or last_point.total_contact_reaction_z_n > 0.0
-                )
+                and stable_steps >= self.settings.settling_stable_steps
             ):
                 break
         else:
-            raise RuntimeError(
-                "initial_preload_infeasible: unified dynamic settling did not converge"
+            failed_gates: list[str] = []
+            if trace:
+                final = trace[-1]
+                if (
+                    final.maximum_mode_speed_m_s
+                    > self.integrator.settling_velocity_tolerance_m_s
+                ):
+                    failed_gates.append("velocity")
+                if final.contact_reaction_error_n > force_tolerance:
+                    failed_gates.append("reaction_force_balance")
+                if (
+                    abs(final.dynamic_residual_n)
+                    > self.settings.settling_dynamic_residual_tolerance_n
+                ):
+                    failed_gates.append("dynamic_residual")
+                if (
+                    self.settings.external_total_preload_n > 0.0
+                    and final.active_pin_count == 0
+                ):
+                    failed_gates.append("positive_contact")
+            raise _SettlementFailure(
+                category="settlement_nonconvergence",
+                code="settlement_stability_window_not_reached",
+                message=(
+                    "unified dynamic settling did not converge; failed_gates="
+                    + ",".join(failed_gates or ["stable_window"])
+                ),
+                trace=trace,
             )
         assert last_point is not None
-        return state, last_point
+        return state, last_point, tuple(trace)
+
+    def _settle(self) -> tuple[ArrayDynamicState, ArrayDynamicPathPoint]:
+        """Compatibility fixture hook; production runs retain the audit trace."""
+
+        state, point, _trace = self._settle_with_trace()
+        return state, point
 
     def run(self) -> ArrayDynamicExperimentResult:
         try:
-            settled_state, settled_point = self._settle()
+            (
+                settled_state,
+                settled_point,
+                settlement_trace,
+            ) = self._settle_with_trace()
         except ContactGeometryError as exc:
-            return self._failed_result(f"initial_preload_infeasible:{exc}")
-        except RuntimeError as exc:
-            return self._failed_result(str(exc))
+            return self._failed_result(
+                reason=str(exc),
+                failure_category="geometry_out_of_bounds",
+                failure_code="settlement_terrain_bounds",
+            )
+        except _SettlementFailure as exc:
+            return self._failed_result(
+                reason=str(exc),
+                failure_category=exc.category,
+                failure_code=exc.code,
+                settlement_trace=exc.trace,
+            )
 
         state = replace(
             settled_state,
@@ -1380,7 +2090,7 @@ class DynamicCommonBackplateExperiment:
             cumulative_structural_damping_dissipation_j=0.0,
             backplate_damping_dissipation_increment_j=0.0,
             cumulative_backplate_damping_dissipation_j=0.0,
-            dynamic_residual_n=0.0,
+            dynamic_residual_n=abs(settled_point.dynamic_residual_n),
             energy_residual_j=0.0,
             actual_time_step_s=self.integrator.time_step_s,
             event_labels=tuple(initial_events),
@@ -1394,7 +2104,11 @@ class DynamicCommonBackplateExperiment:
         steps = int(math.ceil(total_time / dt_nominal))
         if steps > self.integrator.maximum_steps:
             return self._failed_result(
-                "numerical_failure: maximum_steps would be exceeded"
+                reason="drag maximum_steps would be exceeded",
+                failure_category="numerical_failure",
+                failure_code="drag_maximum_steps_exceeded",
+                settlement_trace=settlement_trace,
+                initial_preload_success=True,
             )
         terminal = PathTerminalState.PATH_END
         reason = "path_end"
@@ -1442,6 +2156,7 @@ class DynamicCommonBackplateExperiment:
         state = replace(state, rejected_steps=rejected_steps)
         summary = self._summarize(
             points,
+            settlement_trace=settlement_trace,
             terminal=terminal,
             reason=reason,
             accepted_steps=state.accepted_steps,
@@ -1455,6 +2170,7 @@ class DynamicCommonBackplateExperiment:
             experiment=self.settings,
             contact=self.system.contact,
             integrator=self.integrator,
+            settlement_trace=settlement_trace,
             points=tuple(points),
             summary=summary,
             assumptions=(
@@ -1469,51 +2185,136 @@ class DynamicCommonBackplateExperiment:
             ),
         )
 
-    def _failed_result(self, reason: str) -> ArrayDynamicExperimentResult:
-        terminal = (
-            PathTerminalState.INITIAL_PRELOAD_INFEASIBLE
-            if "initial_preload_infeasible" in reason
-            else PathTerminalState.NUMERICAL_FAILURE
+    def _failed_result(
+        self,
+        *,
+        reason: str,
+        failure_category: str,
+        failure_code: str,
+        settlement_trace: Sequence[SettlementTracePoint] = (),
+        initial_preload_success: bool = False,
+    ) -> ArrayDynamicExperimentResult:
+        terminal_by_category = {
+            "geometry_out_of_bounds": PathTerminalState.TERRAIN_BOUNDS,
+            "physical_boundary": PathTerminalState.STRUCTURAL_BOUNDARY,
+            "parameter_unclosed": PathTerminalState.MODEL_UNCLOSED,
+            "settlement_nonconvergence": (
+                PathTerminalState.INITIAL_PRELOAD_INFEASIBLE
+            ),
+            "numerical_failure": PathTerminalState.NUMERICAL_FAILURE,
+        }
+        terminal = terminal_by_category.get(
+            failure_category,
+            PathTerminalState.NUMERICAL_FAILURE,
         )
         model_state = self.system._model_state(self.settings)
+        final_settlement = settlement_trace[-1] if settlement_trace else None
         summary = ArrayDynamicPathSummary(
             preload_mode="continuous_total_external_force",
             external_total_preload_n=self.settings.external_total_preload_n,
             drag_speed_m_s=self.settings.drag_speed_m_s,
             backplate_rotational_dofs=self.settings.backplate_rotational_dofs,
-            initial_preload_success=False,
-            total_contact_reaction_time_mean_n=0.0,
-            steady_normal_balance_error_n=math.inf,
+            initial_preload_success=initial_preload_success,
+            conditional_performance_available=False,
+            failure_category=failure_category,
+            failure_code=failure_code,
+            initialization_failure_category=(
+                None if initial_preload_success else failure_category
+            ),
+            initialization_failure_code=(
+                None if initial_preload_success else failure_code
+            ),
+            settlement_ramp_profile=self.settings.preload_ramp_profile,
+            settlement_ramp_time_s=self.settings.preload_ramp_time_s,
+            settlement_damping_scale=(
+                self.settings.settlement_damping_scale
+            ),
+            settlement_steps=len(settlement_trace),
+            settlement_stable_steps=(
+                final_settlement.stable_steps if final_settlement else 0
+            ),
+            settlement_required_stable_steps=(
+                self.settings.settling_stable_steps
+            ),
+            settlement_actual_approach_m=(
+                final_settlement.actual_approach_m
+                if final_settlement
+                else None
+            ),
+            settlement_maximum_approach_m=(
+                self.settings.maximum_preload_approach_m
+            ),
+            settlement_final_applied_preload_n=(
+                final_settlement.applied_total_preload_n
+                if final_settlement
+                else None
+            ),
+            settlement_final_reaction_error_n=(
+                final_settlement.contact_reaction_error_n
+                if final_settlement
+                else None
+            ),
+            settlement_final_maximum_mode_speed_m_s=(
+                final_settlement.maximum_mode_speed_m_s
+                if final_settlement
+                else None
+            ),
+            settlement_final_dynamic_residual_n=(
+                final_settlement.dynamic_residual_n
+                if final_settlement
+                else None
+            ),
+            total_contact_reaction_time_mean_n=None,
+            steady_normal_balance_error_n=None,
             contact_fraction=0.0,
             effective_load_fraction=0.0,
-            tangential_force_peak_n=0.0,
-            tangential_force_steady_peak_n=0.0,
-            tangential_force_impact_peak_n=0.0,
-            tangential_force_median_n=0.0,
-            tangential_force_p10_n=0.0,
-            tangential_force_p25_n=0.0,
-            total_normal_force_range_n=(0.0, 0.0),
-            backplate_z_range_m=(math.nan, math.nan),
-            backplate_speed_peak_m_s=0.0,
-            backplate_acceleration_peak_m_s2=0.0,
-            impact_velocity_peak_m_s=0.0,
-            neff_normal_median=0.0,
-            neff_target_tangential_median=0.0,
-            neff_resultant_median=0.0,
-            maximum_normal_load_concentration=0.0,
-            maximum_gini_normal=0.0,
+            tangential_force_peak_n=None,
+            tangential_force_steady_peak_n=None,
+            tangential_force_impact_peak_n=None,
+            tangential_force_median_n=None,
+            tangential_force_p10_n=None,
+            tangential_force_p25_n=None,
+            total_normal_force_range_n=None,
+            backplate_z_range_m=None,
+            backplate_speed_peak_m_s=None,
+            backplate_acceleration_peak_m_s2=None,
+            impact_velocity_peak_m_s=None,
+            neff_normal_median=None,
+            neff_target_tangential_median=None,
+            neff_resultant_median=None,
+            maximum_normal_load_concentration=None,
+            maximum_gini_normal=None,
+            maximum_pin_normal_force_n=None,
+            mean_pin_normal_force_n=None,
+            mean_active_pin_normal_force_n=None,
+            maximum_bending_stress_pa=None,
+            minimum_yield_margin_pa=None,
+            minimum_euler_buckling_margin_n=None,
+            minimum_spring_travel_margin_m=None,
+            yield_violation_pin_step_count=0,
+            buckling_violation_pin_step_count=0,
+            hard_stop_pin_step_count=0,
             event_counts={label.value: 0 for label in EventLabel},
-            maximum_abs_dynamic_residual_n=math.inf,
-            maximum_abs_energy_residual_j=math.inf,
-            maximum_force_aggregation_residual_n=math.inf,
-            maximum_moment_aggregation_residual_nm=math.inf,
-            minimum_actual_time_step_s=self.integrator.time_step_s,
-            maximum_actual_time_step_s=self.integrator.time_step_s,
+            maximum_abs_dynamic_residual_n=None,
+            maximum_abs_energy_residual_j=None,
+            maximum_force_aggregation_residual_n=None,
+            maximum_moment_aggregation_residual_nm=None,
+            minimum_actual_time_step_s=None,
+            maximum_actual_time_step_s=None,
             accepted_steps=0,
             rejected_steps=0,
             time_step_convergence_checked=self.settings.time_step_convergence_checked,
             contact_parameter_convergence_checked=(
                 self.settings.contact_parameter_convergence_checked
+            ),
+            settlement_damping_convergence_checked=(
+                self.settings.settlement_damping_convergence_checked
+            ),
+            terrain_resolution_convergence_checked=(
+                self.settings.terrain_resolution_convergence_checked
+            ),
+            physical_calibration_completed=(
+                self.settings.physical_calibration_completed
             ),
             unclosed_parameter_names=self.system._unclosed_parameter_names(
                 self.settings
@@ -1532,6 +2333,7 @@ class DynamicCommonBackplateExperiment:
             experiment=self.settings,
             contact=self.system.contact,
             integrator=self.integrator,
+            settlement_trace=tuple(settlement_trace),
             points=(),
             summary=summary,
             assumptions=(M3_MODEL_LEVEL,),
@@ -1541,6 +2343,7 @@ class DynamicCommonBackplateExperiment:
         self,
         points: Sequence[ArrayDynamicPathPoint],
         *,
+        settlement_trace: Sequence[SettlementTracePoint],
         terminal: PathTerminalState,
         reason: str,
         accepted_steps: int,
@@ -1626,16 +2429,103 @@ class DynamicCommonBackplateExperiment:
             and not self.system._unclosed_parameter_names(self.settings)
             and self.settings.time_step_convergence_checked
             and self.settings.contact_parameter_convergence_checked
+            and self.settings.settlement_damping_convergence_checked
+            and self.settings.terrain_resolution_convergence_checked
+            and self.settings.physical_calibration_completed
         )
         dt_values = np.asarray(
             [point.actual_time_step_s for point in points], dtype=np.float64
         )
+        final_settlement = settlement_trace[-1]
+        pin_samples = [
+            (pin_index, pin)
+            for point in points
+            for pin_index, pin in enumerate(point.pin_responses)
+        ]
+        maximum_bending_stress = max(
+            pin.bending_stress_pa for _index, pin in pin_samples
+        )
+        yield_margins = [
+            float(self.system.pin_parameters[index].yield_strength_pa)
+            - pin.bending_stress_pa
+            for index, pin in pin_samples
+            if self.system.pin_parameters[index].yield_strength_pa is not None
+        ]
+        yield_violations = sum(
+            self.system.pin_parameters[index].yield_strength_pa is not None
+            and pin.bending_stress_pa
+            > float(self.system.pin_parameters[index].yield_strength_pa)
+            for index, pin in pin_samples
+        )
+        buckling_violations = sum(
+            pin.euler_buckling_margin_n < 0.0
+            for _index, pin in pin_samples
+        )
+        hard_stop_samples = sum(
+            pin.spring_state is SpringState.HARD_STOP
+            for _index, pin in pin_samples
+        )
+        pin_normal_forces = [
+            pin.normal_force_n for _index, pin in pin_samples
+        ]
+        positive_pin_normal_forces = [
+            value for value in pin_normal_forces if value > 0.0
+        ]
         return ArrayDynamicPathSummary(
             preload_mode="continuous_total_external_force",
             external_total_preload_n=self.settings.external_total_preload_n,
             drag_speed_m_s=self.settings.drag_speed_m_s,
             backplate_rotational_dofs=self.settings.backplate_rotational_dofs,
             initial_preload_success=True,
+            conditional_performance_available=True,
+            failure_category=(
+                None
+                if terminal is PathTerminalState.PATH_END
+                else (
+                    "geometry_out_of_bounds"
+                    if terminal is PathTerminalState.TERRAIN_BOUNDS
+                    else (
+                        "physical_boundary"
+                        if terminal is PathTerminalState.STRUCTURAL_BOUNDARY
+                        else "numerical_failure"
+                    )
+                )
+            ),
+            failure_code=(
+                None
+                if terminal is PathTerminalState.PATH_END
+                else terminal.value
+            ),
+            initialization_failure_category=None,
+            initialization_failure_code=None,
+            settlement_ramp_profile=self.settings.preload_ramp_profile,
+            settlement_ramp_time_s=self.settings.preload_ramp_time_s,
+            settlement_damping_scale=(
+                self.settings.settlement_damping_scale
+            ),
+            settlement_steps=len(settlement_trace),
+            settlement_stable_steps=final_settlement.stable_steps,
+            settlement_required_stable_steps=(
+                self.settings.settling_stable_steps
+            ),
+            settlement_actual_approach_m=(
+                final_settlement.actual_approach_m
+            ),
+            settlement_maximum_approach_m=(
+                self.settings.maximum_preload_approach_m
+            ),
+            settlement_final_applied_preload_n=(
+                final_settlement.applied_total_preload_n
+            ),
+            settlement_final_reaction_error_n=(
+                final_settlement.contact_reaction_error_n
+            ),
+            settlement_final_maximum_mode_speed_m_s=(
+                final_settlement.maximum_mode_speed_m_s
+            ),
+            settlement_final_dynamic_residual_n=(
+                final_settlement.dynamic_residual_n
+            ),
             total_contact_reaction_time_mean_n=steady_normal_mean,
             steady_normal_balance_error_n=float(
                 abs(steady_normal_mean - self.settings.external_total_preload_n)
@@ -1696,6 +2586,32 @@ class DynamicCommonBackplateExperiment:
             maximum_gini_normal=float(
                 max(point.sharing.gini_normal for point in points)
             ),
+            maximum_pin_normal_force_n=float(max(pin_normal_forces)),
+            mean_pin_normal_force_n=float(np.mean(pin_normal_forces)),
+            mean_active_pin_normal_force_n=(
+                float(np.mean(positive_pin_normal_forces))
+                if positive_pin_normal_forces
+                else 0.0
+            ),
+            maximum_bending_stress_pa=float(maximum_bending_stress),
+            minimum_yield_margin_pa=(
+                float(min(yield_margins)) if yield_margins else None
+            ),
+            minimum_euler_buckling_margin_n=float(
+                min(
+                    pin.euler_buckling_margin_n
+                    for _index, pin in pin_samples
+                )
+            ),
+            minimum_spring_travel_margin_m=float(
+                min(
+                    pin.spring_travel_margin_m
+                    for _index, pin in pin_samples
+                )
+            ),
+            yield_violation_pin_step_count=int(yield_violations),
+            buckling_violation_pin_step_count=int(buckling_violations),
+            hard_stop_pin_step_count=int(hard_stop_samples),
             event_counts=event_counts,
             maximum_abs_dynamic_residual_n=float(
                 max(abs(point.dynamic_residual_n) for point in points)
@@ -1716,6 +2632,15 @@ class DynamicCommonBackplateExperiment:
             time_step_convergence_checked=self.settings.time_step_convergence_checked,
             contact_parameter_convergence_checked=(
                 self.settings.contact_parameter_convergence_checked
+            ),
+            settlement_damping_convergence_checked=(
+                self.settings.settlement_damping_convergence_checked
+            ),
+            terrain_resolution_convergence_checked=(
+                self.settings.terrain_resolution_convergence_checked
+            ),
+            physical_calibration_completed=(
+                self.settings.physical_calibration_completed
             ),
             unclosed_parameter_names=self.system._unclosed_parameter_names(
                 self.settings

@@ -1,22 +1,22 @@
-schema_version: "1"
-m3_module_version: "m3.1.0"
-status: "pending_user_approval_after_formal_round1"
+schema_version: "2"
+m3_module_version: "m3.2.0"
+status: "not_generated_formal_campaign_not_run"
 formal_round1_completed: false
 selected_candidate_count: 0
 selected_candidates: []
 conclusions:
   stable_fixed_angle_advantage: "not_evaluated"
-  gradient_angle_benefit: "not_evaluated"
+  gradient_80_to_60_benefit: "not_evaluated"
   array_direction_effect: "not_evaluated"
   array_scale_saturation: "not_evaluated"
+  preload_interaction: "not_evaluated"
   compliance_improves_effective_pin_count: "not_evaluated"
 reason: >-
-  M3 dynamic Stage-I analytic acceptance cannot rank hardware. No legacy fixed-Z
-  screen was restored or rerun, and no formal M3 campaign was started.
-  The full-chain manifest, formal M2 results, approved M2 parameter packs and
-  explicit approval to start M3 round one are absent.
+  The complete 1344-configuration design is defined, but the planned
+  3-family x 100-seed x 3-preload, 100 mm campaign has not run. The current
+  one-seed 0.1 mm smoke is interface evidence only and cannot select hardware.
 required_next_action: >-
-  Complete and freeze M4/full-chain smoke, run the approved M2 formal workflow,
-  approve 4-6 representative M2 packs for M3, explicitly approve M3 round one,
-  close the project-terrain clearance boundary, then rebuild and run the balanced
-  80-120 hardware design. Stop after proposing 18-24 candidates for user review.
+  Produce and verify the formal M1 terrain catalog, close the declared
+  calibration and convergence gates, execute bounded paired M3 shards, report
+  initialization coverage separately from conditional pull-force performance,
+  and only then propose candidates for same-realization 5 um refinement.

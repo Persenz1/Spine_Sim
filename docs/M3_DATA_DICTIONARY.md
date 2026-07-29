@@ -1,177 +1,147 @@
-# M3 持续总预载阵列动力学数据字典
+# M3 共同背板阵列动力学数据字典
 
-**生产模块版本：** `m3.1.0`
-**单位：** 除状态、索引、计数和无量纲指标外均为 SI。
-**生产模型等级：**
-`project_model_P_common_rigid_backplate_z_dynamic_continuous_total_preload_v2`
-**Legacy 模型等级：**
-`project_model_P_common_rigid_backplate_quasistatic_v1`
+**生产模块版本：** `m3.2.0`
+**模型等级：**
+`project_model_P_common_rigid_backplate_z_dynamic_continuous_total_preload_v3`
+**单位：** 状态、索引、计数和无量纲指标以外均为 SI。
 
-## 1. 接口冻结与 Legacy 边界
+## 1. 物理与接口边界
 
-M3 正式入口是 `DynamicCommonBackplateArray` 与
-`DynamicCommonBackplateExperiment`。它们统一积分共同刚性背板和全部针的内部
-动力学，不调用逐针 `DynamicSingleSpineExperiment.run()`。
+生产入口为 `DynamicCommonBackplateArray` 和
+`DynamicCommonBackplateExperiment`。它们统一积分一个共同刚性背板 Z 自由度及
+所有针的轴向/横向模态；不调用 M2 静态二分预载根，也不将逐针 M2 结果相加。
 
-旧路径现仅以 `LegacyCommonBackplateArray`、
-`LegacyFixedZCommonBackplateExperiment`、`LegacyArrayState`、
-`LegacyArrayPoseResponse` 和 `LegacyPrescribedPoseConstitutiveCore` 等显式
-`Legacy*` 名称保留给迁移夹具。它们代表初始预载后的 fixed-Z / quasistatic
-边界，不是正式 M3 入口，其结果不得标记为 `formal_ranking_eligible=true`。
+背板 \(x_B(t)\) 是规定的 +x 拖动输入，当前俯仰/横滚锁定。`external_total_preload_n`
+是整个单元唯一外部总法向载荷，不是逐针载荷；沉降结束后保持 0.5、1 或 2 N 到
+100 mm 路径终点。逐时刻接触反力可因惯性和阻尼偏离该外载。
 
-首版生产模型只开放共同背板 Z 平动自由度。水平位置
-\(x_B(t)=x_B^0+v_{\rm drag}t\) 是规定输入；俯仰和横滚锁定，因此
-`backplate_rotational_dofs=locked`、`backplate_inertia_kg_m2=null`。若以后开放
-俯仰/横滚，必须升级模型版本并显式提供相应惯量、阻尼、状态和残余。
-
-## 2. 配置与几何
+## 2. 配置身份
 
 ### `ArrayConfiguration`
 
-| 字段 | 类型/单位 | 含义 |
-|---|---|---|
-| `nx`, `ny` | int | 正式构型各为 2–6；`fixture_only=true` 时允许一个方向为 1 |
-| `spacing_m` | m | 4、5 或 6 mm；首版 x/y 等距 |
-| `base_spine` | `SpineParameters` | M2 硬件、材料、质量、阻尼与摩擦参数 |
-| `angle_layout` | enum | `fixed`、`gradient_80_to_60`、`gradient_80_to_50` |
-| `fixture_only` | bool | 仅解析夹具使用；保存的项目地形 case 禁止为 true |
-| `configuration_id` | string | 由完整硬件构型和 M3 版本确定生成 |
+| 字段 | 含义 |
+|---|---|
+| `nx`, `ny` | 阵列列/行数；正式形状为 2×2、2×5、5×2、3×5、5×3、4×4、6×6 |
+| `spacing_m` | 0.004、0.005、0.006 m |
+| `base_spine` | 针尖、针径、安装角、轴向设置、材料、质量、阻尼和摩擦参数 |
+| `angle_layout` | `fixed` 或 `gradient_80_to_60` |
+| `configuration_id` | 只由完整硬件/阵列身份和模块版本生成，不含 terrain seed |
 
-针按 row-major 编号：`pin_index = row * nx + column`。安装点相对单元中心：
+针按 `pin_index = row * nx + column` 编号，局部安装点为
 
 \[
-x_i=(column-(n_x-1)/2)s,\quad
+x_i=(column-(n_x-1)/2)s,\qquad
 y_i=(row-(n_y-1)/2)s.
 \]
 
-梯度只沿局部 x；每列角度线性插值，且
-\(L_i\sin\alpha_i=4\sin80^\circ\) mm。阵列系统检查每根针的
-`track.y_global_m == unit_origin_y + y_i`，并要求所有 track 的
-`terrain_recipe_id`、`region_id` 相同。`2×5` 与 `5×2` 的
-`configuration_id` 必须不同。
+`2×5` 与 `5×2`、`3×5` 与 `5×3` 的方向和 ID 不同。80°→60° 梯度沿阵列局部
+x 方向逐列线性变化，并保持统一的竖直未加载伸出量。默认不生成固定 50° 或
+80°→50°。
 
-## 3. 动力学配置
+### terrain 与 case 身份
 
-### `ArrayDynamicExperimentSettings`
+- M3 只消费 M1 catalog 或由 catalog recipe/region 派生的轨迹请求，不伪造地形。
+- `terrain_condition_id` 标识 family+seed+realization，`terrain_data_hash` 标识实际
+  地形数据。
+- `loading_protocol_id` 至少包含总预载、100 mm 路径、拖速、预载斜坡、沉降阻尼和
+  积分/接触协议。
+- `case_id` 由完整硬件、阵列、terrain condition/data hash、加载协议及上游身份
+  共同生成。
 
-| 字段 | 单位 | 含义 |
+## 3. 沉降协议
+
+`ArrayDynamicExperimentSettings` 新增或关键字段：
+
+| 字段 | 单位/类型 | 含义 |
+|---|---|---|
+| `preload_ramp_profile` | string | 当前 `minimum_jerk_quintic` |
+| `preload_ramp_time_s` | s | 从 0 平滑升至总预载的时间 |
+| `settlement_damping_scale` | – | 仅沉降阶段作用的数值阻尼倍数；拖动阶段恢复为 1 |
+| `settling_reaction_force_tolerance_n` | N | 总反力平衡绝对门 |
+| `settling_reaction_force_relative_tolerance` | – | 总反力平衡相对门 |
+| `settling_dynamic_residual_tolerance_n` | N | 沉降动力学残差门 |
+| `settling_required_stable_steps` | count | 所有门连续满足的步数 |
+| `maximum_preload_approach_m` | m | 背板最大允许接近量 |
+| `dynamic_residual_tolerance_n` | N | 每个拖动 proposal 的内部残差门 |
+| `coupled_projection_relaxation` | – | 多接触投影松弛系数 |
+
+### `SettlementTracePoint`
+
+每个沉降样本保存：
+
+- `time_s`、`ramp_fraction`、`applied_total_preload_n`、`damping_scale`；
+- `backplate_position_z_m`、`actual_approach_m`；
+- 背板与全部针模态中的 `maximum_mode_speed_m_s`；
+- `total_contact_reaction_z_n`、`contact_reaction_error_n`；
+- `dynamic_residual_n`、`active_pin_count`、`stable_steps`。
+
+失败分类字段为 `failure_category`/`failure_code` 和
+`initialization_failure_category`/`initialization_failure_code`。分类包括
+`physical_boundary`、`geometry_out_of_bounds`、`parameter_unclosed`、
+`settlement_nonconvergence`、`numerical_failure`。
+
+## 4. 动态状态与原子步骤
+
+`ArrayDynamicState` 是不可变对象，保存背板位置/速度、全部针轴向和横向状态、接触/
+弹簧状态、接触历史、累计摩擦/结构/背板阻尼耗散及接受/拒绝步数。
+
+`propose_step(old_state, ...)` 对所有针读取同一个旧状态。只有全局 proposal
+成功后，`commit_step(..., accept=true)` 才提交；拒绝时精确返回旧状态。针遍历顺序
+不得改变 proposal、point 或状态。
+
+每根针的状态覆盖 free/contact、detach/impact/recontact、stick/slide，以及轴向弹簧
+lower/interior/upper hard-stop。轴向设置为 300、800、2000 N/m 或 `rigid`；刚性不
+用伪大刚度表示。
+
+## 5. 路径点与审计量
+
+`ArrayDynamicPathPoint` 至少保存：
+
+- 时间、路径位置、背板位置/速度/加速度和实际时间步；
+- 每针安装点/球心运动、gap、支撑点、法/切向力与冲量、状态和事件；
+- 每针关于安装点和单元原点的 wrench、阵列总 wrench；
+- 总反力、背板惯性力和背板阻尼力；
+- 活动针/有效针数、三类 \(N_\mathrm{eff}\)、最大/均值和 Gini；
+- 动能、结构能、外载功、驱动功、摩擦/结构/背板阻尼耗散的增量与累计量；
+- 动力学、能量、合力聚合和合矩聚合残差；
+- 每针弯曲应力、屈服余量、Euler 屈曲余量和弹簧行程余量。
+
+单针脱离后其接触力/冲量为零，但针模态继续积分，后续允许重新接触。
+
+## 6. 三档输出
+
+| 级别 | 所有 case | 内容 |
 |---|---:|---|
-| `external_total_preload_n` | N | 整个路径持续施加到背板的唯一外部总预载 |
-| `initial_common_ux_m` | m | 背板初始共同 x 位移 |
-| `drag_speed_m_s` | m/s | 规定共同 +x 速度 |
-| `drag_length_m` | m | 动态 +x 路径 |
-| `backplate_mass_kg` | kg | 共同 Z 自由度的背板质量 |
-| `backplate_vertical_damping_n_s_m` | N·s/m | 共同 Z 阻尼 |
-| `backplate_rotational_dofs` | enum | 首版固定为 `locked` |
-| `backplate_inertia_kg_m2` | null | 首版必须为 null |
-| `maximum_preload_approach_m` | m | 初始统一动态沉降安全界 |
-| `output_spacing_m` | m | 输出距离间距，不是内部时间步 |
-| `effective_pin_normal_force_min_n` | N | 有效承载针阈值 |
-| `unclosed_parameter_names` | tuple[str] | 尚未冻结/标定的动力学参数名 |
+| `summary` | 是 | `summary.json` 中的配置、摘要、验证、失败诊断和哈希；不写 `path.npz` |
+| `aggregate_trace` | 选定 | 沉降曲线；背板状态、阵列总力/总矩、有效针数、Neff、Gini、能量和残差等降采样数组 |
+| `full_pin_trace` | 少量 | aggregate 全部内容加逐针状态、力、冲量、wrench、应力/屈曲/硬限位及杆体净空代理 |
 
-`external_total_preload_n` 不是逐针预载，不得除以针数后送入 M2 单针。任意时刻均不
-强制 \(\sum_iN_i=P_{\rm ext}\)。
+输出级别不得改变同一 case 的摘要值。`summary` 不保存空事件小文件；事件统计已经
+进入摘要。
 
-### `DynamicContactSettings`
+## 7. `ArrayDynamicPathSummary`
 
-直接复用 M2 的刚性 Moreau 接触设置，并完整保存
-`normal_model`、`restitution_coefficient`、`position_correction`、
-`activation_tolerance_m`、`impact_velocity_threshold_m_s`、
-`maximum_contact_force_n` 和 `projection_iterations`。
+摘要字段分为四组：
 
-### `DynamicIntegratorSettings`
+1. 配置与状态：预载模式、预载、拖速、自由度、数值/模型/终止状态、失败分类。
+2. 初始化：斜坡、时间、阻尼倍数、步数、连续稳定步数、实际/最大接近量、最终外载、
+   反力误差、最大模态速度和动力学残差。
+3. 条件性能：稳态/冲击拉力统计、反力范围、接触比例、Neff/Gini、最大/平均针载荷、
+   应力/屈曲/弹簧限位、事件计数以及各类残差。
+4. 门禁：时间步、接触参数、沉降阻尼、地形分辨率收敛和物理标定标志，
+   `unclosed_parameter_names`、`formal_ranking_eligible`。
 
-直接复用 M2 的积分器字段，至少保存 `method`、`time_step_s`、初始沉降时间与速度
-容差、最大沉降时间和 `maximum_steps`。每点另存实际使用的内部时间步。
+初始化失败时，第 3 组中的连续性能量为 null，并设置
+`conditional_performance_available=false`。case 仍保留在初始化覆盖率统计中，但
+不得以零承载加入性能排名。已完成路径但违反屈服、屈曲或杆体净空约束的 case 可保留
+条件性能用于诊断，但 `ranking_inclusion_allowed=false`。
 
-缺少显式冻结来源的背板质量/阻尼、针模态质量/阻尼、接触或积分参数必须列入
-`unclosed_parameter_names`，并产生
-`model_state=parameter_unclosed`、`formal_ranking_eligible=false`。
+## 8. 完整性与合并
 
-## 4. `ArrayDynamicState`
+每个完成 case 的目录含 `summary.json`、可选 `path.npz` 和 `COMPLETE`。
+`COMPLETE` 必须等于 `summary.json` 记录的结果哈希；存在路径数组时还校验
+`path_sha256`，存在事件文件时还校验 `events_sha256`；summary 级别则要求两者均
+不存在。续跑跳过完整且哈希正确的 case，损坏或不完整目录按失败恢复流程重算。
 
-状态是无隐藏可变数据的不可变对象，至少包含：
-
-- `time_s`；
-- `backplate_position_z_m`、`backplate_velocity_z_m_s`；
-- 所有针的轴向/横向位移和速度；
-- 所有针的接触状态、弹簧状态和 `has_contacted`；
-- 累积摩擦/结构阻尼/背板阻尼耗散；
-- `accepted_steps`、`rejected_steps`。
-
-`propose_step(old_state, ...)` 必须是纯 proposal：所有针从同一个
-`old_state` 计算。非线性/接触迭代不得提交单针历史。只有
-`commit_step(old_state, proposal, accept=true)` 才返回 proposal 状态；拒绝时必须
-原样返回 `old_state`。遍历顺序只允许影响临时计算顺序，不得影响结果。
-
-## 5. `ArrayDynamicPathPoint`
-
-每个保存点至少包含：
-
-- `time_s`、`path_position_m`；
-- 背板位置、速度、加速度；
-- `external_total_preload_n`；
-- 逐针安装点、球心位置/速度/加速度；
-- 逐针 gap、支撑点、法向、切向、接触状态、弹簧状态和事件；
-- 逐针法向/切向力与法向/切向冲量；
-- 逐针关于安装点和单元原点的 wrench，以及阵列总 wrench；
-- `total_contact_reaction_z_n`、`backplate_inertia_force_z_n`、
-  `backplate_damping_force_z_n`；
-- 活动针数、有效承载针数、三类 \(N_{\rm eff}\)、最大/均值与 Gini；
-- 总动能、结构能、外载功、驱动功、摩擦/结构阻尼/背板阻尼耗散；功与耗散同时
-  保存单步增量和累计值；
-- `dynamic_residual_n`、`energy_residual_j`、`actual_time_step_s` 和迭代数；
-- `numerical_state`、`model_state`。
-
-单针脱离时该针的力和冲量为零，但其状态仍保留在共同积分向量中；随后允许
-IMPACT/RECONTACT。普通脱离不得产生 `no_admissible_contact_equilibrium`。
-
-## 6. `path.npz`
-
-主要数组：
-
-| 字段 | shape |
-|---|---|
-| `time_s`, `path_position_m` | `[N]` |
-| `backplate_position_xyz_m`, `backplate_velocity_xyz_m_s`, `backplate_acceleration_xyz_m_s2` | `[N,3]` |
-| `external_total_preload_n` | `[N]` |
-| `pin_holder_xyz_m`, `pin_center_xyz_m`, `pin_center_velocity_xyz_m_s`, `pin_center_acceleration_xyz_m_s2` | `[N,pin,3]` |
-| `pin_gap_m`, `pin_normal_force_n`, `pin_tangential_force_n` | `[N,pin]` |
-| `pin_normal_impulse_n_s`, `pin_tangential_impulse_n_s` | `[N,pin]` |
-| `pin_wrench_about_holder`, `pin_wrench_about_unit` | `[N,pin,6]` |
-| `wall_on_unit_wrench_about_origin` | `[N,6]` |
-| `contact_state`, `spring_state`, `event_label` | `[N,pin]` |
-| 五类 `active_*` | `[N,pin]` bool |
-| `active_pin_count`, `effective_load_pin_count` | `[N]` |
-| 三类 `neff_*`、`max_mean_*`、`gini_*` | `[N]` |
-| `total_contact_reaction_z_n`, `backplate_inertia_force_z_n`, `backplate_damping_force_z_n` | `[N]` |
-| 各能量、功和耗散增量/累计字段 | `[N]` |
-| `dynamic_residual_n`, `energy_residual_j`, `actual_time_step_s` | `[N]` |
-| `force_aggregation_residual_n`, `moment_aggregation_residual_nm` | `[N]` |
-| `seed`, `terrain_recipe_id`, `configuration_id`, `model_level` | `[N]` |
-
-这些字段按同一点索引共同切片形成 M3→M4 样本；禁止跨时间、seed 或接触分支拼接
-力、矩和活动集。
-
-## 7. 摘要与排名门禁
-
-摘要必须包含：
-
-- `preload_mode=continuous_total_external_force`；
-- `external_total_preload_n`、背板质量/阻尼、锁定转动声明；
-- 完整接触和积分设置；
-- 初始统一动态沉降状态及路径完成状态；
-- 总反力时间平均及与外载的稳态平衡误差；
-- 接触占空、有效承载针、detach/impact/recontact/stick/slide 事件数；
-- 稳态切向力 P10/P25/中位数/峰值；
-- 与稳态统计分离的 `impact_peak_*`；
-- 背板 Z/速度/加速度范围；
-- 最大动力学、能量和 wrench 聚合残余；
-- 实际最小/最大时间步、接受/拒绝步数；
-- 时间步减半与接触参数收敛标记；
-- `numerical_state`、`model_state`、`run_terminal_state`；
-- `unclosed_parameter_names`、`formal_ranking_eligible`。
-
-任何 `unclosed_parameter_names`、未通过的时间步/接触参数收敛、非 path_end 或
-非 covered 模型状态都会关闭正式排名门禁。Legacy 字段
-`fixed_common_uz_m`、`target_preload_n` 只能出现在显式 Legacy 结果中。
+`scripts/merge_m3_summaries.py` 校验上述哈希后，将 summary 原子合并为 zstd
+Parquet；没有 pyarrow 时可显式回退 JSONL，并另写 manifest/result-set hash。

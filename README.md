@@ -73,10 +73,14 @@ M3 验收：
 
 ```powershell
 spine-m3 validate-analytic
+spine-m3 smoke-existing-m1 results/m2_formal_terrains/terrain_catalog.json `
+  --drag-length-mm 0.1 --seed 32001
 ```
 
-该命令只运行 `m3.1.0` 持续总外载阵列动力学解析验收，不运行旧 fixed-Z smoke，
-也不启动 45 个库存地形上的正式 campaign。
+解析命令只运行 `m3.2.0` 持续总外载阵列动力学验收。第二条命令只用一个现有
+terrain condition 做 2×2/4×4/6×6 短程接口 smoke；两者都不运行旧 fixed-Z
+路径，也不启动正式 campaign。完整设计与分片说明见
+`docs/M3_DESIGN_AND_RUN_PLAN.md`。
 
 M2 的稳定 Python 入口：
 

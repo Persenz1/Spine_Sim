@@ -54,6 +54,34 @@ class ResultTests(unittest.TestCase):
             after = (store.case_dir("case_x") / "summary.json").stat().st_mtime_ns
             self.assertEqual(before, after)
 
+    def test_complete_hash_and_empty_event_cleanup(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            store = ResultStore(temporary)
+            store.write_case(
+                case_id="case_hash",
+                config={"x": 1},
+                summary={"run_state": "complete"},
+                events=({"label": "diagnostic"},),
+                complete=True,
+            )
+            event_file = store.case_dir("case_hash") / "events.jsonl"
+            self.assertTrue(event_file.is_file())
+            self.assertTrue(store.is_complete("case_hash"))
+            event_file.write_text("tampered\n", encoding="utf-8")
+            self.assertFalse(store.is_complete("case_hash"))
+            store.write_case(
+                case_id="case_hash",
+                config={"x": 1},
+                summary={"run_state": "complete"},
+                events=(),
+                complete=True,
+            )
+            self.assertFalse(event_file.exists())
+            self.assertTrue(store.is_complete("case_hash"))
+            marker = store.case_dir("case_hash") / "COMPLETE"
+            marker.write_text("tampered\n", encoding="ascii")
+            self.assertFalse(store.is_complete("case_hash"))
+
 
 class RunnerTests(unittest.TestCase):
     def run_campaign(self, directory: Path, workers: int, include_failure: bool = False):

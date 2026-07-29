@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "spine-sim://schemas/m3-to-m4-dynamic-unit-sample-v2",
+  "$id": "spine-sim://schemas/m3-to-m4-dynamic-unit-sample-v3",
   "title": "M3 to M4 same-time dynamic unit sample",
   "type": "object",
   "additionalProperties": false,
@@ -108,12 +108,12 @@
         }
       }
     },
-    "dynamic_residual_n": {"type": "number", "minimum": 0},
+    "dynamic_residual_n": {"type": "number"},
     "energy_residual_j": {"type": "number"},
     "actual_time_step_s": {"type": "number", "exclusiveMinimum": 0},
     "sample_class": {"enum": ["steady", "impact", "other_event", "transient"]},
     "model_level": {
-      "const": "project_model_P_common_rigid_backplate_z_dynamic_continuous_total_preload_v2"
+      "const": "project_model_P_common_rigid_backplate_z_dynamic_continuous_total_preload_v3"
     }
   },
   "$defs": {

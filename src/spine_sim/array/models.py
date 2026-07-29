@@ -22,10 +22,10 @@ from spine_sim.core.identity import identity
 from spine_sim.core.states import ModelState, NumericalState
 
 
-M3_MODULE_VERSION = "m3.1.0"
+M3_MODULE_VERSION = "m3.2.0"
 M3_MODEL_LEVEL = (
     "project_model_P_common_rigid_backplate_z_dynamic_"
-    "continuous_total_preload_v2"
+    "continuous_total_preload_v3"
 )
 M3_LEGACY_MODULE_VERSION = "m3.0.0"
 M3_LEGACY_MODEL_LEVEL = "project_model_P_common_rigid_backplate_quasistatic_v1"
@@ -448,43 +448,91 @@ class ArrayDynamicStepProposal:
 
 
 @dataclass(frozen=True)
+class SettlementTracePoint:
+    """Auditable sample from the smooth total-preload settling stage."""
+
+    time_s: float
+    ramp_fraction: float
+    applied_total_preload_n: float
+    damping_scale: float
+    backplate_position_z_m: float
+    actual_approach_m: float
+    maximum_mode_speed_m_s: float
+    total_contact_reaction_z_n: float
+    contact_reaction_error_n: float
+    dynamic_residual_n: float
+    active_pin_count: int
+    stable_steps: int
+
+
+@dataclass(frozen=True)
 class ArrayDynamicPathSummary:
     preload_mode: str
     external_total_preload_n: float
     drag_speed_m_s: float
     backplate_rotational_dofs: str
     initial_preload_success: bool
-    total_contact_reaction_time_mean_n: float
-    steady_normal_balance_error_n: float
+    conditional_performance_available: bool
+    failure_category: str | None
+    failure_code: str | None
+    initialization_failure_category: str | None
+    initialization_failure_code: str | None
+    settlement_ramp_profile: str
+    settlement_ramp_time_s: float
+    settlement_damping_scale: float
+    settlement_steps: int
+    settlement_stable_steps: int
+    settlement_required_stable_steps: int
+    settlement_actual_approach_m: float | None
+    settlement_maximum_approach_m: float
+    settlement_final_applied_preload_n: float | None
+    settlement_final_reaction_error_n: float | None
+    settlement_final_maximum_mode_speed_m_s: float | None
+    settlement_final_dynamic_residual_n: float | None
+    total_contact_reaction_time_mean_n: float | None
+    steady_normal_balance_error_n: float | None
     contact_fraction: float
     effective_load_fraction: float
-    tangential_force_peak_n: float
-    tangential_force_steady_peak_n: float
-    tangential_force_impact_peak_n: float
-    tangential_force_median_n: float
-    tangential_force_p10_n: float
-    tangential_force_p25_n: float
-    total_normal_force_range_n: tuple[float, float]
-    backplate_z_range_m: tuple[float, float]
-    backplate_speed_peak_m_s: float
-    backplate_acceleration_peak_m_s2: float
-    impact_velocity_peak_m_s: float
-    neff_normal_median: float
-    neff_target_tangential_median: float
-    neff_resultant_median: float
-    maximum_normal_load_concentration: float
-    maximum_gini_normal: float
+    tangential_force_peak_n: float | None
+    tangential_force_steady_peak_n: float | None
+    tangential_force_impact_peak_n: float | None
+    tangential_force_median_n: float | None
+    tangential_force_p10_n: float | None
+    tangential_force_p25_n: float | None
+    total_normal_force_range_n: tuple[float, float] | None
+    backplate_z_range_m: tuple[float, float] | None
+    backplate_speed_peak_m_s: float | None
+    backplate_acceleration_peak_m_s2: float | None
+    impact_velocity_peak_m_s: float | None
+    neff_normal_median: float | None
+    neff_target_tangential_median: float | None
+    neff_resultant_median: float | None
+    maximum_normal_load_concentration: float | None
+    maximum_gini_normal: float | None
+    maximum_pin_normal_force_n: float | None
+    mean_pin_normal_force_n: float | None
+    mean_active_pin_normal_force_n: float | None
+    maximum_bending_stress_pa: float | None
+    minimum_yield_margin_pa: float | None
+    minimum_euler_buckling_margin_n: float | None
+    minimum_spring_travel_margin_m: float | None
+    yield_violation_pin_step_count: int
+    buckling_violation_pin_step_count: int
+    hard_stop_pin_step_count: int
     event_counts: Mapping[str, int]
-    maximum_abs_dynamic_residual_n: float
-    maximum_abs_energy_residual_j: float
-    maximum_force_aggregation_residual_n: float
-    maximum_moment_aggregation_residual_nm: float
-    minimum_actual_time_step_s: float
-    maximum_actual_time_step_s: float
+    maximum_abs_dynamic_residual_n: float | None
+    maximum_abs_energy_residual_j: float | None
+    maximum_force_aggregation_residual_n: float | None
+    maximum_moment_aggregation_residual_nm: float | None
+    minimum_actual_time_step_s: float | None
+    maximum_actual_time_step_s: float | None
     accepted_steps: int
     rejected_steps: int
     time_step_convergence_checked: bool
     contact_parameter_convergence_checked: bool
+    settlement_damping_convergence_checked: bool
+    terrain_resolution_convergence_checked: bool
+    physical_calibration_completed: bool
     unclosed_parameter_names: tuple[str, ...]
     numerical_state: NumericalState
     model_state: ModelState
@@ -502,6 +550,7 @@ class ArrayDynamicExperimentResult:
     experiment: Any
     contact: Any
     integrator: Any
+    settlement_trace: tuple[SettlementTracePoint, ...]
     points: tuple[ArrayDynamicPathPoint, ...]
     summary: ArrayDynamicPathSummary
     assumptions: tuple[str, ...] = field(default_factory=tuple)

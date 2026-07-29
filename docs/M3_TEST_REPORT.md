@@ -1,197 +1,119 @@
 # M3 测试与收敛报告
 
-## 0. 当前权威状态
-
-**执行日期：** 2026-07-28
-**模块版本：** `m3.1.0`
+**执行日期：** 2026-07-29
+**模块版本：** `m3.2.0`
 **模型等级：**
-`project_model_P_common_rigid_backplate_z_dynamic_continuous_total_preload_v2`
-**正式第一轮筛选：** 未启动
+`project_model_P_common_rigid_backplate_z_dynamic_continuous_total_preload_v3`
+**正式 campaign：** 未启动
+**正式排名：** 未开放
 
-生产 M3 已重建为持续恒定总外部预载下的共同刚性背板 Z 时域动力学。水平运动按
-规定速度推进；背板 Z、全部针轴向/横向模态和多接触冲量在同一全局状态中统一
-积分。首版俯仰/横滚显式锁定。
-
-## 1. 动态解析验收
+## 1. 解析验收
 
 命令：
 
 ```powershell
-spine-m3 validate-analytic
+.venv\Scripts\python.exe -m spine_sim.array.cli validate-analytic `
+  --output results\m3_validation\dynamic_analytic_validation_v3.json
 ```
 
-结果：11/11 通过。机器可读报告：
-`results/m3_validation/dynamic_analytic_validation.json`。
+结果：**16/16 通过**，耗时 22.5 s。机器可读报告：
+`results/m3_validation/dynamic_analytic_validation_v3.json`。
 
-| 门禁 | 结果 | 关键证据 |
-|---|---:|---|
-| 平面多针总反力时间平均 | 通过 | 0.5 N 总外载下稳态平均 0.4999978 N；瞬时范围 0.4637444–0.5009701 N，未强制逐步相等 |
-| 不同初始高度载荷转移 | 通过 | 两针初始反力 0.3295281/0.1704731 N，总和 0.5000012 N，不是平均预分配 |
-| 单针脱离及再接触 | 通过 | 目标针发生 DETACH、RECONTACT、IMPACT，阵列到达 `path_end`，未出现 `no_admissible_contact_equilibrium` |
-| 多针同时冲击 | 通过 | 同一全局步两针 IMPACT；总反力峰 12.0600 N，可显著高于 0.5 N 外载 |
-| 针遍历顺序不变 | 通过 | 正序、逆序、固定随机顺序的全局 proposal、point 和 state 完全一致 |
-| 原子拒绝步 | 通过 | 地形越界 proposal 无效，`proposal_state` 和拒绝 commit 均精确等于旧 `ArrayDynamicState` |
-| 内部时间步减半 | 通过 | 1/0.5 ms 的稳态总反力均值差 \(2.17\times10^{-5}\) N，稳态切向中位数差 \(1.51\times10^{-7}\) N |
-| 动力学与能量残余 | 通过 | 最大动力学残余 \(1.67\times10^{-16}\) N；最大单步能量残余 \(3.23\times10^{-8}\) J |
-| 2×5 与 5×2 身份 | 通过 | 构型 ID 和安装点布局均不同 |
-| wrench 搬移与聚合 | 通过 | 最大搬移误差和阵列聚合误差均为 0 |
-| 未冻结参数排名门禁 | 通过 | `model_state=parameter_unclosed` 且 `formal_ranking_eligible=false` |
+| 门禁 | 关键结果 |
+|---|---|
+| 平面总反力平衡 | 0.5 N 外载下稳态平均反力 0.4999954 N |
+| 平滑预载和沉降门 | minimum-jerk 斜坡；末端反力误差 \(6.47\times10^{-10}\) N；连续稳定 20 步 |
+| 2×2 对称载荷 | 四针各约 0.125 N，极差 \(8.95\times10^{-15}\) N |
+| 高度差载荷转移 | 两针 0.35143/0.14857 N，总和 0.5000000 N |
+| 单针脱离与再接触 | DETACH、RECONTACT、IMPACT 均出现，阵列到 `path_end` |
+| 同时多针冲击 | 10 个保存点包含至少两针同时 IMPACT |
+| 遍历顺序不变 | 正序、逆序、固定随机顺序的 proposal/point/state 完全相同 |
+| 拒绝步骤原子性 | 地形越界 proposal 无效，拒绝后状态精确等于旧状态 |
+| 时间步减半 | 1/0.5 ms 平均反力差 0.000236 N，切向中位数差 \(3.68\times10^{-7}\) N |
+| 动力学/能量残差 | 平面夹具最大 \(1.11\times10^{-16}\) N / \(1.60\times10^{-8}\) J |
+| 方向身份 | 2×5 与 5×2 的构型 ID 和布局不同 |
+| wrench 聚合 | 搬移与聚合误差均为 0 |
+| 排名门禁 | 未标定参数强制 `parameter_unclosed` 和 `formal_ranking_eligible=false` |
+| 完整设计 | 48 基础硬件、1008 固定布局、336 个 80°→60° 梯度 |
+| 轴向设置 | 300/800/2000 N/m 按 SI 处理，刚性为独立模式 |
+| 输出级别 | summary/aggregate/full 数组数 0/59/90，摘要来自同一结果 |
 
-动态结果保存背板质量/阻尼、锁定转动声明、M2 模态质量/阻尼、接触设置、积分器与
-实际内部时间步。逐点保存背板状态、逐针状态/事件/力/冲量/wrench、阵列总 wrench、
-惯性与阻尼项、载荷共享、能量/功/耗散和残余。稳态切向统计与冲击峰在摘要中分开。
-
-## 2. 软件回归
+## 2. M3 专项回归
 
 命令：
 
 ```powershell
-$env:PYTHONPATH = (Resolve-Path src).Path
-python -m unittest discover -s tests -v
+.venv\Scripts\python.exe -m pytest tests\test_m3_array.py -q
 ```
 
-结果：共发现 66 项，63 项通过、3 项按环境条件跳过（CUDA/CuPy 两项、可选绘图
-依赖一项），0 失败。M3 专项测试 15/15 通过。JSON Schema 可解析，源码及测试通过 `compileall`，
-`git diff --check` 无错误。
+结果：**29 passed**。覆盖：
 
-## 3. 排名和 campaign 状态
+- 总反力平衡、平滑斜坡、沉降速度/反力/残差/连续稳定门；
+- 对称 2×2、2×5/5×2 方向身份、针遍历顺序和拒绝原子性；
+- 300/800/2000 N/m 与刚性、弹簧 lower/interior/hard-stop；
+- 固定 60°/70°/80° 和 80°→60° 梯度坐标变换；
+- stick/slide、单针脱离后其他针继续积分及再接触；
+- 力、力矩、能量、应力、屈服、屈曲和弹簧限位统计；
+- 三档输出摘要不变、初始化失败不作为零承载排名；
+- 相同 seed/构型确定性重复、内部时间步减半；
+- 48/1008/336/1344 设计数量、正式 300 catalog 和严格配对拒绝；
+- 2×2/4×4/6×6 平面解析规模 smoke。
 
-解析夹具的背板/模态/接触/积分参数没有项目标定来源，项目地形杆体/锥段净空也未
-闭合；因此通过验收不等于打开正式排名。M2 获批参数包、全链冻结清单和“开始 M3
-第一轮筛选”的明确批准仍不存在。
-
-本次没有恢复或运行旧 M2/M3 fixed-Z 筛选，没有启动正式 M3 campaign。45 个已生成
-地形仅为库存，其中第二轮 30 个不代表获批。
-
-## 4. Legacy fixed-Z 历史归档
-
-以下历史章节全部属于 `m3.0.0` Legacy fixed-Z 迁移实现，不证明正式 M3 正确，
-不得支持阵列排名。
-
-> 2026-07-28 用户修订为持续总外部预载与共同背板动力学。本报告只验证旧迁移
-> 实现，不再证明正式 M3 正确，也不能支持阵列排名。
-
-**执行日期：** 2026-07-27
-**模块版本：** `m3.0.0`
-**正式第一轮筛选：** 未启动
-
-### L1. 解析与阵列门禁
-
-历史迁移夹具现只能通过显式 Legacy 命令访问（本次未运行）：
-
-```powershell
-spine-m3 validate-legacy-fixed-z
-```
-
-结果：14/14 通过。
-
-| 门禁 | 结果 | 关键证据 |
-|---|---:|---|
-| 两针同高均载 | 通过 | 0.5 N 总预载下各 0.2499945 N，\(N_\mathrm{eff}^{(n)}=2\) |
-| 两针高度差与柔顺 | 通过 | 低载时仅高点参与；2 kN/m 时低点 0.1935 N，10 kN/m 时低点为 0 |
-| 2×2 对称 | 通过 | 四针各 0.2499945 N，\(N_\mathrm{eff}^{(n)}=4\) |
-| 2×5/5×2 转置 | 通过 | ID 不同；对称平面预载 wrench 在容差内相同 |
-| 原子遍历顺序 | 通过 | 正序、逆序、固定随机顺序的 proposal、状态、wrench 完全一致 |
-| 事件处全阵列重评估 | 通过 | 单针 0.23791 mm 处脱离；非事件针也在同一共同位姿重新计算并原子提交 |
-| 刚性轴向极限 | 通过 | \(10^5,10^7,10^9\) N/m 的误差单调降至 0.0957 N |
-| wrench 与残余 | 通过 | 合力/合矩聚合残余为 0；最大局部几何残余 2 nm |
-| 唯一共同 uZ | 通过 | 所有安装点 z 精确相同；拖动期冻结 |
-| 步长减半 | 通过 | 50/25 μm 事件计数相同，切向中位数相同 |
-| 地形边界 | 通过 | 超域 proposal 显式失败，且 proposal/next state 都保持旧状态 |
-| 80→60° 梯度 | 通过 | 角度沿 x，五列竖直未加载伸出量一致 |
-| 80→50° 梯度 | 通过 | 角度沿 x，五列竖直未加载伸出量一致 |
-| 6×6 | 通过 | 36 针均载，\(N_\mathrm{eff}^{(n)}=36\)，路径到终点 |
-
-6×6 平面夹具使用 0.1 N 总预载。原因是 10 μm 离散支撑切换下，极高刚度/大阵列
-可能让总力根跨过 \(10^{-4}\) N 预载容差。该夹具只验证规模、共同位姿与均载；刚性
-极限由独立规定位姿夹具验证，未用放宽容差掩盖离散跳变。
-
-权威机器可读报告：
-`results/m3_validation/analytic_validation.json`。
-
-### L2. 十种现有 M1 地形阵列 smoke
+## 3. 全仓回归
 
 命令：
 
 ```powershell
-spine-m3 smoke-legacy-fixed-z results/m1_gpu_suite/suite_report.json `
-  --drag-length-mm 0.2 --path-step-um 50
+.venv\Scripts\python.exe -m pytest -q
 ```
 
-固定测试构型：
+结果：**87 passed，另有 9 个 subtests 通过**，耗时 132.25 s；0 失败。
 
-- 2×2；
-- 5 mm 等距；
-- 固定 70°；
-- 50 μm 针尖；
-- 0.8 mm 针径；
-- 每针独立 2000 N/m 单边轴向弹簧；
-- 单元总预载 1 N；
-- 普通步 50 μm，FREE 再接触探测保持 M1 的 10 μm 分辨率；
-- 每根针按全局 \(y=\pm2.5\) mm 使用同一 recipe/region 的对应 M1 track。
-
-结果：
-
-| 检查 | 结果 |
-|---|---:|
-| 建立目标总预载 | 10/10 |
-| 数值状态 converged | 10/10 |
-| 到达路径终点 | 10/10 |
-| 正序/逆序遍历一致 | 10/10 |
-| 合力聚合最大残余 | 0 N |
-| 合矩聚合最大残余 | 0 N·m |
-| 最大局部几何残余 | \(1.9999999999\times10^{-9}\) m |
-| 各地形起点尝试上限 | 3 |
-
-十个 smoke 的法向 \(N_\mathrm{eff}\) 中位数范围为 2.329–3.976。这个范围只说明
-逐针轨迹、共同位姿、载荷共享字段和事件链产生了非平凡响应；每个条件只有一个
-确定性起点，配方和 seed 也不构成正式配对设计，因此禁止把该范围解释成地形或硬件
-排名。
-
-所有随机地形仍为 `model_state=parameter_unclosed`，原因是 M1/M2 尚未提供二维
-杆体/锥段净空查询。故 `formal_ranking_eligible=false`。
-
-机器可读报告：
-`results/m3_validation/m1_ten_terrain_smoke.json`。
-
-### L3. 软件回归
-
-新增 `tests/test_m3_array.py`，覆盖：
-
-- 正式与 fixture 阵列尺寸边界；
-- 梯度长度公式；
-- recipe/region/y track 身份；
-- 总预载和共同 uZ；
-- 原子遍历顺序；
-- M3→M4 同状态数组 shape/字段；
-- 100/126 平衡覆盖选择的确定性和方向覆盖；
-- 14 项解析报告。
-
-同时修改 M2 十地形 smoke 的 track 选择：在 M3 为其他全局 y 缓存轨迹后，M2 仍明确
-选择唯一的 `y_global_m=0`、50 μm track，避免把“目录中只能有一个 track”当成接口
-假设。
-
-全仓命令：
+在完整性写入的最后一次调整后，另行复跑：
 
 ```powershell
-$env:PYTHONPATH = (Resolve-Path src).Path
-python -m unittest discover -s tests -v
+.venv\Scripts\python.exe -m pytest tests\test_results_runner.py -q
 ```
 
-结果：58/58 通过。M2 十地形 smoke 在新增多 y track 后另行复跑，仍为 10/10 通过。
+结果：**6 passed**，耗时 2.14 s；覆盖 marker、路径/事件哈希、空事件清理和续跑。
 
-### L4. 筛选门禁
+流式 summary 合并另行执行
+`pytest tests\test_m3_summary_merge.py -q`：**1 passed**，覆盖原子
+Parquet/JSONL 产物和跨分片重复 case ID 拒绝。
 
-`examples/m3_round1_design_draft.json` 使用一个明确标记的 fixture 参数包构造 126 个
-硬件候选，并由确定性平衡覆盖算法选择 100 个，用于验证设计器和关键二阶交互覆盖。
-该文件不是可执行正式 campaign。
+## 4. 现有 M1 地形短程 smoke
 
-正式 M3 第一轮仍被以下条件阻止：
+命令：
 
-1. `full_chain_frozen_manifest.json` 不存在；
-2. M2 正式第一轮未运行；
-3. 用户批准的 M2 参数包不存在；
-4. 未记录“开始 M3 第一轮筛选”的明确批准；
-5. 项目随机地形净空模型未闭合。
+```powershell
+.venv\Scripts\python.exe -m spine_sim.array.cli smoke-existing-m1 `
+  results\m2_formal_terrains\terrain_catalog.json `
+  --output results\m3_validation\existing_m1_smoke_v3.json `
+  --drag-length-mm 0.1 --seed 32001
+```
 
-因此本阶段不回答固定角/梯度角优劣，不生成 18–24 个伪候选，也不进入三预载细筛。
+结果：**2×2、4×4、6×6 均沉降成功并到达 `path_end`**，耗时 117.9 s。
+
+| 规模 | 沉降步 | 反力误差/N | 切向力中位数/N | Neff 法向中位数 | 最大动力学残差/N | 最大能量残差/J |
+|---|---:|---:|---:|---:|---:|---:|
+| 2×2 | 269 | \(3.86\times10^{-11}\) | 0.22996 | 3.9759 | \(3.33\times10^{-16}\) | \(9.31\times10^{-8}\) |
+| 4×4 | 269 | \(9.99\times10^{-16}\) | 0.15635 | 14.0136 | \(5.49\times10^{-6}\) | \(1.16\times10^{-6}\) |
+| 6×6 | 269 | \(2.22\times10^{-16}\) | 0.08264 | 9.6566 | \(8.41\times10^{-4}\) | \(1.97\times10^{-4}\) |
+
+该结果只证明当前 M1 catalog 的轨迹接口、共同沉降和短程积分能运行。限制如下：
+
+- 路径只有 0.1 mm，不是需求中的 100 mm；
+- 只用了一个 seed 和一个代理硬件；
+- catalog 是 45 个 `defined_geometry` 库存，不是 3 family×100 seed；
+- 6×6 的粗糙面能量残差仍明显，需进一步收敛研究；
+- 所有 case 的 `formal_ranking_eligible=false`。
+
+因此不能比较表中三个规模的正式拉力优劣。
+
+## 5. 未执行内容
+
+- 未运行任何 100 mm 正式扫描；
+- 未物化 120 万 case；
+- 未运行 300-seed campaign；
+- 未将短程 smoke 用作排名；
+- 未提交或推送 Git。

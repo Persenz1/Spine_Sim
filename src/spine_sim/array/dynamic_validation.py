@@ -1,9 +1,11 @@
-"""Analytic acceptance gates for m3.1.0 joint common-backplate dynamics."""
+"""Analytic acceptance gates for m3.2.0 joint common-backplate dynamics."""
 
 from __future__ import annotations
 
 import math
 import random
+import json
+from dataclasses import replace
 from pathlib import Path
 from typing import Any, Callable, Mapping, Sequence
 
@@ -16,13 +18,15 @@ from spine_sim.contact import (
 )
 from spine_sim.contact.validation import _fixture_parameters
 from spine_sim.io.results import atomic_write_json, utc_now
-from spine_sim.terrain import TrackGeometry
+from spine_sim.terrain import TerrainLibrary, TrackGeometry
 
 from .dynamics import (
     ArrayDynamicExperimentSettings,
     DynamicCommonBackplateArray,
     DynamicCommonBackplateExperiment,
 )
+from .case import _arrays
+from .design import build_base_hardware, build_full_array_design
 from .models import M3_MODEL_LEVEL, M3_MODULE_VERSION, ArrayConfiguration
 
 
@@ -152,7 +156,7 @@ def _run(
             activation_tolerance_m=2e-9,
             impact_velocity_threshold_m_s=1e-5,
             maximum_contact_force_n=250.0,
-            projection_iterations=6,
+            projection_iterations=20,
         ),
     )
     result = DynamicCommonBackplateExperiment(
@@ -220,6 +224,90 @@ def run_dynamic_analytic_validation(
             ),
         )
     ]
+    settlement_applied = np.asarray(
+        [
+            point.applied_total_preload_n
+            for point in plane.settlement_trace
+        ],
+        dtype=np.float64,
+    )
+    settlement_peak_reaction = max(
+        point.total_contact_reaction_z_n
+        for point in plane.settlement_trace
+    )
+    gates.append(
+        _gate(
+            "smooth_total_preload_ramp_and_settlement_gates",
+            settlement_applied[0] < 1e-3 * settlement_applied[-1]
+            and np.all(np.diff(settlement_applied) >= -1e-15)
+            and abs(settlement_applied[-1] - 0.5) <= 1e-12
+            and settlement_peak_reaction < 0.55
+            and plane.summary.settlement_stable_steps
+            >= plane.summary.settlement_required_stable_steps
+            and plane.summary.settlement_final_reaction_error_n
+            <= max(
+                plane.experiment.settling_reaction_force_tolerance_n,
+                0.5
+                * plane.experiment.settling_reaction_force_relative_tolerance,
+            )
+            and plane.summary.settlement_final_maximum_mode_speed_m_s
+            <= plane.integrator.settling_velocity_tolerance_m_s
+            and abs(plane.summary.settlement_final_dynamic_residual_n)
+            <= plane.experiment.settling_dynamic_residual_tolerance_n,
+            {
+                "profile": plane.summary.settlement_ramp_profile,
+                "settlement_steps": plane.summary.settlement_steps,
+                "first_applied_preload_n": settlement_applied[0],
+                "final_applied_preload_n": settlement_applied[-1],
+                "maximum_reaction_n": settlement_peak_reaction,
+                "final_reaction_error_n": (
+                    plane.summary.settlement_final_reaction_error_n
+                ),
+                "final_maximum_mode_speed_m_s": (
+                    plane.summary.settlement_final_maximum_mode_speed_m_s
+                ),
+                "final_dynamic_residual_n": (
+                    plane.summary.settlement_final_dynamic_residual_n
+                ),
+                "stable_steps": plane.summary.settlement_stable_steps,
+            },
+            requirement=(
+                "minimum-jerk total preload is monotone and settlement requires "
+                "velocity, reaction balance, dynamic residual, contact and a "
+                "continuous stable window"
+            ),
+        )
+    )
+
+    square = ArrayConfiguration(2, 2, 4e-3, parameters)
+    _square_system, square_result = _run(
+        square,
+        _tracks(square),
+        drag_length_m=0.005e-3,
+    )
+    square_initial_loads = np.asarray(
+        [
+            pin.normal_force_n
+            for pin in square_result.points[0].pin_responses
+        ],
+        dtype=np.float64,
+    )
+    gates.append(
+        _gate(
+            "symmetric_2x2_load_distribution",
+            square_result.summary.run_terminal_state.value == "path_end"
+            and np.ptp(square_initial_loads) <= 1e-12
+            and abs(np.sum(square_initial_loads) - 0.5) <= 1e-5,
+            {
+                "initial_pin_normal_force_n": square_initial_loads.tolist(),
+                "load_range_n": float(np.ptp(square_initial_loads)),
+            },
+            requirement=(
+                "a symmetric plane and symmetric 2x2 array distribute the "
+                "settled total preload symmetrically"
+            ),
+        )
+    )
 
     height_tracks = _tracks(
         pair,
@@ -532,6 +620,114 @@ def run_dynamic_analytic_validation(
         )
     )
 
+    base_hardware = build_base_hardware()
+    full_design = build_full_array_design()
+    gates.append(
+        _gate(
+            "complete_cartesian_array_design",
+            len(base_hardware) == 48
+            and sum(
+                row["angle_layout"] == "fixed" for row in full_design
+            )
+            == 1008
+            and sum(
+                row["angle_layout"] == "gradient_80_to_60"
+                for row in full_design
+            )
+            == 336
+            and not any(
+                row["fixed_angle_deg"] == 50.0 for row in full_design
+            ),
+            {
+                "base_hardware_count": len(base_hardware),
+                "fixed_array_count": sum(
+                    row["angle_layout"] == "fixed"
+                    for row in full_design
+                ),
+                "gradient_array_count": sum(
+                    row["angle_layout"] == "gradient_80_to_60"
+                    for row in full_design
+                ),
+            },
+            requirement=(
+                "the formal plan preserves all 48 base combinations, seven "
+                "oriented shapes, three spacings and the 80-to-60 gradient"
+            ),
+        )
+    )
+
+    stiffness_forces: list[float] = []
+    for stiffness in (300.0, 800.0, 2000.0):
+        spring_parameters = replace(
+            parameters,
+            axial_mode="spring",
+            spring_stiffness_n_m=stiffness,
+        )
+        spring_pair = ArrayConfiguration(
+            1, 2, 4e-3, spring_parameters, fixture_only=True
+        )
+        spring_system = DynamicCommonBackplateArray(
+            spring_pair,
+            _tracks(spring_pair),
+            unit_origin_xy_m=(0.0, 0.0),
+        )
+        stiffness_forces.append(
+            spring_system.units[0].axial_response(10e-6)[0]
+        )
+    rigid_parameters = replace(
+        parameters,
+        axial_mode="rigid",
+        spring_stiffness_n_m=None,
+    )
+    rigid_pair = ArrayConfiguration(
+        1, 2, 4e-3, rigid_parameters, fixture_only=True
+    )
+    rigid_system = DynamicCommonBackplateArray(
+        rigid_pair,
+        _tracks(rigid_pair),
+        unit_origin_xy_m=(0.0, 0.0),
+    )
+    rigid_force = rigid_system.units[0].axial_response(10e-6)[0]
+    gates.append(
+        _gate(
+            "required_axial_stiffness_units_and_rigid_limit",
+            np.all(np.diff(stiffness_forces) > 0.0)
+            and rigid_force > stiffness_forces[-1],
+            {
+                "spring_stiffness_n_m": [300.0, 800.0, 2000.0],
+                "force_at_10um_shortening_n": stiffness_forces,
+                "rigid_force_at_10um_shortening_n": rigid_force,
+            },
+            requirement=(
+                "300/800/2000 N/m are treated as SI stiffness and increase "
+                "continuously toward the axial rigid installation"
+            ),
+        )
+    )
+
+    summary_only = _arrays(plane, "summary")
+    aggregate = _arrays(plane, "aggregate_trace")
+    full = _arrays(plane, "full_pin_trace")
+    gates.append(
+        _gate(
+            "output_level_summary_invariance",
+            not summary_only
+            and "pin_normal_force_n" not in aggregate
+            and "pin_normal_force_n" in full
+            and "settlement_ramp_fraction" in aggregate,
+            {
+                "summary_array_count": len(summary_only),
+                "aggregate_array_count": len(aggregate),
+                "full_array_count": len(full),
+                "summary_hash_basis": "same in-memory experiment result",
+            },
+            requirement=(
+                "summary, aggregate_trace and full_pin_trace change only "
+                "serialization detail, never simulated summary values"
+            ),
+        )
+    )
+
     report = {
         "generated_at_utc": utc_now(),
         "m3_module_version": M3_MODULE_VERSION,
@@ -546,12 +742,158 @@ def run_dynamic_analytic_validation(
         "formal_m3_round1_allowed": False,
         "formal_m3_round1_blockers": [
             "dynamic parameters are not project calibrated/frozen",
-            "M2 approved parameter packs are absent",
-            "full_chain_frozen_manifest.json is absent",
-            "explicit approval '开始 M3 第一轮筛选' is absent",
-            "45 generated terrains are inventory only; the second 30 are not approved",
+            "the required 3-family x 100-seed paired M1 catalog is absent",
+            "100 mm path time-step/contact/settlement-damping convergence is open",
+            "5 um final terrain-resolution convergence is open",
+            "rough-terrain 6x6 energy-residual convergence is open",
         ],
         "gates": gates,
+    }
+    if output_path is not None:
+        atomic_write_json(output_path, report)
+    return report
+
+
+def run_existing_m1_terrain_smoke(
+    catalog_path: Path,
+    *,
+    output_path: Path | None = None,
+    drag_length_m: float = 0.1e-3,
+    seed: int | None = None,
+) -> dict[str, Any]:
+    """Run one current M1 realization on 2x2/4x4/6x6; never a campaign."""
+
+    catalog = json.loads(catalog_path.read_text(encoding="utf-8"))
+    conditions = list(catalog.get("conditions", ()))
+    if seed is not None:
+        conditions = [
+            condition
+            for condition in conditions
+            if int(condition["seed"]) == seed
+        ]
+    if not conditions:
+        raise ValueError("the selected existing M1 catalog condition is absent")
+    condition = conditions[0]
+    if not condition.get("full_sha256_verified", False):
+        raise ValueError("existing M1 smoke condition hash is not verified")
+    library = TerrainLibrary(catalog["library_root"])
+    recipe = library.load_recipe(condition["terrain_recipe_id"])
+    region = library.load_region_spec(
+        condition["terrain_recipe_id"],
+        condition["region_id"],
+    )
+    parameters = _fixture_parameters(
+        tip_radius_m=100e-6,
+        diameter_m=0.8e-3,
+        installation_angle_deg=70.0,
+        spring_stiffness_n_m=800.0,
+        rod_clearance_mode="proxy_cylindrical_shank_postcheck",
+        axial_damping_ratio=0.20,
+        transverse_damping_ratio=0.20,
+    )
+    rows: list[dict[str, Any]] = []
+    for size in (2, 4, 6):
+        configuration = ArrayConfiguration(
+            size,
+            size,
+            4e-3,
+            parameters,
+        )
+        tracks_by_y: dict[float, TrackGeometry] = {}
+        for offset in configuration.holder_offsets_xyz_m:
+            y_global_m = offset[1]
+            if y_global_m not in tracks_by_y:
+                tracks_by_y[y_global_m] = library.cache_track(
+                    recipe,
+                    region,
+                    radius_m=parameters.tip_radius_m,
+                    y_global_m=y_global_m,
+                )
+        tracks = tuple(
+            tracks_by_y[offset[1]]
+            for offset in configuration.holder_offsets_xyz_m
+        )
+        system = DynamicCommonBackplateArray(
+            configuration,
+            tracks,
+            unit_origin_xy_m=(0.0, 0.0),
+            contact=DynamicContactSettings(projection_iterations=20),
+        )
+        settings = replace(
+            _settings(
+                drag_length_m=drag_length_m,
+                preload_n=1.0,
+            ),
+            output_spacing_m=min(20e-6, drag_length_m),
+            unclosed_parameter_names=(
+                "existing_defined_geometry_smoke_not_three_family_catalog",
+                "dynamic_parameters_not_experimentally_calibrated",
+            ),
+        )
+        result = DynamicCommonBackplateExperiment(
+            system,
+            settings,
+            _integrator(1e-3),
+        ).run()
+        rows.append(
+            {
+                "size": f"{size}x{size}",
+                "pin_count": configuration.pin_count,
+                "configuration_id": configuration.configuration_id,
+                "terminal": result.summary.run_terminal_state.value,
+                "initial_preload_success": (
+                    result.summary.initial_preload_success
+                ),
+                "initialization_failure_category": (
+                    result.summary.initialization_failure_category
+                ),
+                "settlement_steps": result.summary.settlement_steps,
+                "settlement_reaction_error_n": (
+                    result.summary.settlement_final_reaction_error_n
+                ),
+                "tangential_force_median_n": (
+                    result.summary.tangential_force_median_n
+                ),
+                "neff_normal_median": result.summary.neff_normal_median,
+                "maximum_abs_dynamic_residual_n": (
+                    result.summary.maximum_abs_dynamic_residual_n
+                ),
+                "maximum_abs_energy_residual_j": (
+                    result.summary.maximum_abs_energy_residual_j
+                ),
+                "formal_ranking_eligible": False,
+            }
+        )
+    report = {
+        "generated_at_utc": utc_now(),
+        "scope": "one_existing_M1_condition_short_path_interface_smoke",
+        "catalog_path": str(catalog_path.resolve()),
+        "terrain_recipe_id": condition["terrain_recipe_id"],
+        "region_id": condition["region_id"],
+        "seed": int(condition["seed"]),
+        "drag_length_m": drag_length_m,
+        "external_total_preload_n": 1.0,
+        "sizes": rows,
+        "all_passed": all(
+            row["terminal"] == "path_end"
+            and row["initial_preload_success"]
+            and row["maximum_abs_dynamic_residual_n"] is not None
+            and row["maximum_abs_dynamic_residual_n"]
+            <= _settings(
+                drag_length_m=drag_length_m,
+                preload_n=1.0,
+            ).dynamic_residual_tolerance_n
+            and row["maximum_abs_energy_residual_j"] is not None
+            and math.isfinite(row["maximum_abs_energy_residual_j"])
+            for row in rows
+        ),
+        "formal_ranking_eligible": False,
+        "limitations": [
+            "current catalog is the existing defined_geometry inventory",
+            "short smoke path is not the required 100 mm trend experiment",
+            "this is not the planned 3-family x 100-seed paired catalog",
+            "large-array rough-terrain energy residual convergence is open",
+        ],
     }
     if output_path is not None:
         atomic_write_json(output_path, report)

@@ -15,9 +15,14 @@ from spine_sim.array import (
     LegacyCommonBackplateArray,
     LegacyFixedZCommonBackplateExperiment,
     build_candidate_pool,
+    build_base_hardware,
+    build_full_array_design,
     select_balanced_candidates,
+    validate_paired_cases,
+    validate_terrain_catalog,
 )
 from spine_sim.array.case import _arrays, run_case
+from spine_sim.array.design import _loading_protocol
 from spine_sim.array.dynamic_validation import (
     _drop_profile,
     _integrator,
@@ -344,6 +349,273 @@ class M3JointDynamicTests(unittest.TestCase):
             delta=0.02,
         )
 
+    def test_preload_ramp_and_all_settling_gates_are_audited(self):
+        trace = self.plane.settlement_trace
+        applied = np.asarray(
+            [point.applied_total_preload_n for point in trace]
+        )
+        self.assertGreater(len(trace), 20)
+        self.assertTrue(np.all(np.diff(applied) >= -1e-15))
+        self.assertLess(applied[0], 1e-3 * applied[-1])
+        self.assertAlmostEqual(applied[-1], 0.5, places=12)
+        self.assertLess(
+            max(point.total_contact_reaction_z_n for point in trace),
+            1.1 * applied[-1],
+        )
+        summary = self.plane.summary
+        self.assertEqual(
+            summary.settlement_ramp_profile,
+            "minimum_jerk_quintic",
+        )
+        self.assertGreaterEqual(
+            summary.settlement_stable_steps,
+            summary.settlement_required_stable_steps,
+        )
+        self.assertLessEqual(
+            summary.settlement_final_reaction_error_n,
+            max(
+                _settings(
+                    drag_length_m=0.1e-3
+                ).settling_reaction_force_tolerance_n,
+                0.5
+                * _settings(
+                    drag_length_m=0.1e-3
+                ).settling_reaction_force_relative_tolerance,
+            ),
+        )
+        self.assertLessEqual(
+            summary.settlement_final_maximum_mode_speed_m_s,
+            _integrator(1e-3).settling_velocity_tolerance_m_s,
+        )
+        self.assertLessEqual(
+            abs(summary.settlement_final_dynamic_residual_n),
+            _settings(
+                drag_length_m=0.1e-3
+            ).settling_dynamic_residual_tolerance_n,
+        )
+
+    def test_failed_settlement_is_not_a_zero_load_ranking_row(self):
+        impossible_force_gate = replace(
+            _settings(drag_length_m=0.02e-3),
+            settling_reaction_force_tolerance_n=0.0,
+            settling_reaction_force_relative_tolerance=0.0,
+        )
+        short_integrator = replace(
+            _integrator(1e-3),
+            maximum_settling_time_s=0.10,
+        )
+        result = DynamicCommonBackplateExperiment(
+            self.plane_system,
+            impossible_force_gate,
+            short_integrator,
+        ).run()
+        self.assertFalse(result.summary.initial_preload_success)
+        self.assertFalse(result.summary.conditional_performance_available)
+        self.assertEqual(
+            result.summary.initialization_failure_category,
+            "settlement_nonconvergence",
+        )
+        self.assertIsNone(result.summary.tangential_force_median_n)
+        self.assertIsNone(result.summary.total_contact_reaction_time_mean_n)
+        self.assertFalse(result.summary.formal_ranking_eligible)
+
+    def test_output_levels_do_not_change_summary_values(self):
+        before = asdict(self.plane.summary)
+        summary_arrays = _arrays(self.plane, "summary")
+        aggregate = _arrays(self.plane, "aggregate_trace")
+        full = _arrays(self.plane, "full_pin_trace")
+        self.assertEqual(summary_arrays, {})
+        self.assertIn("settlement_ramp_fraction", aggregate)
+        self.assertIn("wall_on_unit_wrench_about_origin", aggregate)
+        self.assertNotIn("pin_normal_force_n", aggregate)
+        self.assertIn("pin_normal_force_n", full)
+        self.assertIn("pin_bending_stress_pa", full)
+        self.assertEqual(before, asdict(self.plane.summary))
+
+    def test_symmetric_2x2_plane_load_distribution(self):
+        configuration = ArrayConfiguration(
+            2, 2, 4e-3, self.parameters
+        )
+        _system, result = _run(
+            configuration,
+            _tracks(configuration),
+            drag_length_m=0.02e-3,
+        )
+        initial_loads = np.asarray(
+            [
+                pin.normal_force_n
+                for pin in result.points[0].pin_responses
+            ]
+        )
+        self.assertLess(np.ptp(initial_loads), 1e-12)
+        self.assertAlmostEqual(np.sum(initial_loads), 0.5, delta=1e-5)
+
+    def test_rigid_and_three_required_spring_stiffnesses(self):
+        axial_forces = []
+        for stiffness in (300.0, 800.0, 2000.0):
+            parameters = replace(
+                self.parameters,
+                axial_mode="spring",
+                spring_stiffness_n_m=stiffness,
+            )
+            configuration = ArrayConfiguration(
+                1, 2, 4e-3, parameters, fixture_only=True
+            )
+            system, result = _run(
+                configuration,
+                _tracks(configuration),
+                drag_length_m=0.005e-3,
+            )
+            axial_forces.append(system.units[0].axial_response(10e-6)[0])
+            self.assertEqual(
+                result.summary.run_terminal_state.value,
+                "path_end",
+            )
+        rigid_parameters = replace(
+            self.parameters,
+            axial_mode="rigid",
+            spring_stiffness_n_m=None,
+        )
+        rigid_configuration = ArrayConfiguration(
+            1, 2, 4e-3, rigid_parameters, fixture_only=True
+        )
+        rigid_system, rigid = _run(
+            rigid_configuration,
+            _tracks(rigid_configuration),
+            drag_length_m=0.005e-3,
+        )
+        rigid_force = rigid_system.units[0].axial_response(10e-6)[0]
+        self.assertTrue(np.all(np.diff(axial_forces) > 0.0))
+        self.assertGreater(rigid_force, axial_forces[-1])
+        self.assertEqual(rigid.summary.run_terminal_state.value, "path_end")
+
+    def test_spring_lower_interior_hard_stop_and_slide_transitions(self):
+        unit = self.plane_system.units[0]
+        lower = unit.axial_response(-1e-6)
+        interior = unit.axial_response(10e-6)
+        hard = unit.axial_response(
+            self.parameters.spring_travel_m
+            + self.parameters.axial_compliance_m_n
+            * float(self.parameters.spring_stiffness_n_m)
+            * self.parameters.spring_travel_m
+            + 1e-6
+        )
+        self.assertEqual(lower[3].value, "lower_stop")
+        self.assertEqual(interior[3].value, "interior")
+        self.assertEqual(hard[3].value, "hard_stop")
+        self.assertGreaterEqual(hard[4], self.parameters.spring_travel_m)
+        self.assertGreater(
+            self.plane.summary.event_counts[EventLabel.SLIP_START.value],
+            0,
+        )
+        self.assertTrue(
+            any(
+                pin.contact_state.value == "slide"
+                for point in self.plane.points
+                for pin in point.pin_responses
+            )
+        )
+
+    def test_failure_categories_are_not_collapsed(self):
+        geometry_result = DynamicCommonBackplateExperiment(
+            self.plane_system,
+            replace(
+                _settings(drag_length_m=0.01e-3),
+                initial_common_ux_m=0.1,
+            ),
+            _integrator(1e-3),
+        ).run()
+        self.assertEqual(
+            geometry_result.summary.failure_category,
+            "geometry_out_of_bounds",
+        )
+        physical_result = DynamicCommonBackplateExperiment(
+            self.plane_system,
+            replace(
+                _settings(drag_length_m=0.01e-3),
+                maximum_preload_approach_m=1e-9,
+            ),
+            _integrator(1e-3),
+        ).run()
+        self.assertEqual(
+            physical_result.summary.failure_category,
+            "physical_boundary",
+        )
+        self.assertTrue(physical_result.settlement_trace)
+        self.assertGreater(
+            physical_result.summary.settlement_actual_approach_m,
+            physical_result.summary.settlement_maximum_approach_m,
+        )
+        numerical_result = DynamicCommonBackplateExperiment(
+            self.plane_system,
+            _settings(drag_length_m=0.01e-3),
+            replace(_integrator(1e-3), maximum_steps=1),
+        ).run()
+        self.assertTrue(numerical_result.summary.initial_preload_success)
+        self.assertEqual(
+            numerical_result.summary.failure_category,
+            "numerical_failure",
+        )
+        self.assertEqual(
+            self.plane.summary.model_state.value,
+            "parameter_unclosed",
+        )
+
+    def test_fixed_angles_and_default_gradient_transform(self):
+        for angle in (60.0, 70.0, 80.0):
+            configuration = ArrayConfiguration(
+                2,
+                2,
+                4e-3,
+                replace(self.parameters, installation_angle_deg=angle),
+            )
+            self.assertEqual(configuration.column_angles_deg, (angle, angle))
+            for pin in configuration.pin_parameters:
+                self.assertAlmostEqual(np.linalg.norm(pin.axis_xz), 1.0)
+                self.assertGreater(pin.axis_xz[0], 0.0)
+                self.assertLess(pin.axis_xz[1], 0.0)
+        gradient = ArrayConfiguration(
+            5,
+            2,
+            4e-3,
+            replace(self.parameters, installation_angle_deg=80.0),
+            angle_layout=AngleLayout.GRADIENT_80_TO_60,
+        )
+        self.assertTrue(
+            np.allclose(
+                gradient.column_angles_deg,
+                np.linspace(80.0, 60.0, 5),
+            )
+        )
+
+    def test_repeated_configuration_run_is_deterministic(self):
+        _system, repeated = _run(
+            self.configuration,
+            self.plane_tracks,
+            drag_length_m=0.30e-3,
+        )
+        self.assertEqual(self.plane.points, repeated.points)
+        self.assertEqual(self.plane.summary, repeated.summary)
+
+    def test_representative_2x2_4x4_6x6_smoke(self):
+        for size in (2, 4, 6):
+            configuration = ArrayConfiguration(
+                size, size, 4e-3, self.parameters
+            )
+            _system, result = _run(
+                configuration,
+                _tracks(configuration),
+                drag_length_m=0.005e-3,
+            )
+            self.assertEqual(
+                result.summary.run_terminal_state.value,
+                "path_end",
+            )
+            self.assertLess(
+                result.summary.maximum_abs_dynamic_residual_n,
+                1e-8,
+            )
+
 
 class M3CaseAdapterTests(unittest.TestCase):
     def test_case_adapter_saves_explicit_dynamic_parameters_and_closes_ranking(self):
@@ -434,11 +706,115 @@ class M3ScreeningDesignTests(unittest.TestCase):
         self.assertIn((2, 5), shapes)
         self.assertIn((5, 2), shapes)
 
+    def test_complete_cartesian_design_counts_and_levels(self):
+        hardware = build_base_hardware()
+        design = build_full_array_design()
+        self.assertEqual(len(hardware), 48)
+        self.assertEqual(
+            sum(row["angle_layout"] == "fixed" for row in design),
+            1008,
+        )
+        self.assertEqual(
+            sum(
+                row["angle_layout"] == "gradient_80_to_60"
+                for row in design
+            ),
+            336,
+        )
+        self.assertFalse(
+            any(row["fixed_angle_deg"] == 50.0 for row in design)
+        )
+        self.assertFalse(
+            any(
+                row["angle_layout"] == "gradient_80_to_50"
+                for row in design
+            )
+        )
+
+    def test_output_level_is_not_part_of_loading_protocol_identity(self):
+        first = _loading_protocol(
+            1.0,
+            output_spacing_m=50e-6,
+            time_step_s=1e-3,
+        )
+        second = _loading_protocol(
+            1.0,
+            output_spacing_m=50e-6,
+            time_step_s=1e-3,
+        )
+        self.assertEqual(
+            first["loading_protocol_id"],
+            second["loading_protocol_id"],
+        )
+        self.assertNotIn("output_level", first)
+
+    def test_formal_catalog_requires_three_families_by_100(self):
+        conditions = []
+        for family_index, family in enumerate(
+            ("sandpaper", "red_brick", "concrete")
+        ):
+            for index in range(100):
+                seed = 10_000 * (family_index + 1) + index
+                conditions.append(
+                    {
+                        "terrain_family": family,
+                        "seed": seed,
+                        "terrain_recipe_id": f"recipe_{seed}",
+                        "region_id": f"region_{seed}",
+                        "data_sha256": f"{seed:064x}",
+                        "full_sha256_verified": True,
+                    }
+                )
+        catalog = {
+            "status": "complete",
+            "all_full_hashes_verified": True,
+            "m1_module_version": "m1-test",
+            "conditions": conditions,
+        }
+        self.assertEqual(len(validate_terrain_catalog(catalog)), 300)
+        incomplete = dict(catalog)
+        incomplete["conditions"] = conditions[:-1]
+        with self.assertRaises(ValueError):
+            validate_terrain_catalog(incomplete)
+
+    def test_missing_paired_condition_is_rejected(self):
+        designs = build_full_array_design()[:2]
+        terrain_ids = ("terrain_a", "terrain_b")
+        protocol_ids = ("preload_1",)
+        cases = [
+            {
+                "parameters": {
+                    "configuration": design["configuration"],
+                    "terrain_condition_id": terrain_id,
+                    "loading_protocol_id": "preload_1",
+                }
+            }
+            for design in designs
+            for terrain_id in terrain_ids
+        ]
+        validate_paired_cases(
+            cases,
+            configuration_ids=[
+                row["array_configuration_id"] for row in designs
+            ],
+            terrain_condition_ids=terrain_ids,
+            loading_protocol_ids=protocol_ids,
+        )
+        with self.assertRaises(ValueError):
+            validate_paired_cases(
+                cases[:-1],
+                configuration_ids=[
+                    row["array_configuration_id"] for row in designs
+                ],
+                terrain_condition_ids=terrain_ids,
+                loading_protocol_ids=protocol_ids,
+            )
+
 
 class M3ValidationTests(unittest.TestCase):
     def test_all_dynamic_analytic_gates_pass_without_formal_campaign(self):
         report = run_dynamic_analytic_validation()
-        self.assertEqual(report["gate_count"], 11)
+        self.assertEqual(report["gate_count"], 16)
         self.assertTrue(report["all_passed"])
         self.assertFalse(report["formal_m3_round1_allowed"])
         self.assertIn("legacy fixed-Z validation not executed", report["validation_scope"])

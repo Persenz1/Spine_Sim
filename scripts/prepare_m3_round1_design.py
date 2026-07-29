@@ -1,18 +1,134 @@
-"""Prepare a non-executable M3 round-one balanced design draft."""
+"""Prepare the complete M3 design or one explicitly bounded campaign shard.
+
+This command never starts a campaign.  Without ``--catalog`` it writes only the
+hardware/loading design manifest.  With a catalog it first requires the exact
+300-condition M1 inventory.  Cases are materialized only when a family, seed
+range and one preload are all supplied.
+"""
 
 from __future__ import annotations
 
 import argparse
+import json
 from pathlib import Path
 
 from spine_sim.array.design import (
-    build_candidate_pool,
-    level_counts,
-    screening_gate_status,
-    select_balanced_candidates,
+    DRAG_LENGTH_M,
+    TERRAIN_FAMILIES,
+    TOTAL_PRELOADS_N,
+    build_base_hardware,
+    build_campaign_shard,
+    build_full_array_design,
+    validate_terrain_catalog,
 )
-from spine_sim.contact import AxialMode, SpineParameters
+from spine_sim.array.models import M3_MODULE_VERSION
+from spine_sim.core.config import CampaignSpec
+from spine_sim.core.identity import stable_hash
 from spine_sim.io.results import atomic_write_json, utc_now
+
+
+def _manifest(catalog: dict | None) -> dict:
+    base_hardware = build_base_hardware()
+    array_design = build_full_array_design(include_gradient_80_to_60=True)
+    fixed = [
+        row for row in array_design if row["angle_layout"] == "fixed"
+    ]
+    gradient = [
+        row
+        for row in array_design
+        if row["angle_layout"] == "gradient_80_to_60"
+    ]
+    terrain_count = 300
+    catalog_evidence = None
+    if catalog is not None:
+        conditions = validate_terrain_catalog(
+            catalog,
+            require_formal_300=True,
+        )
+        terrain_count = len(conditions)
+        catalog_evidence = {
+            "terrain_catalog_id": catalog.get(
+                "terrain_catalog_id",
+                stable_hash(
+                    [
+                        condition["terrain_condition_id"]
+                        for condition in conditions
+                    ]
+                ),
+            ),
+            "library_root": catalog["library_root"],
+            "condition_count": len(conditions),
+            "family_counts": {
+                family: sum(
+                    condition["terrain_family"] == family
+                    for condition in conditions
+                )
+                for family in TERRAIN_FAMILIES
+            },
+            "all_full_hashes_verified": True,
+            "source": "M1 terrain catalog; M3 generated no terrain",
+        }
+    return {
+        "schema_version": "2",
+        "created_at_utc": utc_now(),
+        "m3_module_version": M3_MODULE_VERSION,
+        "status": (
+            "complete_design_manifest_not_executed"
+            if catalog is not None
+            else "complete_hardware_plan_waiting_for_m1_300_catalog"
+        ),
+        "formal_campaign_started": False,
+        "experiment_goal": (
+            "compare pull-force trends over a 100 mm +x drag while one "
+            "constant total unit preload remains applied"
+        ),
+        "base_hardware_count": len(base_hardware),
+        "fixed_array_configuration_count": len(fixed),
+        "gradient_80_to_60_configuration_count": len(gradient),
+        "total_array_configuration_count": len(array_design),
+        "terrain_condition_count": terrain_count,
+        "total_preloads_n": list(TOTAL_PRELOADS_N),
+        "drag_length_m": DRAG_LENGTH_M,
+        "fixed_case_count": (
+            len(fixed) * terrain_count * len(TOTAL_PRELOADS_N)
+        ),
+        "gradient_case_count": (
+            len(gradient) * terrain_count * len(TOTAL_PRELOADS_N)
+        ),
+        "total_planned_case_count": (
+            len(array_design) * terrain_count * len(TOTAL_PRELOADS_N)
+        ),
+        "terrain_catalog_evidence": catalog_evidence,
+        "pairing_rule": (
+            "every array_configuration_id appears exactly once for every "
+            "terrain_condition_id and loading_protocol_id"
+        ),
+        "case_identity_rule": (
+            "case identity includes full hardware/array configuration, M1 "
+            "terrain condition/data hash, and the 0.5/1/2 N 100 mm protocol"
+        ),
+        "default_output_policy": {
+            "summary": "all cases",
+            "aggregate_trace": (
+                "designated seeds, anomalies, representative configurations"
+            ),
+            "full_pin_trace": (
+                "designated seeds, anomalies and final candidates only"
+            ),
+        },
+        "required_sharding": (
+            "one terrain family + bounded seed range + one preload per shard"
+        ),
+        "formal_ranking_eligible": False,
+        "formal_ranking_blockers": [
+            "dynamic/contact parameters are not experimentally calibrated",
+            "time-step convergence is not closed for all candidates",
+            "10/5 um convergence is not closed for final candidates",
+            "the planned 300-condition M1 catalog must exist and verify",
+        ],
+        "base_hardware": base_hardware,
+        "array_design": array_design,
+    }
 
 
 def main() -> int:
@@ -20,62 +136,76 @@ def main() -> int:
     parser.add_argument(
         "--output",
         type=Path,
-        default=Path("examples/m3_round1_design_draft.json"),
+        default=Path("examples/m3_complete_design_manifest.json"),
     )
-    parser.add_argument("--target-count", type=int, default=100)
+    parser.add_argument("--catalog", type=Path)
+    parser.add_argument("--terrain-family", choices=TERRAIN_FAMILIES)
+    parser.add_argument("--seed-min", type=int)
+    parser.add_argument("--seed-max", type=int)
+    parser.add_argument("--preload-n", type=float, choices=TOTAL_PRELOADS_N)
+    parser.add_argument(
+        "--output-level",
+        choices=("summary", "aggregate_trace", "full_pin_trace"),
+        default="summary",
+    )
+    parser.add_argument("--workers", type=int, default=1)
     args = parser.parse_args()
 
-    fixture_pack = {
-        "parameter_pack_id": "stage_i_fixture_pack_not_for_formal_ranking",
-        "spine": SpineParameters(
-            tip_radius_m=50e-6,
-            diameter_m=0.8e-3,
-            exposed_length_m=4e-3,
-            installation_angle_deg=70.0,
-            axial_mode=AxialMode.SPRING,
-            spring_stiffness_n_m=2000.0,
-            static_friction=0.30,
-            kinetic_friction=0.20,
-            rod_clearance_mode="unclosed",
-        ).as_dict(),
-        "approval_status": "fixture_only_not_user_approved",
-    }
-    pool = build_candidate_pool([fixture_pack])
-    selected = select_balanced_candidates(pool, args.target_count)
-    gate = screening_gate_status(
-        full_chain_manifest_present=False,
-        m2_formal_round1_completed=False,
-        m2_parameter_packs_approved=False,
-        explicit_m3_round1_approval=False,
+    shard_fields = (
+        args.terrain_family,
+        args.seed_min,
+        args.seed_max,
+        args.preload_n,
     )
-    document = {
-        "schema_version": "1",
-        "created_at_utc": utc_now(),
-        "status": "design_algorithm_fixture_draft_not_executable_campaign",
-        "gate": gate,
-        "selection_algorithm": (
-            "deterministic greedy balanced categorical coverage with maximin "
-            "Jaccard distance and explicit required second-order interaction tokens"
-        ),
-        "selection_rationale": [
-            "balance main hardware levels before repeating them",
-            "cover installation-mode*scale, stiffness*spacing, angle*direction, "
-            "gradient*nx, diameter*stiffness and tip*pack interactions",
-            "keep 2x5 and 5x2 as distinct configurations",
-            "do not combine the hardware matrix with terrain seeds here",
-        ],
-        "fixture_parameter_pack": fixture_pack,
-        "candidate_pool_count": len(pool),
-        "selected_count": len(selected),
-        "selected_level_counts": level_counts(selected),
-        "design_matrix": selected,
-        "formal_campaign_started": False,
-        "required_rebuild_after_gate_opens": (
-            "replace the fixture pack with 4-6 representatives from the "
-            "user-approved M2 pack file, then rerun this deterministic selector"
-        ),
-    }
+    materialize_shard = any(value is not None for value in shard_fields)
+    if materialize_shard and (
+        args.catalog is None or any(value is None for value in shard_fields)
+    ):
+        parser.error(
+            "a shard requires --catalog, --terrain-family, --seed-min, "
+            "--seed-max and --preload-n together"
+        )
+
+    catalog = (
+        json.loads(args.catalog.read_text(encoding="utf-8"))
+        if args.catalog is not None
+        else None
+    )
+    if materialize_shard:
+        assert catalog is not None
+        document = build_campaign_shard(
+            catalog,
+            terrain_family=args.terrain_family,
+            seed_min=args.seed_min,
+            seed_max=args.seed_max,
+            preload_n=args.preload_n,
+            output_level=args.output_level,
+            workers=args.workers,
+            require_formal_300=True,
+        )
+        parsed = CampaignSpec.from_mapping(document)
+        status = {
+            "kind": "campaign_shard",
+            "case_count": len(parsed.cases),
+            "campaign_id": parsed.campaign_id,
+        }
+    else:
+        document = _manifest(catalog)
+        status = {
+            "kind": "design_manifest",
+            "configuration_count": document[
+                "total_array_configuration_count"
+            ],
+            "planned_case_count": document["total_planned_case_count"],
+        }
     atomic_write_json(args.output, document)
+    print(
+        json.dumps(
+            {"output": str(args.output.resolve()), **status},
+            ensure_ascii=False,
+            indent=2,
+        )
+    )
     return 0
 
 

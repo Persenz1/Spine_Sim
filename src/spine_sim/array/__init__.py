@@ -1,10 +1,18 @@
 """M3 continuous-total-preload common-backplate dynamics APIs."""
 
 from .design import (
+    DRAG_LENGTH_M,
+    TERRAIN_FAMILIES,
+    TOTAL_PRELOADS_N,
+    build_base_hardware,
+    build_campaign_shard,
     build_candidate_pool,
+    build_full_array_design,
     level_counts,
     screening_gate_status,
     select_balanced_candidates,
+    validate_paired_cases,
+    validate_terrain_catalog,
 )
 from .dynamics import (
     ArrayDynamicExperimentSettings,
@@ -36,6 +44,7 @@ from .models import (
     LegacyArrayState,
     LoadSharingMetrics,
     PinDynamicResponse,
+    SettlementTracePoint,
 )
 from .solver import LegacyCommonBackplateArray
 
@@ -66,8 +75,17 @@ __all__ = [
     "LegacyFixedZCommonBackplateExperiment",
     "LoadSharingMetrics",
     "PinDynamicResponse",
+    "SettlementTracePoint",
+    "DRAG_LENGTH_M",
+    "TERRAIN_FAMILIES",
+    "TOTAL_PRELOADS_N",
+    "build_base_hardware",
+    "build_campaign_shard",
     "build_candidate_pool",
+    "build_full_array_design",
     "level_counts",
     "screening_gate_status",
     "select_balanced_candidates",
+    "validate_paired_cases",
+    "validate_terrain_catalog",
 ]

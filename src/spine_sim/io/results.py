@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import hashlib
 import os
 import tempfile
 from dataclasses import asdict, dataclass
@@ -58,6 +59,14 @@ def atomic_write_npz(path: Path, arrays: Mapping[str, np.ndarray]) -> None:
             temp_path.unlink()
 
 
+def sha256_file(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
 @dataclass(frozen=True)
 class CaseRecord:
     case_id: str
@@ -109,7 +118,34 @@ class ResultStore:
             return False
         try:
             document = json.loads(summary.read_text(encoding="utf-8"))
-            return document.get("case_id") == case_id and document.get("run_state") == "complete"
+            marker_hash = marker.read_text(encoding="ascii").strip()
+            if (
+                document.get("case_id") != case_id
+                or document.get("run_state") != "complete"
+                or marker_hash != document.get("result_hash")
+            ):
+                return False
+            path_sha256 = document.get("path_sha256")
+            path_file = directory / "path.npz"
+            if path_sha256 is None:
+                path_valid = not path_file.exists()
+            else:
+                path_valid = (
+                    path_file.is_file()
+                    and sha256_file(path_file) == path_sha256
+                )
+            if not path_valid:
+                return False
+            event_file = directory / "events.jsonl"
+            if "events_sha256" not in document:
+                return True
+            events_sha256 = document["events_sha256"]
+            if events_sha256 is None:
+                return not event_file.exists()
+            return (
+                event_file.is_file()
+                and sha256_file(event_file) == events_sha256
+            )
         except (OSError, json.JSONDecodeError):
             return False
 
@@ -130,21 +166,39 @@ class ResultStore:
     ) -> CaseRecord:
         directory = self.case_dir(case_id)
         directory.mkdir(parents=True, exist_ok=True)
+        marker = directory / "COMPLETE"
+        if marker.exists():
+            marker.unlink()
         atomic_write_json(directory / "config.json", config)
+        path_file = directory / "path.npz"
         if arrays:
-            atomic_write_npz(directory / "path.npz", arrays)
+            atomic_write_npz(path_file, arrays)
+            path_sha256 = sha256_file(path_file)
+        else:
+            path_sha256 = None
+            if path_file.exists():
+                path_file.unlink()
         event_lines = []
         for event in events:
             value = event.as_dict() if isinstance(event, Event) else dict(event)
             event_lines.append(json.dumps(canonicalize(value), ensure_ascii=False, sort_keys=True))
-        atomic_write_bytes(
-            directory / "events.jsonl",
-            (("\n".join(event_lines) + ("\n" if event_lines else "")).encode("utf-8")),
-        )
+        event_file = directory / "events.jsonl"
+        if event_lines:
+            atomic_write_bytes(
+                event_file,
+                (("\n".join(event_lines) + "\n").encode("utf-8")),
+            )
+            events_sha256 = sha256_file(event_file)
+        elif event_file.exists():
+            event_file.unlink()
+            events_sha256 = None
+        else:
+            events_sha256 = None
         atomic_write_json(directory / "validation.json", validation or {})
         document = dict(summary)
         document["case_id"] = case_id
         document["completed_at_utc"] = utc_now()
+        document["events_sha256"] = events_sha256
         stable_summary = {
             key: value
             for key, value in document.items()
@@ -160,10 +214,16 @@ class ResultStore:
             }
         }
         document["result_hash"] = stable_hash(
-            {"config": config, "summary": stable_summary, "events": event_lines}
+            {
+                "config": config,
+                "summary": stable_summary,
+                "events": event_lines,
+                "events_sha256": events_sha256,
+                "path_sha256": path_sha256,
+            }
         )
+        document["path_sha256"] = path_sha256
         atomic_write_json(directory / "summary.json", document)
-        marker = directory / "COMPLETE"
         if complete:
             atomic_write_bytes(marker, (document["result_hash"] + "\n").encode("ascii"))
         elif marker.exists():
