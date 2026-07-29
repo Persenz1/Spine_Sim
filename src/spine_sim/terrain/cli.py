@@ -13,6 +13,8 @@ import numpy as np
 
 from spine_sim.io.results import atomic_write_json
 
+from .api import generate_terrain, register_terrain, save_terrain
+from .errors import GeometryOutOfDomainError, TerrainConfigurationError
 from .formal import generate_formal_terrain_batch
 from .library import TerrainLibrary
 from .models import (
@@ -21,7 +23,14 @@ from .models import (
     compute_campaign_region,
 )
 from .plotting import render_terrain_views
+from .profiles import available_profiles
 from .suite import generate_terrain_suite, load_suite
+from .validation import (
+    compare_topographies,
+    render_comparison,
+    summarize_seed_ensemble,
+    write_validation_json,
+)
 
 
 def _read_json(path: Path) -> dict[str, Any]:
@@ -111,6 +120,41 @@ def build_parser() -> argparse.ArgumentParser:
     plot.add_argument("--sphere-transparency", type=float, default=0.0)
     plot.add_argument("--dpi", type=int, default=180)
     plot.add_argument("--prefix", default="terrain")
+
+    sub.add_parser("list-materials")
+
+    material = sub.add_parser("generate-material")
+    material.add_argument("output", type=Path)
+    material.add_argument(
+        "--material", required=True, choices=("sandpaper", "red_brick", "concrete")
+    )
+    material.add_argument("--subtype")
+    material.add_argument("--size-x-mm", type=float, required=True)
+    material.add_argument("--size-y-mm", type=float, required=True)
+    material.add_argument("--resolution-um", type=float, required=True)
+    material.add_argument("--seed", type=int, required=True)
+    material.add_argument(
+        "--mode", choices=("measured", "synthetic", "auto"), default="synthetic"
+    )
+    material.add_argument("--measured-path", type=Path)
+    material.add_argument("--library", type=Path)
+    material.add_argument("--origin-x-mm", type=float, default=0.0)
+    material.add_argument("--origin-y-mm", type=float, default=0.0)
+    material.add_argument("--overwrite", action="store_true")
+
+    validate_material = sub.add_parser("validate-material")
+    validate_material.add_argument("output", type=Path)
+    validate_material.add_argument(
+        "--material", required=True, choices=("sandpaper", "red_brick", "concrete")
+    )
+    validate_material.add_argument("--subtype")
+    validate_material.add_argument("--size-x-mm", type=float, default=2.0)
+    validate_material.add_argument("--size-y-mm", type=float, default=1.0)
+    validate_material.add_argument("--resolution-um", type=float, default=10.0)
+    validate_material.add_argument(
+        "--seed", action="append", type=int, dest="seeds"
+    )
+    validate_material.add_argument("--measured-path", type=Path)
     return parser
 
 
@@ -187,6 +231,122 @@ def _benchmark(library_root: Path, *, tile_rows: int) -> dict[str, Any]:
 
 def main(argv: Sequence[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
+    if args.command == "list-materials":
+        print(json.dumps(available_profiles(), ensure_ascii=False, indent=2))
+        return 0
+    if args.command == "generate-material":
+        terrain = generate_terrain(
+            material=args.material,
+            subtype=args.subtype,
+            size_x_m=args.size_x_mm * 1e-3,
+            size_y_m=args.size_y_mm * 1e-3,
+            resolution_m=args.resolution_um * 1e-6,
+            seed=args.seed,
+            mode=args.mode,
+            measured_path=args.measured_path,
+        )
+        artifact = save_terrain(args.output, terrain)
+        result: dict[str, Any] = {
+            "artifact": str(artifact),
+            "material": terrain.material,
+            "subtype": terrain.subtype,
+            "profile_status": terrain.metadata["profile_status"],
+            "resolved_mode": terrain.resolved_mode,
+            "shape_yx": list(terrain.height.shape),
+            "dtype": str(terrain.height.dtype),
+        }
+        if args.library is not None:
+            recipe, region, metadata = register_terrain(
+                args.library,
+                terrain,
+                origin_x_m=args.origin_x_mm * 1e-3,
+                origin_y_m=args.origin_y_mm * 1e-3,
+                overwrite=args.overwrite,
+            )
+            result["library"] = {
+                "root": str(args.library.resolve()),
+                "terrain_recipe_id": recipe.terrain_recipe_id,
+                "region_id": region.region_id,
+                "data_sha256": metadata["data_sha256"],
+            }
+        print(json.dumps(result, ensure_ascii=False, indent=2))
+        return 0
+    if args.command == "validate-material":
+        seeds = args.seeds or [1101, 1102, 1103]
+        terrains = [
+            generate_terrain(
+                material=args.material,
+                subtype=args.subtype,
+                size_x_m=args.size_x_mm * 1e-3,
+                size_y_m=args.size_y_mm * 1e-3,
+                resolution_m=args.resolution_um * 1e-6,
+                seed=seed,
+                mode="synthetic",
+                measured_path=args.measured_path,
+            )
+            for seed in seeds
+        ]
+        output = args.output.resolve()
+        output.mkdir(parents=True, exist_ok=True)
+        ensemble_path = write_validation_json(
+            output / "seed_ensemble.json", summarize_seed_ensemble(terrains)
+        )
+        reference = None
+        try:
+            reference = generate_terrain(
+                material=args.material,
+                subtype=args.subtype,
+                size_x_m=args.size_x_mm * 1e-3,
+                size_y_m=args.size_y_mm * 1e-3,
+                resolution_m=args.resolution_um * 1e-6,
+                seed=seeds[0] + 10_000,
+                mode="measured",
+                measured_path=args.measured_path,
+            )
+        except (FileNotFoundError, GeometryOutOfDomainError, TerrainConfigurationError):
+            reference = None
+        figure_path = render_comparison(
+            terrains[0],
+            output / "geometry_comparison.png",
+            reference_height_m=None if reference is None else reference.height,
+            reference_dx_m=None if reference is None else reference.dx,
+            reference_dy_m=None if reference is None else reference.dy,
+            reference_valid_mask=(
+                None if reference is None else reference.valid_mask
+            ),
+            reference_label="measured crop (single source)",
+        )
+        comparison_path = None
+        if reference is not None:
+            comparison_path = write_validation_json(
+                output / "measured_vs_synthetic.json",
+                compare_topographies(
+                    reference.height,
+                    terrains[0].height,
+                    reference_dx_m=reference.dx,
+                    reference_dy_m=reference.dy,
+                    synthetic_dx_m=terrains[0].dx,
+                    synthetic_dy_m=terrains[0].dy,
+                    reference_valid_mask=reference.valid_mask,
+                    synthetic_valid_mask=terrains[0].valid_mask,
+                ),
+            )
+        print(
+            json.dumps(
+                {
+                    "ensemble": str(ensemble_path),
+                    "figure": str(figure_path),
+                    "comparison": (
+                        None if comparison_path is None else str(comparison_path)
+                    ),
+                    "reference_available": reference is not None,
+                    "profile_status": terrains[0].metadata["profile_status"],
+                },
+                ensure_ascii=False,
+                indent=2,
+            )
+        )
+        return 0
     if args.command == "region-report":
         result = compute_campaign_region(_load_recipe(args.recipe)).as_dict()
         if args.output:

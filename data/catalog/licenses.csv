@@ -1,0 +1,12 @@
+dataset_id,license,verification_status,evidence,usage_note,checked_date
+mendeley_hcgcnm269w_v2,CC BY 4.0,verified,https://data.mendeley.com/datasets/hcgcnm269w/2,Attribution required,2026-07-29
+surface_topography_challenge_zenodo_15341939,CC0 for Zenodo record; per-surface-twin terms may differ,partially_verified,https://zenodo.org/records/15341939,Inspect the LICENSE or README inside each selected digital-surface-twin container before reuse,2026-07-29
+contact_engineering_platform,per-dataset license,verified_as_variable,https://contact.engineering/ui/dataset-list/,Do not assume one platform-wide license,2026-07-29
+surface_topography_python,MIT,verified,https://github.com/ContactEngineering/SurfaceTopography/blob/main/LICENSE.md,Software license only; it does not license input datasets,2026-07-29
+digital_metrology_surface_library,unknown,not_verified,https://digitalmetrology.com/surface-library/,Registration is required and the public page does not state a reusable data license,2026-07-29
+roughness_database_org,unknown,not_verified,https://roughnessdatabase.org/user-access/,Approval is required; confirm terms for each downloaded profile,2026-07-29
+red_clay_ceramic_tonietto_2022,unknown,not_verified,https://www.nature.com/articles/s41598-022-04847-2,Data must be requested from the corresponding author and supplied terms retained,2026-07-29
+concrete_clsm_zenodo_18457948,CC BY 4.0,verified,https://zenodo.org/records/18457948,Attribution required,2026-07-29
+cement_shard_mendeley_28hj2jdy6r_v1,CC BY 4.0,verified,https://data.mendeley.com/datasets/28hj2jdy6r/1,Attribution required,2026-07-29
+micro_topo_luh,CC BY-NC 3.0,verified,https://data.uni-hannover.de/dataset/micro-topo,Non-commercial restriction requires project-level suitability review,2026-07-29
+nist_visible_cement,unknown for downloadable data files,not_verified,https://www.nist.gov/publications/visible-cement-data-set,Publication availability does not by itself establish the data-file license,2026-07-29

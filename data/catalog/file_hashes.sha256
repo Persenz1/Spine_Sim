@@ -1,0 +1,6 @@
+# Locally downloaded and byte-for-byte verified on 2026-07-29.
+# Raw files live under data/raw/ and are intentionally ignored by Git.
+919ab87e037c41e0c63a65e9dcf0144cf7d077520cce2d746c240544ebf83aeb  data/raw/mendeley_hcgcnm269w_v2/P40.csv
+a085c14fbbae9999dd29395d69f6ce77c655a5ed8d541c5e62e4a5a59bce1d18  data/raw/mendeley_hcgcnm269w_v2/P100.csv
+585fc5e128689f5444b32996703c2d38b103a7c34465d0ed0dc81f269e7fce46  data/raw/mendeley_hcgcnm269w_v2/P240.csv
+ced061a185abf5f232b836f69ddfa1b25562735cc68013fbda8104170d4d9981  data/raw/mendeley_hcgcnm269w_v2/ReadMe.txt

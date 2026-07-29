@@ -10,7 +10,7 @@ import shutil
 import tempfile
 import time
 from pathlib import Path
-from typing import Any, Literal
+from typing import TYPE_CHECKING, Any, Literal
 
 import numpy as np
 
@@ -20,6 +20,9 @@ from .envelope import compute_track_geometry
 from .errors import TerrainConfigurationError
 from .models import M1_MODULE_VERSION, RegionSpec, TerrainRecipe, TrackGeometry
 from .random_field import generate_canonical_window, gaussian_kernel
+
+if TYPE_CHECKING:
+    from .api import Terrain
 
 
 def sha256_file(path: Path, *, chunk_bytes: int = 8 * 1024 * 1024) -> str:
@@ -106,7 +109,7 @@ class TerrainLibrary:
             "recipe_hash": recipe.recipe_hash,
             "recipe": recipe.normalized(),
             "kernel_definition": recipe.kernel_definition,
-            "production_sampling": "canonical_even_indices_stride2_nodal",
+            "production_sampling": recipe.production_sampling,
         }
         if path.exists():
             existing = json.loads(path.read_text(encoding="utf-8"))
@@ -271,6 +274,29 @@ class TerrainLibrary:
         """Atomically generate a raw region; the COMPLETE marker is written last."""
 
         region.validate_against(recipe)
+        if recipe.generator_name == "material_hybrid":
+            if backend != "cpu":
+                raise TerrainConfigurationError(
+                    "material_hybrid currently supports the CPU backend only"
+                )
+            from .api import generate_terrain
+
+            terrain = generate_terrain(
+                material=str(recipe.material),
+                subtype=str(recipe.subtype),
+                size_x_m=region.size_x_m,
+                size_y_m=region.size_y_m,
+                resolution_m=region.resolution_x_m,
+                seed=recipe.seed,
+                mode=str(recipe.generation_mode),  # type: ignore[arg-type]
+            )
+            if terrain.metadata["profile_hash"] != recipe.profile_hash:
+                raise TerrainConfigurationError(
+                    "material profile changed; refusing non-reproducible rebuild"
+                )
+            return self.register_material_region(
+                recipe, region, terrain, overwrite=overwrite
+            )
         self.save_recipe(recipe)
         directory = self.region_dir(recipe.terrain_recipe_id, region.region_id)
         directory.mkdir(parents=True, exist_ok=True)
@@ -336,6 +362,110 @@ class TerrainLibrary:
             complete_path, (metadata["data_sha256"] + "\n").encode("ascii")
         )
         return metadata
+
+    def register_material_region(
+        self,
+        recipe: TerrainRecipe,
+        region: RegionSpec,
+        terrain: "Terrain",
+        *,
+        overwrite: bool = False,
+    ) -> dict[str, Any]:
+        """Atomically store a material terrain without changing M3's mmap contract."""
+
+        if recipe.generator_name != "material_hybrid":
+            raise TerrainConfigurationError(
+                "register_material_region requires a material_hybrid recipe"
+            )
+        region.validate_against(recipe)
+        if (
+            terrain.material != recipe.material
+            or terrain.subtype != recipe.subtype
+            or terrain.seed != recipe.seed
+            or terrain.resolved_mode != recipe.generation_mode
+            or terrain.metadata.get("profile_hash") != recipe.profile_hash
+        ):
+            raise TerrainConfigurationError(
+                "material terrain identity does not match its recipe"
+            )
+        if terrain.height.shape != region.shape:
+            raise TerrainConfigurationError(
+                "material terrain shape does not match region"
+            )
+        if terrain.height.dtype != np.float32 or not np.all(
+            np.isfinite(terrain.height)
+        ):
+            raise TerrainConfigurationError(
+                "material terrain must be finite float32"
+            )
+        self.save_recipe(recipe)
+        directory = self.region_dir(recipe.terrain_recipe_id, region.region_id)
+        directory.mkdir(parents=True, exist_ok=True)
+        target = directory / "raw_height.npy"
+        mask_target = directory / "valid_mask.npy"
+        metadata_path = directory / "metadata.json"
+        complete_path = directory / "COMPLETE"
+        if complete_path.is_file() and not overwrite:
+            return json.loads(metadata_path.read_text(encoding="utf-8"))
+        if complete_path.exists():
+            complete_path.unlink()
+
+        started = time.perf_counter()
+        temporary_paths: list[Path] = []
+        try:
+            for destination, array in (
+                (target, terrain.height),
+                (mask_target, terrain.valid_mask),
+            ):
+                descriptor, temporary_name = tempfile.mkstemp(
+                    prefix=f".{destination.name}.",
+                    suffix=".tmp",
+                    dir=directory,
+                )
+                os.close(descriptor)
+                temporary = Path(temporary_name)
+                temporary_paths.append(temporary)
+                with temporary.open("wb") as stream:
+                    np.save(stream, array, allow_pickle=False)
+                os.replace(temporary, destination)
+                temporary_paths.remove(temporary)
+            data_hash = sha256_file(target)
+            mask_hash = sha256_file(mask_target)
+            metadata = {
+                "schema_version": "1",
+                "m1_module_version": M1_MODULE_VERSION,
+                "terrain_recipe_id": recipe.terrain_recipe_id,
+                "recipe_hash": recipe.recipe_hash,
+                "region_id": region.region_id,
+                "region": region.normalized(),
+                "shape": list(region.shape),
+                "dtype": "float32",
+                "coordinate_storage": "origin_spacing_shape_only_no_meshgrid",
+                "generation_backend": "material_api_cpu",
+                "production_sampling": recipe.production_sampling,
+                "material": terrain.material,
+                "subtype": terrain.subtype,
+                "seed": terrain.seed,
+                "valid_mask_file": mask_target.name,
+                "valid_mask_sha256": mask_hash,
+                "valid_fraction": float(np.mean(terrain.valid_mask)),
+                "material_metadata": dict(terrain.metadata),
+                "created_at_utc": utc_now(),
+                "generation_time_s": time.perf_counter() - started,
+                "data_sha256": data_hash,
+                "file_size_bytes": target.stat().st_size,
+            }
+            atomic_write_json(metadata_path, metadata)
+            atomic_write_json(
+                self.region_manifest_path(recipe.terrain_recipe_id, region.region_id),
+                metadata,
+            )
+            atomic_write_bytes(complete_path, (data_hash + "\n").encode("ascii"))
+            return metadata
+        finally:
+            for temporary in temporary_paths:
+                if temporary.exists():
+                    temporary.unlink()
 
     def open_region(
         self,

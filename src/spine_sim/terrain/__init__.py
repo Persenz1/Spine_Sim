@@ -1,6 +1,14 @@
 """M1 terrain recipes, local caches and finite-tip track geometry."""
 
 from .analytic import evaluate_analytic
+from .api import (
+    Terrain,
+    generate_terrain,
+    load_terrain,
+    register_terrain,
+    save_terrain,
+)
+from .descriptors import compute_descriptors
 from .envelope import (
     RodClearanceResult,
     SphereEnvelope2D,
@@ -18,6 +26,7 @@ from .formal import generate_formal_terrain_batch
 from .library import TerrainLibrary
 from .models import (
     M1_MODULE_VERSION,
+    MATERIAL_TERRAIN_VERSION,
     CampaignDesignSpace,
     CampaignRegionReport,
     RegionSpec,
@@ -25,6 +34,7 @@ from .models import (
     TrackGeometry,
     compute_campaign_region,
 )
+from .profiles import available_profiles, load_material_profile
 from .plotting import (
     GrooveSelection,
     SpherePlacement,
@@ -36,9 +46,15 @@ from .plotting import (
 )
 from .random_field import generate_defined_geometry
 from .suite import generate_terrain_suite
+from .validation import (
+    compare_topographies,
+    render_comparison,
+    summarize_seed_ensemble,
+)
 
 __all__ = [
     "M1_MODULE_VERSION",
+    "MATERIAL_TERRAIN_VERSION",
     "CampaignDesignSpace",
     "CampaignRegionReport",
     "FileHeightMapSource",
@@ -48,22 +64,33 @@ __all__ = [
     "SphereEnvelope2D",
     "SpherePlacement",
     "TerrainLibrary",
+    "Terrain",
     "TerrainPatch",
     "TerrainRecipe",
     "TrackGeometry",
     "check_rod_clearance",
     "compute_campaign_region",
+    "compute_descriptors",
     "compute_sphere_envelope_2d",
     "compute_track_geometry",
     "evaluate_analytic",
     "extract_centered_patch",
     "forward_cap_gate",
     "generate_defined_geometry",
+    "generate_terrain",
     "generate_formal_terrain_batch",
     "generate_terrain_suite",
     "place_sphere_on_patch",
+    "available_profiles",
+    "compare_topographies",
+    "load_material_profile",
+    "load_terrain",
+    "register_terrain",
     "register_heightmap_source",
     "sample_file_heightmap",
     "render_terrain_views",
+    "render_comparison",
+    "save_terrain",
     "select_groove_center",
+    "summarize_seed_ensemble",
 ]

@@ -9,3 +9,7 @@ dist/
 examples/
 output/
 results/
+/reports/
+/data/raw/
+/data/derived/
+*.part

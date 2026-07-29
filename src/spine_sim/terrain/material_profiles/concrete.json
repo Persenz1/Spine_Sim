@@ -1,0 +1,109 @@
+{
+  "schema_version": "material-profile-v1",
+  "material": "concrete",
+  "default_subtype": "rough_wall",
+  "defaults": {
+    "status": "provisional",
+    "parameter_basis": "material_specific_engineering_prior_pending_rough_wall_scans",
+    "source_data": [],
+    "limitations": [
+      "No ordinary rough-wall concrete scan with sufficient public metadata was available.",
+      "Polished concrete and cement-paste microscopy were not relabelled as ordinary concrete."
+    ],
+    "generation": {
+      "mortar": {
+        "rms_height_m": 1.2e-4,
+        "correlation_x_m": 7.5e-4,
+        "correlation_y_m": 6.5e-4,
+        "secondary_scale_fraction": 0.38,
+        "non_gaussian_exponent": 0.82,
+        "skew_bias": 0.12
+      },
+      "aggregate": {
+        "density_per_m2": 120000.0,
+        "diameter_median_m": 1.25e-3,
+        "diameter_log_sigma": 0.46,
+        "aspect_ratio_median": 1.65,
+        "aspect_ratio_log_sigma": 0.34,
+        "height_median_m": 3.8e-4,
+        "height_log_sigma": 0.5,
+        "exposed_probability": 0.62,
+        "boundary_roughness": 0.2,
+        "edge_power": 1.35
+      },
+      "voids": {
+        "density_per_m2": 1800000.0,
+        "diameter_median_m": 3.2e-4,
+        "diameter_log_sigma": 0.5,
+        "aspect_ratio_median": 1.35,
+        "aspect_ratio_log_sigma": 0.25,
+        "depth_median_m": 2.4e-4,
+        "depth_log_sigma": 0.55,
+        "boundary_roughness": 0.16,
+        "edge_power": 1.05
+      },
+      "finish": {
+        "enabled": false,
+        "rms_height_m": 0.0,
+        "correlation_x_m": 2.0e-3,
+        "correlation_y_m": 1.5e-4
+      },
+      "fine_roughness": {
+        "rms_height_m": 3.8e-5,
+        "correlation_x_m": 8.0e-5,
+        "correlation_y_m": 7.0e-5,
+        "non_gaussian_exponent": 0.78
+      }
+    }
+  },
+  "subtypes": {
+    "rough_wall": {
+      "target_surface": "ordinary rough concrete wall with mortar, local aggregate, and air voids"
+    },
+    "cast": {
+      "parameter_basis": "rough_wall_engineering_prior_with_cast_finish_adjustment",
+      "generation": {
+        "mortar": {"rms_height_m": 7.5e-5},
+        "aggregate": {"density_per_m2": 70000.0, "height_median_m": 2.2e-4},
+        "voids": {"density_per_m2": 1400000.0},
+        "finish": {"enabled": true, "rms_height_m": 2.0e-5}
+      }
+    },
+    "troweled": {
+      "parameter_basis": "rough_wall_engineering_prior_with_trowel_anisotropy",
+      "generation": {
+        "mortar": {"rms_height_m": 6.0e-5},
+        "aggregate": {"density_per_m2": 50000.0, "height_median_m": 1.6e-4},
+        "finish": {
+          "enabled": true,
+          "rms_height_m": 3.5e-5,
+          "correlation_x_m": 3.5e-3,
+          "correlation_y_m": 1.8e-4
+        }
+      }
+    },
+    "brushed": {
+      "parameter_basis": "rough_wall_engineering_prior_with_brushed_anisotropy",
+      "generation": {
+        "finish": {
+          "enabled": true,
+          "rms_height_m": 7.5e-5,
+          "correlation_x_m": 4.0e-3,
+          "correlation_y_m": 1.2e-4
+        }
+      }
+    },
+    "exposed_aggregate": {
+      "parameter_basis": "rough_wall_engineering_prior_with_exposed_aggregate_adjustment",
+      "generation": {
+        "mortar": {"rms_height_m": 1.6e-4},
+        "aggregate": {
+          "density_per_m2": 180000.0,
+          "height_median_m": 6.0e-4,
+          "exposed_probability": 0.78
+        },
+        "voids": {"density_per_m2": 1250000.0, "diameter_median_m": 4.5e-4}
+      }
+    }
+  }
+}

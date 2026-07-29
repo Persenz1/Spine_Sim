@@ -23,3 +23,6 @@ spine-m3 = "spine_sim.array.cli:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.setuptools.package-data]
+"spine_sim.terrain" = ["material_profiles/*.json"]

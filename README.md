@@ -62,6 +62,51 @@ spine-terrain generate-suite results/m1_gpu_suite/terrain_library examples/m1_gp
 spine-terrain plot-region results/m1_gpu_suite/terrain_library <recipe_id> <region_id> output --overview-size-mm 10 --sphere-radius-um 100
 ```
 
+材料特定随机地形（SI 制、`float32 [y,x]`、固定 seed 可复现）：
+
+```python
+from spine_sim.terrain import generate_terrain
+
+terrain = generate_terrain(
+    material="sandpaper",       # sandpaper / red_brick / concrete
+    subtype="P100",
+    size_x_m=0.050,
+    size_y_m=0.050,
+    resolution_m=5e-6,
+    seed=12345,
+    mode="synthetic",
+)
+```
+
+砂纸支持 P40/P60/P100/P120/P180/P200/P240/P300；其中 P40、P100、P240
+可使用已核验的 Hirox 实测补丁合成，P200/P300 明确是 provisional 插值/外推，
+不会把其他 grit 改名。红砖和普通粗糙混凝土目前是材料特定的多尺度 provisional
+模型，未声称已有总体实测验证。
+
+```powershell
+# 查看材料和子类型
+spine-terrain list-materials
+
+# 生成便携 NPZ；可选 --library 同时注册到现有 mmap/M3 读取流程
+spine-terrain generate-material output/P100_seed12345.npz `
+  --material sandpaper --subtype P100 `
+  --size-x-mm 50 --size-y-mm 50 --resolution-um 5 `
+  --seed 12345 --mode synthetic `
+  --library terrain_library
+
+# 三个 seed 的高度、PSD、相关长度、坡度、峰/坑和伪影验证
+spine-terrain validate-material reports/terrain_validation/P100 `
+  --material sandpaper --subtype P100 `
+  --size-x-mm 3 --size-y-mm 0.6 --resolution-um 10 `
+  --seed 123 --seed 456 --seed 789
+```
+
+砂纸公共数据仍由 `scripts/terrain_data_probe.py` 下载并核验，原始文件位于 Git
+忽略的 `data/raw/`。新扫描通过 `scripts/calibrate_terrain_profile.py` 生成可审查
+的单样本标定 JSON；脚本不会覆盖原始文件，也不会自动把单样本升级成 validated。
+实现范围、数据来源、验证状态与限制见
+[`docs/terrain/03_material_generation_implementation.md`](docs/terrain/03_material_generation_implementation.md)。
+
 M2 验收：
 
 ```powershell

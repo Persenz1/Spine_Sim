@@ -20,6 +20,7 @@ from .errors import TerrainConfigurationError
 
 M1_MODULE_VERSION = "m1.0.0"
 DEFINED_GEOMETRY_VERSION = "defined-geometry-v1-canonical5um-stride2-nodal"
+MATERIAL_TERRAIN_VERSION = "material-terrain-v1"
 ENVELOPE_ALGORITHM_VERSION = "finite-sphere-envelope-v1"
 CANONICAL_SPACING_M = 5e-6
 PRODUCTION_SPACING_M = 10e-6
@@ -94,11 +95,15 @@ class TerrainRecipe:
     kernel_truncate_sigma: float = 3.0
     amplitude_scale: float = 1.0
     coordinate_convention: str = "global_xy_nodes_origin_aligned"
+    material: str | None = None
+    subtype: str | None = None
+    generation_mode: str | None = None
+    profile_hash: str | None = None
 
     def __post_init__(self) -> None:
-        if self.generator_name != "defined_geometry":
+        if self.generator_name not in {"defined_geometry", "material_hybrid"}:
             raise TerrainConfigurationError(
-                "TerrainRecipe currently supports generator_name='defined_geometry'"
+                "generator_name must be 'defined_geometry' or 'material_hybrid'"
             )
         if not self.generator_version:
             raise TerrainConfigurationError("generator_version cannot be empty")
@@ -118,8 +123,49 @@ class TerrainRecipe:
         _require_finite("target_rms_height_m", self.target_rms_height_m)
         if self.target_rms_height_m < 0:
             raise TerrainConfigurationError("target_rms_height_m must be non-negative")
-        if self.kernel_kind != "separable_gaussian":
-            raise TerrainConfigurationError("only separable_gaussian is supported")
+        if self.generator_name == "defined_geometry":
+            if self.kernel_kind != "separable_gaussian":
+                raise TerrainConfigurationError(
+                    "defined_geometry requires separable_gaussian"
+                )
+            if any(
+                value is not None
+                for value in (
+                    self.material,
+                    self.subtype,
+                    self.generation_mode,
+                    self.profile_hash,
+                )
+            ):
+                raise TerrainConfigurationError(
+                    "defined_geometry cannot carry material-profile fields"
+                )
+        else:
+            if self.generator_version != MATERIAL_TERRAIN_VERSION:
+                raise TerrainConfigurationError(
+                    f"material_hybrid requires {MATERIAL_TERRAIN_VERSION!r}"
+                )
+            if self.kernel_kind != "material_specific":
+                raise TerrainConfigurationError(
+                    "material_hybrid requires kernel_kind='material_specific'"
+                )
+            if not all(
+                isinstance(value, str) and value
+                for value in (
+                    self.material,
+                    self.subtype,
+                    self.generation_mode,
+                    self.profile_hash,
+                )
+            ):
+                raise TerrainConfigurationError(
+                    "material_hybrid requires material, subtype, generation_mode "
+                    "and profile_hash"
+                )
+            if self.generation_mode not in {"measured", "synthetic"}:
+                raise TerrainConfigurationError(
+                    "material_hybrid generation_mode must be measured or synthetic"
+                )
         if not math.isclose(
             self.production_dx_m, 2.0 * self.canonical_dx_m, rel_tol=0.0, abs_tol=1e-15
         ) or not math.isclose(
@@ -132,7 +178,12 @@ class TerrainRecipe:
             raise TerrainConfigurationError("unsupported coordinate convention")
 
     def normalized(self) -> dict[str, Any]:
-        return _normalize_float_fields(asdict(self))
+        normalized = asdict(self)
+        # Preserve all pre-material recipe identities exactly.
+        if self.generator_name == "defined_geometry":
+            for name in ("material", "subtype", "generation_mode", "profile_hash"):
+                normalized.pop(name)
+        return _normalize_float_fields(normalized)
 
     def to_m0_ref(self) -> TerrainRecipeRef:
         """Represent this full recipe through M0's frozen recipe-reference schema."""
@@ -141,7 +192,7 @@ class TerrainRecipe:
         parameters.pop("generator_name")
         parameters.pop("generator_version")
         parameters.pop("seed")
-        parameters["production_sampling"] = "canonical_even_indices_stride2_nodal"
+        parameters["production_sampling"] = self.production_sampling
         return TerrainRecipeRef(
             recipe_name=self.generator_name,
             recipe_version=self.generator_version,
@@ -159,18 +210,31 @@ class TerrainRecipe:
             {
                 "module_version": M1_MODULE_VERSION,
                 "recipe": self.normalized(),
-                "production_sampling": "canonical_even_indices_stride2_nodal",
+                "production_sampling": self.production_sampling,
             }
         )
 
     @property
     def kernel_definition(self) -> dict[str, Any]:
+        if self.generator_name == "material_hybrid":
+            return {
+                "kind": "material_specific",
+                "material": self.material,
+                "subtype": self.subtype,
+                "profile_hash": self.profile_hash,
+            }
         return {
             "kind": self.kernel_kind,
             "truncate_sigma": self.kernel_truncate_sigma,
             "normalization": "unit_sum_then_theoretical_l2_rms_calibration",
             "window_normalization": False,
         }
+
+    @property
+    def production_sampling(self) -> str:
+        if self.generator_name == "material_hybrid":
+            return "material_output_grid_stride2_from_identity_grid_nodal"
+        return "canonical_even_indices_stride2_nodal"
 
     def canonical_indices(
         self, x_m: float, y_m: float
