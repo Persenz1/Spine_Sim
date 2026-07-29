@@ -16,12 +16,21 @@ from spine_sim.array import (
     LegacyFixedZCommonBackplateExperiment,
     build_candidate_pool,
     build_base_hardware,
+    build_engineering_proxy_scenarios,
+    build_convergence_sentinels,
+    build_convergence_variants,
     build_full_array_design,
+    compare_trend_summaries,
+    estimate_backplate_dynamics,
     select_balanced_candidates,
     validate_paired_cases,
     validate_terrain_catalog,
 )
-from spine_sim.array.case import _arrays, run_case
+from spine_sim.array.case import (
+    _arrays,
+    _proxy_array_rod_clearance,
+    run_case,
+)
 from spine_sim.array.design import _loading_protocol
 from spine_sim.array.dynamic_validation import (
     _drop_profile,
@@ -298,8 +307,18 @@ class M3JointDynamicTests(unittest.TestCase):
             "cumulative_drive_work_j",
             "friction_dissipation_increment_j",
             "cumulative_friction_dissipation_j",
+            "implicit_euler_dissipation_increment_j",
+            "normal_contact_work_increment_j",
+            "tangential_contact_work_increment_j",
+            "generalized_contact_work_increment_j",
+            "contact_work_identity_residual_j",
+            "contact_energy_injection_increment_j",
             "dynamic_residual_n",
             "energy_residual_j",
+            "relative_energy_residual",
+            "cumulative_energy_residual_j",
+            "cumulative_energy_reference_j",
+            "cumulative_relative_energy_error",
             "actual_time_step_s",
         }
         self.assertTrue(required.issubset(arrays))
@@ -324,7 +343,15 @@ class M3JointDynamicTests(unittest.TestCase):
             self.plane.summary.maximum_abs_dynamic_residual_n, 1e-8
         )
         self.assertLess(
-            self.plane.summary.maximum_abs_energy_residual_j, 1e-5
+            self.plane.summary.maximum_abs_energy_residual_j, 1e-15
+        )
+        self.assertLess(
+            self.plane.summary.maximum_abs_contact_work_identity_residual_j,
+            1e-15,
+        )
+        self.assertLess(
+            self.plane.summary.cumulative_relative_energy_error,
+            1e-12,
         )
         self.assertEqual(
             self.plane.summary.model_state.value, "parameter_unclosed"
@@ -618,6 +645,65 @@ class M3JointDynamicTests(unittest.TestCase):
 
 
 class M3CaseAdapterTests(unittest.TestCase):
+    def test_two_dimensional_rod_clearance_on_flat_region(self):
+        parameters = replace(
+            _fixture_parameters(),
+            rod_clearance_mode="proxy_cylindrical_shank_postcheck",
+            yield_strength_pa=800e6,
+        )
+        with TemporaryDirectory() as directory:
+            recipe = TerrainRecipe(seed=19, target_rms_height_m=0.0)
+            region = RegionSpec(
+                terrain_recipe_id=recipe.terrain_recipe_id,
+                origin_x_m=-0.008,
+                origin_y_m=-0.005,
+                size_x_m=0.016,
+                size_y_m=0.010,
+                purpose="module",
+            )
+            library = TerrainLibrary(directory)
+            library.generate_region(recipe, region)
+            configuration = ArrayConfiguration(
+                2,
+                2,
+                4e-3,
+                parameters,
+            )
+            tracks = tuple(
+                library.cache_track(
+                    recipe,
+                    region,
+                    radius_m=parameters.tip_radius_m,
+                    y_global_m=offset[1],
+                )
+                for offset in configuration.holder_offsets_xyz_m
+            )
+            system = DynamicCommonBackplateArray(
+                configuration,
+                tracks,
+                unit_origin_xy_m=(0.0, 0.0),
+                contact=DynamicContactSettings(
+                    projection_iterations=20,
+                ),
+            )
+            result = DynamicCommonBackplateExperiment(
+                system,
+                _settings(drag_length_m=0.02e-3),
+                _integrator(1e-3),
+            ).run()
+            clearance = _proxy_array_rod_clearance(
+                library=library,
+                result=result,
+                axial_sample_count=12,
+                lateral_sample_count=7,
+            )
+            self.assertEqual(
+                clearance.shape,
+                (len(result.points), configuration.pin_count),
+            )
+            self.assertTrue(np.all(np.isfinite(clearance)))
+            self.assertGreater(float(np.min(clearance)), 0.0)
+
     def test_case_adapter_saves_explicit_dynamic_parameters_and_closes_ranking(self):
         parameters = _fixture_parameters()
         with TemporaryDirectory() as directory:
@@ -747,6 +833,55 @@ class M3ScreeningDesignTests(unittest.TestCase):
             second["loading_protocol_id"],
         )
         self.assertNotIn("output_level", first)
+
+    def test_engineering_proxy_is_explicit_and_geometry_scaled(self):
+        scenarios = build_engineering_proxy_scenarios()
+        self.assertEqual(len(scenarios), 17)
+        self.assertEqual(
+            len({scenario.scenario_id for scenario in scenarios}),
+            len(scenarios),
+        )
+        parameters = _fixture_parameters()
+        small = ArrayConfiguration(2, 2, 4e-3, parameters)
+        large = ArrayConfiguration(6, 6, 6e-3, parameters)
+        small_dynamics = estimate_backplate_dynamics(small)
+        large_dynamics = estimate_backplate_dynamics(large)
+        self.assertGreater(
+            large_dynamics["backplate_mass_kg"],
+            small_dynamics["backplate_mass_kg"],
+        )
+        self.assertGreater(
+            large_dynamics["nominal_vertical_stiffness_n_m"],
+            small_dynamics["nominal_vertical_stiffness_n_m"],
+        )
+        self.assertGreater(
+            large_dynamics["backplate_vertical_damping_n_s_m"],
+            0.0,
+        )
+
+    def test_bounded_convergence_plan_and_trend_gate(self):
+        self.assertEqual(len(build_convergence_sentinels()), 8)
+        self.assertEqual(len(build_convergence_variants()), 11)
+        reference = {
+            "run_terminal_state": "path_end",
+            "initial_preload_success": True,
+            "tangential_force_median_n": 1.0,
+            "tangential_force_p10_n": 0.8,
+            "neff_resultant_median": 4.0,
+            "maximum_pin_normal_force_n": 0.3,
+            "contact_fraction": 0.9,
+            "cumulative_relative_energy_error": 1e-8,
+            "maximum_abs_contact_work_identity_residual_j": 1e-16,
+        }
+        close = dict(reference)
+        close["tangential_force_median_n"] = 1.02
+        close["neff_resultant_median"] = 4.1
+        self.assertTrue(compare_trend_summaries(reference, close)["passed"])
+        failed = dict(reference)
+        failed["tangential_force_median_n"] = 1.2
+        self.assertFalse(
+            compare_trend_summaries(reference, failed)["passed"]
+        )
 
     def test_formal_catalog_requires_three_families_by_100(self):
         conditions = []

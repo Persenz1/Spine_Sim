@@ -1,6 +1,6 @@
 # M3 → M4 动力学交接
 
-**来源版本：** `m3.2.0`
+**来源版本：** `m3.3.0`
 **模型等级：**
 `project_model_P_common_rigid_backplate_z_dynamic_continuous_total_preload_v3`
 
@@ -36,6 +36,15 @@ contact_state
 event_label
 dynamic_residual_n
 energy_residual_j
+relative_energy_residual
+cumulative_energy_residual_j
+cumulative_energy_reference_j
+cumulative_relative_energy_error
+implicit_euler_dissipation_increment_j
+normal_contact_work_increment_j
+tangential_contact_work_increment_j
+contact_energy_injection_increment_j
+contact_work_identity_residual_j
 actual_time_step_s
 model_level
 ```
@@ -62,8 +71,9 @@ model_level
 
 ## 模型门禁
 
-当前解析夹具的背板质量/阻尼、针模态参数、冲量接触参数和内部时间步没有项目标定
-来源，项目地形杆体/锥段净空也未闭合。因此结果为
+当前已给出明确的 `engineering_proxy_v1` 经验基线和敏感性范围，但背板质量/阻尼、
+针模态参数、摩擦/冲量接触参数和内部时间步仍没有项目实验标定来源。圆柱杆二维
+净空已有路径后检查，杆体/锥段的动态接触仍未闭合。因此结果为
 `model_state=parameter_unclosed`、`formal_ranking_eligible=false`，只能用于实现
 验收，不能形成正式 M4 能力曲线。
 
@@ -73,7 +83,7 @@ model_level
 2. M3 动力学时间步减半、接触/沉降阻尼敏感性和项目参数冻结；
 3. 1344 种完整构型在 0.5/1/2 N、100 mm 协议下完成配对分析；
 4. 最终候选同 realization 的 10/5 μm 地形收敛；
-5. 项目地形净空边界和粗糙面大阵列能量残差闭合；
+5. 项目地形净空边界、粗糙面大阵列动力学残差和接触稳定化注能收敛；
 6. 相关 case 的 numerical/model/run-terminal 门禁全部通过。
 
 ## 禁止复用

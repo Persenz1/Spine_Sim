@@ -11,6 +11,11 @@ from spine_sim.core.config import CampaignSpec
 from spine_sim.core.identity import identity, stable_hash
 
 from .models import AngleLayout, ArrayConfiguration, M3_MODULE_VERSION
+from .proxy_parameters import (
+    BASELINE_PROXY,
+    EngineeringProxyScenario,
+    estimate_backplate_dynamics,
+)
 
 
 REPRESENTATIVE_SHAPES = (
@@ -54,22 +59,26 @@ def _proxy_spine(
         axial_mode=axial_mode,
         spring_stiffness_n_m=spring_stiffness_n_m,
         spring_travel_m=4e-3,
-        young_modulus_pa=200e9,
-        poisson_ratio=0.29,
+        young_modulus_pa=float(BASELINE_PROXY["young_modulus_pa"]),
+        poisson_ratio=float(BASELINE_PROXY["poisson_ratio"]),
         shear_correction=6.0 / 7.0,
-        static_friction=0.30,
-        kinetic_friction=0.20,
+        static_friction=float(BASELINE_PROXY["static_friction"]),
+        kinetic_friction=float(BASELINE_PROXY["kinetic_friction"]),
         beam_enabled=True,
         material_assumption=(
             "high_carbon_steel_proxy_E200GPa_rho7850_yield800MPa"
         ),
         rod_clearance_mode="proxy_cylindrical_shank_postcheck",
-        density_kg_m3=7850.0,
+        density_kg_m3=float(BASELINE_PROXY["density_kg_m3"]),
         axial_modal_mass_factor=1.0 / 3.0,
         transverse_modal_mass_factor=0.236,
-        axial_damping_ratio=0.05,
-        transverse_damping_ratio=0.05,
-        yield_strength_pa=800e6,
+        axial_damping_ratio=float(
+            BASELINE_PROXY["axial_damping_ratio"]
+        ),
+        transverse_damping_ratio=float(
+            BASELINE_PROXY["transverse_damping_ratio"]
+        ),
+        yield_strength_pa=float(BASELINE_PROXY["yield_strength_pa"]),
     )
 
 
@@ -552,6 +561,7 @@ def build_campaign_shard(
     if not conditions:
         raise ValueError("selected M3 terrain shard contains no conditions")
     designs = build_full_array_design(include_gradient_80_to_60=True)
+    proxy_scenario = EngineeringProxyScenario("baseline")
     protocol = _loading_protocol(
         preload_n,
         output_spacing_m=output_spacing_m,
@@ -574,6 +584,10 @@ def build_campaign_shard(
         configuration = ArrayConfiguration.from_mapping(
             design["configuration"]
         )
+        backplate = estimate_backplate_dynamics(
+            configuration,
+            proxy_scenario,
+        )
         track_requests = [
             {
                 "radius_m": parameters.tip_radius_m,
@@ -594,6 +608,10 @@ def build_campaign_shard(
             "region_id": condition["region_id"],
             "track_requests": track_requests,
             "configuration": design["configuration"],
+            "engineering_proxy": {
+                "scenario": proxy_scenario.as_dict(),
+                "backplate": backplate,
+            },
             "unit_origin_xy_m": [0.0, 0.0],
             "loading_protocol_id": protocol["loading_protocol_id"],
             "experiment": {
@@ -601,8 +619,10 @@ def build_campaign_shard(
                 "external_total_preload_n": preload_n,
                 "initial_common_ux_m": 0.0,
                 "drag_speed_m_s": 1e-3,
-                "backplate_mass_kg": 0.10,
-                "backplate_vertical_damping_n_s_m": 2.0,
+                "backplate_mass_kg": backplate["backplate_mass_kg"],
+                "backplate_vertical_damping_n_s_m": backplate[
+                    "backplate_vertical_damping_n_s_m"
+                ],
                 "backplate_rotational_dofs": "locked",
                 "backplate_inertia_kg_m2": None,
                 "maximum_preload_approach_m": 8e-3,
@@ -633,8 +653,10 @@ def build_campaign_shard(
             },
             "contact": {
                 "normal_model": "rigid_moreau",
-                "restitution_coefficient": 0.0,
-                "position_correction": 1.0,
+                "restitution_coefficient": proxy_scenario.restitution_coefficient,
+                "position_correction": (
+                    proxy_scenario.contact_position_correction
+                ),
                 "activation_tolerance_m": 2e-9,
                 "impact_velocity_threshold_m_s": 1e-5,
                 "maximum_contact_force_n": 250.0,

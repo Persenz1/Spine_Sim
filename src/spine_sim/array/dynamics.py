@@ -150,7 +150,7 @@ class ArrayDynamicExperimentSettings:
             )
         if self.backplate_rotational_dofs != "locked":
             raise ContactConfigurationError(
-                "m3.2.0 opens common backplate Z only; rotations must be locked"
+                "m3.3.0 opens common backplate Z only; rotations must be locked"
             )
         if self.backplate_inertia_kg_m2 is not None:
             raise ContactConfigurationError(
@@ -1386,6 +1386,9 @@ class DynamicCommonBackplateArray:
         event_labels: list[tuple[int, str]] = []
         friction_dissipation = 0.0
         drive_work = 0.0
+        normal_contact_work = 0.0
+        tangential_contact_work = 0.0
+        contact_energy_injection = 0.0
         active_indices: list[int] = []
         geometric_indices: list[int] = []
         admissible_indices: list[int] = []
@@ -1476,8 +1479,15 @@ class DynamicCommonBackplateArray:
                 tangent_value = geometry.tangent_xz
                 normal_value = geometry.normal_xz
                 tangential_speed = float(center_velocity_xz @ tangent)
-                friction_dissipation += max(
-                    0.0, -tangential_force * tangential_speed * dt
+                normal_speed = float(center_velocity_xz @ normal)
+                pin_normal_work = normal_impulse * normal_speed
+                pin_tangential_work = tangent_impulse * tangential_speed
+                normal_contact_work += pin_normal_work
+                tangential_contact_work += pin_tangential_work
+                friction_dissipation += max(0.0, -pin_tangential_work)
+                contact_energy_injection += max(
+                    0.0,
+                    pin_normal_work + pin_tangential_work,
                 )
                 drive_work += -float(wall_force[0]) * drag_speed_m_s * dt
             else:
@@ -1655,23 +1665,60 @@ class DynamicCommonBackplateArray:
         kinetic_energy0 = 0.5 * float(np.sum(mass * v0**2))
         structural_energy = float(np.sum(structural_energy_by_pin))
         structural_energy0 = float(np.sum(structural_energy0_by_pin))
+        kinetic_energy_change = kinetic_energy - kinetic_energy0
+        structural_energy_change = (
+            structural_energy - structural_energy0
+        )
+        displacement_increment = q - q0
         preload_work = (
-            -applied_external_total_preload_n * (q[0] - q0[0])
+            -applied_external_total_preload_n * displacement_increment[0]
         )
         structural_damping_dissipation = float(
             np.sum(damping[1:] * v[1:] ** 2) * dt
         )
         backplate_damping_dissipation = float(damping[0] * v[0] ** 2 * dt)
+        kinetic_backward_euler_dissipation = 0.5 * float(
+            np.sum(mass * (v - v0) ** 2)
+        )
+        potential_backward_euler_dissipation = float(
+            restoring @ displacement_increment
+            - structural_energy_change
+        )
+        implicit_euler_dissipation = (
+            kinetic_backward_euler_dissipation
+            + potential_backward_euler_dissipation
+        )
+        generalized_contact_work = float(
+            generalized_contact @ displacement_increment
+        )
+        contact_work_identity_residual = float(
+            generalized_contact_work
+            - (
+                drive_work
+                + normal_contact_work
+                + tangential_contact_work
+            )
+        )
         energy_residual = (
-            kinetic_energy
-            + structural_energy
-            - kinetic_energy0
-            - structural_energy0
-            - preload_work
-            - drive_work
-            + friction_dissipation
+            kinetic_energy_change
+            + structural_energy_change
+            + implicit_euler_dissipation
             + structural_damping_dissipation
             + backplate_damping_dissipation
+            - preload_work
+            - generalized_contact_work
+        )
+        energy_reference = (
+            abs(kinetic_energy_change)
+            + abs(structural_energy_change)
+            + abs(implicit_euler_dissipation)
+            + structural_damping_dissipation
+            + backplate_damping_dissipation
+            + abs(preload_work)
+            + abs(generalized_contact_work)
+        )
+        relative_energy_residual = (
+            abs(energy_residual) / max(energy_reference, 1e-15)
         )
         total_contact_reaction_z = float(
             sum(pin.wall_on_spine_force_xz_n[1] for pin in pin_responses)
@@ -1720,7 +1767,44 @@ class DynamicCommonBackplateArray:
                 state.cumulative_backplate_damping_dissipation_j
                 + backplate_damping_dissipation
             ),
+            cumulative_implicit_euler_dissipation_j=(
+                state.cumulative_implicit_euler_dissipation_j
+                + implicit_euler_dissipation
+            ),
+            cumulative_normal_contact_work_j=(
+                state.cumulative_normal_contact_work_j
+                + normal_contact_work
+            ),
+            cumulative_tangential_contact_work_j=(
+                state.cumulative_tangential_contact_work_j
+                + tangential_contact_work
+            ),
+            cumulative_contact_energy_injection_j=(
+                state.cumulative_contact_energy_injection_j
+                + contact_energy_injection
+            ),
+            cumulative_energy_residual_j=(
+                state.cumulative_energy_residual_j + energy_residual
+            ),
+            cumulative_energy_reference_j=(
+                state.cumulative_energy_reference_j + energy_reference
+            ),
+            maximum_abs_energy_residual_j=max(
+                state.maximum_abs_energy_residual_j,
+                abs(energy_residual),
+            ),
+            maximum_relative_energy_residual=max(
+                state.maximum_relative_energy_residual,
+                relative_energy_residual,
+            ),
+            maximum_abs_contact_work_identity_residual_j=max(
+                state.maximum_abs_contact_work_identity_residual_j,
+                abs(contact_work_identity_residual),
+            ),
         )
+        cumulative_relative_energy_error = abs(
+            new_state.cumulative_energy_residual_j
+        ) / max(new_state.cumulative_energy_reference_j, 1e-15)
         point = ArrayDynamicPathPoint(
             time_s=new_state.time_s,
             path_position_m=0.0,
@@ -1779,8 +1863,55 @@ class DynamicCommonBackplateArray:
                 state.cumulative_backplate_damping_dissipation_j
                 + backplate_damping_dissipation
             ),
+            implicit_euler_dissipation_increment_j=float(
+                implicit_euler_dissipation
+            ),
+            cumulative_implicit_euler_dissipation_j=float(
+                new_state.cumulative_implicit_euler_dissipation_j
+            ),
+            normal_contact_work_increment_j=float(normal_contact_work),
+            cumulative_normal_contact_work_j=float(
+                new_state.cumulative_normal_contact_work_j
+            ),
+            tangential_contact_work_increment_j=float(
+                tangential_contact_work
+            ),
+            cumulative_tangential_contact_work_j=float(
+                new_state.cumulative_tangential_contact_work_j
+            ),
+            generalized_contact_work_increment_j=float(
+                generalized_contact_work
+            ),
+            contact_work_identity_residual_j=float(
+                contact_work_identity_residual
+            ),
+            contact_energy_injection_increment_j=float(
+                contact_energy_injection
+            ),
+            cumulative_contact_energy_injection_j=float(
+                new_state.cumulative_contact_energy_injection_j
+            ),
             dynamic_residual_n=float(dynamic_residual),
             energy_residual_j=float(energy_residual),
+            relative_energy_residual=float(relative_energy_residual),
+            cumulative_energy_residual_j=float(
+                new_state.cumulative_energy_residual_j
+            ),
+            cumulative_energy_reference_j=float(
+                new_state.cumulative_energy_reference_j
+            ),
+            cumulative_relative_energy_error=float(
+                cumulative_relative_energy_error
+            ),
+            running_maximum_abs_energy_residual_j=float(
+                new_state.maximum_abs_energy_residual_j
+            ),
+            running_maximum_relative_energy_residual=float(
+                new_state.maximum_relative_energy_residual
+            ),
+            running_maximum_abs_contact_work_identity_residual_j=float(
+                new_state.maximum_abs_contact_work_identity_residual_j
+            ),
             force_aggregation_residual_n=force_residual,
             moment_aggregation_residual_nm=moment_residual,
             actual_time_step_s=float(dt),
@@ -2047,6 +2178,15 @@ class DynamicCommonBackplateExperiment:
             cumulative_friction_dissipation_j=0.0,
             cumulative_structural_damping_dissipation_j=0.0,
             cumulative_backplate_damping_dissipation_j=0.0,
+            cumulative_implicit_euler_dissipation_j=0.0,
+            cumulative_normal_contact_work_j=0.0,
+            cumulative_tangential_contact_work_j=0.0,
+            cumulative_contact_energy_injection_j=0.0,
+            cumulative_energy_residual_j=0.0,
+            cumulative_energy_reference_j=0.0,
+            maximum_abs_energy_residual_j=0.0,
+            maximum_relative_energy_residual=0.0,
+            maximum_abs_contact_work_identity_residual_j=0.0,
         )
         initial_pin_responses: list[PinDynamicResponse] = []
         initial_events: list[tuple[int, str]] = []
@@ -2090,8 +2230,25 @@ class DynamicCommonBackplateExperiment:
             cumulative_structural_damping_dissipation_j=0.0,
             backplate_damping_dissipation_increment_j=0.0,
             cumulative_backplate_damping_dissipation_j=0.0,
+            implicit_euler_dissipation_increment_j=0.0,
+            cumulative_implicit_euler_dissipation_j=0.0,
+            normal_contact_work_increment_j=0.0,
+            cumulative_normal_contact_work_j=0.0,
+            tangential_contact_work_increment_j=0.0,
+            cumulative_tangential_contact_work_j=0.0,
+            generalized_contact_work_increment_j=0.0,
+            contact_work_identity_residual_j=0.0,
+            contact_energy_injection_increment_j=0.0,
+            cumulative_contact_energy_injection_j=0.0,
             dynamic_residual_n=abs(settled_point.dynamic_residual_n),
             energy_residual_j=0.0,
+            relative_energy_residual=0.0,
+            cumulative_energy_residual_j=0.0,
+            cumulative_energy_reference_j=0.0,
+            cumulative_relative_energy_error=0.0,
+            running_maximum_abs_energy_residual_j=0.0,
+            running_maximum_relative_energy_residual=0.0,
+            running_maximum_abs_contact_work_identity_residual_j=0.0,
             actual_time_step_s=self.integrator.time_step_s,
             event_labels=tuple(initial_events),
         )
@@ -2297,6 +2454,15 @@ class DynamicCommonBackplateExperiment:
             event_counts={label.value: 0 for label in EventLabel},
             maximum_abs_dynamic_residual_n=None,
             maximum_abs_energy_residual_j=None,
+            maximum_relative_energy_residual=None,
+            cumulative_energy_residual_j=None,
+            cumulative_energy_reference_j=None,
+            cumulative_relative_energy_error=None,
+            cumulative_implicit_euler_dissipation_j=None,
+            cumulative_normal_contact_work_j=None,
+            cumulative_tangential_contact_work_j=None,
+            cumulative_contact_energy_injection_j=None,
+            maximum_abs_contact_work_identity_residual_j=None,
             maximum_force_aggregation_residual_n=None,
             maximum_moment_aggregation_residual_nm=None,
             minimum_actual_time_step_s=None,
@@ -2617,7 +2783,36 @@ class DynamicCommonBackplateExperiment:
                 max(abs(point.dynamic_residual_n) for point in points)
             ),
             maximum_abs_energy_residual_j=float(
-                max(abs(point.energy_residual_j) for point in points)
+                points[-1].running_maximum_abs_energy_residual_j
+            ),
+            maximum_relative_energy_residual=float(
+                points[-1].running_maximum_relative_energy_residual
+            ),
+            cumulative_energy_residual_j=float(
+                points[-1].cumulative_energy_residual_j
+            ),
+            cumulative_energy_reference_j=float(
+                points[-1].cumulative_energy_reference_j
+            ),
+            cumulative_relative_energy_error=float(
+                points[-1].cumulative_relative_energy_error
+            ),
+            cumulative_implicit_euler_dissipation_j=float(
+                points[-1].cumulative_implicit_euler_dissipation_j
+            ),
+            cumulative_normal_contact_work_j=float(
+                points[-1].cumulative_normal_contact_work_j
+            ),
+            cumulative_tangential_contact_work_j=float(
+                points[-1].cumulative_tangential_contact_work_j
+            ),
+            cumulative_contact_energy_injection_j=float(
+                points[-1].cumulative_contact_energy_injection_j
+            ),
+            maximum_abs_contact_work_identity_residual_j=float(
+                points[
+                    -1
+                ].running_maximum_abs_contact_work_identity_residual_j
             ),
             maximum_force_aggregation_residual_n=float(
                 max(point.force_aggregation_residual_n for point in points)

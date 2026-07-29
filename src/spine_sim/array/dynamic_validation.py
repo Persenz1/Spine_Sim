@@ -1,4 +1,4 @@
-"""Analytic acceptance gates for m3.2.0 joint common-backplate dynamics."""
+"""Analytic acceptance gates for m3.3.0 joint common-backplate dynamics."""
 
 from __future__ import annotations
 
@@ -524,7 +524,10 @@ def run_dynamic_analytic_validation(
         _gate(
             "dynamic_and_energy_residuals",
             plane.summary.maximum_abs_dynamic_residual_n < 1e-8
-            and plane.summary.maximum_abs_energy_residual_j < 1e-5,
+            and plane.summary.maximum_abs_energy_residual_j < 1e-15
+            and plane.summary.cumulative_relative_energy_error < 1e-12
+            and plane.summary.maximum_abs_contact_work_identity_residual_j
+            < 1e-15,
             {
                 "maximum_abs_dynamic_residual_n": (
                     plane.summary.maximum_abs_dynamic_residual_n
@@ -532,8 +535,17 @@ def run_dynamic_analytic_validation(
                 "maximum_abs_energy_residual_j": (
                     plane.summary.maximum_abs_energy_residual_j
                 ),
+                "cumulative_relative_energy_error": (
+                    plane.summary.cumulative_relative_energy_error
+                ),
+                "maximum_abs_contact_work_identity_residual_j": (
+                    plane.summary.maximum_abs_contact_work_identity_residual_j
+                ),
             },
-            requirement="joint equation and discrete energy residuals are audited",
+            requirement=(
+                "joint equation, backward-Euler algorithmic dissipation and "
+                "prescribed-drive/contact work identities are audited"
+            ),
         )
     )
 
@@ -745,7 +757,7 @@ def run_dynamic_analytic_validation(
             "the required 3-family x 100-seed paired M1 catalog is absent",
             "100 mm path time-step/contact/settlement-damping convergence is open",
             "5 um final terrain-resolution convergence is open",
-            "rough-terrain 6x6 energy-residual convergence is open",
+            "rough-terrain 6x6 contact-stabilization convergence is open",
         ],
         "gates": gates,
     }
@@ -861,6 +873,21 @@ def run_existing_m1_terrain_smoke(
                 "maximum_abs_energy_residual_j": (
                     result.summary.maximum_abs_energy_residual_j
                 ),
+                "maximum_relative_energy_residual": (
+                    result.summary.maximum_relative_energy_residual
+                ),
+                "cumulative_relative_energy_error": (
+                    result.summary.cumulative_relative_energy_error
+                ),
+                "cumulative_implicit_euler_dissipation_j": (
+                    result.summary.cumulative_implicit_euler_dissipation_j
+                ),
+                "cumulative_contact_energy_injection_j": (
+                    result.summary.cumulative_contact_energy_injection_j
+                ),
+                "maximum_abs_contact_work_identity_residual_j": (
+                    result.summary.maximum_abs_contact_work_identity_residual_j
+                ),
                 "formal_ranking_eligible": False,
             }
         )
@@ -892,7 +919,7 @@ def run_existing_m1_terrain_smoke(
             "current catalog is the existing defined_geometry inventory",
             "short smoke path is not the required 100 mm trend experiment",
             "this is not the planned 3-family x 100-seed paired catalog",
-            "large-array rough-terrain energy residual convergence is open",
+            "large-array contact-stabilization injection convergence is open",
         ],
     }
     if output_path is not None:

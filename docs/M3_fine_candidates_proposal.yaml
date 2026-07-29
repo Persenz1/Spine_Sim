@@ -1,5 +1,5 @@
 schema_version: "2"
-m3_module_version: "m3.2.0"
+m3_module_version: "m3.3.0"
 status: "not_generated_formal_campaign_not_run"
 formal_round1_completed: false
 selected_candidate_count: 0
@@ -17,6 +17,8 @@ reason: >-
   one-seed 0.1 mm smoke is interface evidence only and cannot select hardware.
 required_next_action: >-
   Produce and verify the formal M1 terrain catalog, close the declared
-  calibration and convergence gates, execute bounded paired M3 shards, report
-  initialization coverage separately from conditional pull-force performance,
-  and only then propose candidates for same-realization 5 um refinement.
+  proxy-sensitivity and convergence gates, execute bounded paired M3 shards,
+  report initialization coverage separately from conditional pull-force
+  performance, and only then propose candidates for same-realization 5 um
+  refinement. Without experimental calibration, label conclusions as proxy
+  trends rather than absolute-force predictions.

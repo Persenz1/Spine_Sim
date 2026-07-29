@@ -22,6 +22,7 @@ from spine_sim.array.design import (
     validate_terrain_catalog,
 )
 from spine_sim.array.models import M3_MODULE_VERSION
+from spine_sim.array.proxy_parameters import engineering_proxy_manifest
 from spine_sim.core.config import CampaignSpec
 from spine_sim.core.identity import stable_hash
 from spine_sim.io.results import atomic_write_json, utc_now
@@ -107,6 +108,7 @@ def _manifest(catalog: dict | None) -> dict:
             "case identity includes full hardware/array configuration, M1 "
             "terrain condition/data hash, and the 0.5/1/2 N 100 mm protocol"
         ),
+        "engineering_proxy_policy": engineering_proxy_manifest(),
         "default_output_policy": {
             "summary": "all cases",
             "aggregate_trace": (

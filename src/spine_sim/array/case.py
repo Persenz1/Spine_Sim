@@ -266,8 +266,61 @@ def _full_path_arrays(result) -> dict[str, np.ndarray]:
         "cumulative_backplate_damping_dissipation_j": numeric(
             lambda point: point.cumulative_backplate_damping_dissipation_j
         ),
+        "implicit_euler_dissipation_increment_j": numeric(
+            lambda point: point.implicit_euler_dissipation_increment_j
+        ),
+        "cumulative_implicit_euler_dissipation_j": numeric(
+            lambda point: point.cumulative_implicit_euler_dissipation_j
+        ),
+        "normal_contact_work_increment_j": numeric(
+            lambda point: point.normal_contact_work_increment_j
+        ),
+        "cumulative_normal_contact_work_j": numeric(
+            lambda point: point.cumulative_normal_contact_work_j
+        ),
+        "tangential_contact_work_increment_j": numeric(
+            lambda point: point.tangential_contact_work_increment_j
+        ),
+        "cumulative_tangential_contact_work_j": numeric(
+            lambda point: point.cumulative_tangential_contact_work_j
+        ),
+        "generalized_contact_work_increment_j": numeric(
+            lambda point: point.generalized_contact_work_increment_j
+        ),
+        "contact_work_identity_residual_j": numeric(
+            lambda point: point.contact_work_identity_residual_j
+        ),
+        "contact_energy_injection_increment_j": numeric(
+            lambda point: point.contact_energy_injection_increment_j
+        ),
+        "cumulative_contact_energy_injection_j": numeric(
+            lambda point: point.cumulative_contact_energy_injection_j
+        ),
         "dynamic_residual_n": numeric(lambda point: point.dynamic_residual_n),
         "energy_residual_j": numeric(lambda point: point.energy_residual_j),
+        "relative_energy_residual": numeric(
+            lambda point: point.relative_energy_residual
+        ),
+        "cumulative_energy_residual_j": numeric(
+            lambda point: point.cumulative_energy_residual_j
+        ),
+        "cumulative_energy_reference_j": numeric(
+            lambda point: point.cumulative_energy_reference_j
+        ),
+        "cumulative_relative_energy_error": numeric(
+            lambda point: point.cumulative_relative_energy_error
+        ),
+        "running_maximum_abs_energy_residual_j": numeric(
+            lambda point: point.running_maximum_abs_energy_residual_j
+        ),
+        "running_maximum_relative_energy_residual": numeric(
+            lambda point: point.running_maximum_relative_energy_residual
+        ),
+        "running_maximum_abs_contact_work_identity_residual_j": numeric(
+            lambda point: (
+                point.running_maximum_abs_contact_work_identity_residual_j
+            )
+        ),
         "actual_time_step_s": numeric(
             lambda point: point.actual_time_step_s
         ),
@@ -374,8 +427,25 @@ _AGGREGATE_TRACE_KEYS = {
     "cumulative_structural_damping_dissipation_j",
     "backplate_damping_dissipation_increment_j",
     "cumulative_backplate_damping_dissipation_j",
+    "implicit_euler_dissipation_increment_j",
+    "cumulative_implicit_euler_dissipation_j",
+    "normal_contact_work_increment_j",
+    "cumulative_normal_contact_work_j",
+    "tangential_contact_work_increment_j",
+    "cumulative_tangential_contact_work_j",
+    "generalized_contact_work_increment_j",
+    "contact_work_identity_residual_j",
+    "contact_energy_injection_increment_j",
+    "cumulative_contact_energy_injection_j",
     "dynamic_residual_n",
     "energy_residual_j",
+    "relative_energy_residual",
+    "cumulative_energy_residual_j",
+    "cumulative_energy_reference_j",
+    "cumulative_relative_energy_error",
+    "running_maximum_abs_energy_residual_j",
+    "running_maximum_relative_energy_residual",
+    "running_maximum_abs_contact_work_identity_residual_j",
     "actual_time_step_s",
     "nonlinear_iterations",
     "force_aggregation_residual_n",
@@ -443,12 +513,19 @@ def _proxy_array_rod_clearance(
     *,
     library: TerrainLibrary,
     result,
-    sample_count: int = 24,
+    axial_sample_count: int = 24,
+    lateral_sample_count: int = 9,
 ) -> np.ndarray:
-    """Post-check cylindrical shank clearance for every saved pin state."""
+    """2-D height-field check of each cylindrical shank's lower surface."""
 
-    if sample_count < 2:
-        raise ValueError("rod-clearance sample_count must be at least two")
+    if axial_sample_count < 2:
+        raise ValueError(
+            "rod-clearance axial_sample_count must be at least two"
+        )
+    if lateral_sample_count < 3 or lateral_sample_count % 2 == 0:
+        raise ValueError(
+            "rod-clearance lateral_sample_count must be odd and at least three"
+        )
     point_count = len(result.points)
     pin_count = result.configuration.pin_count
     if point_count == 0:
@@ -459,65 +536,106 @@ def _proxy_array_rod_clearance(
         result.region_id,
     )
     minimum = np.empty((point_count, pin_count), dtype=np.float64)
-    for pin_index, parameters in enumerate(
-        result.configuration.pin_parameters
-    ):
-        y_global_m = result.points[0].pin_responses[pin_index].holder_xyz_m[1]
-        y_float = (y_global_m - region.origin_y_m) / region.resolution_y_m
-        if y_float < 0.0 or y_float > height.shape[0] - 1:
-            raise ValueError(
-                f"pin {pin_index} rod-clearance y coordinate lies outside terrain"
+    try:
+        for pin_index, parameters in enumerate(
+            result.configuration.pin_parameters
+        ):
+            y_global_m = result.points[0].pin_responses[
+                pin_index
+            ].holder_xyz_m[1]
+            rod_radius = 0.5 * parameters.diameter_m
+            distances = np.linspace(
+                min(rod_radius, parameters.exposed_length_m),
+                parameters.exposed_length_m,
+                axial_sample_count,
+                dtype=np.float64,
             )
-        y0 = min(int(np.floor(y_float)), height.shape[0] - 2)
-        ty = y_float - y0
-        rod_radius = 0.5 * parameters.diameter_m
-        distances = np.linspace(
-            min(rod_radius, parameters.exposed_length_m),
-            parameters.exposed_length_m,
-            sample_count,
-            dtype=np.float64,
-        )
-        axis_x, axis_z = parameters.axis_xz
-        center_x = np.asarray(
-            [
-                point.pin_responses[pin_index].center_xyz_m[0]
-                for point in result.points
-            ],
-            dtype=np.float64,
-        )
-        center_z = np.asarray(
-            [
-                point.pin_responses[pin_index].center_xyz_m[2]
-                for point in result.points
-            ],
-            dtype=np.float64,
-        )
-        sample_x = center_x[:, None] - axis_x * distances[None, :]
-        sample_z = center_z[:, None] - axis_z * distances[None, :]
-        x_float = (sample_x - region.origin_x_m) / region.resolution_x_m
-        if np.any(x_float < 0.0) or np.any(x_float > height.shape[1] - 1):
-            raise ValueError(
-                f"pin {pin_index} rod-clearance x coordinate lies outside terrain"
+            lateral = np.linspace(
+                -rod_radius,
+                rod_radius,
+                lateral_sample_count,
+                dtype=np.float64,
             )
-        x0 = np.minimum(
-            np.floor(x_float).astype(np.int64),
-            height.shape[1] - 2,
-        )
-        tx = x_float - x0
-        h00 = np.asarray(height[y0, x0], dtype=np.float64)
-        h01 = np.asarray(height[y0, x0 + 1], dtype=np.float64)
-        h10 = np.asarray(height[y0 + 1, x0], dtype=np.float64)
-        h11 = np.asarray(height[y0 + 1, x0 + 1], dtype=np.float64)
-        terrain_z = (
-            (1.0 - ty) * ((1.0 - tx) * h00 + tx * h01)
-            + ty * ((1.0 - tx) * h10 + tx * h11)
-        )
-        minimum[:, pin_index] = np.min(
-            sample_z - rod_radius - terrain_z,
-            axis=1,
-        )
-    if getattr(height, "_mmap", None) is not None:
-        height._mmap.close()
+            lower_cross_section = np.sqrt(
+                np.maximum(rod_radius**2 - lateral**2, 0.0)
+            )
+            axis_x, axis_z = parameters.axis_xz
+            transverse_x, transverse_z = parameters.transverse_xz
+            center_x = np.asarray(
+                [
+                    point.pin_responses[pin_index].center_xyz_m[0]
+                    for point in result.points
+                ],
+                dtype=np.float64,
+            )
+            center_z = np.asarray(
+                [
+                    point.pin_responses[pin_index].center_xyz_m[2]
+                    for point in result.points
+                ],
+                dtype=np.float64,
+            )
+            axis_sample_x = (
+                center_x[:, None] - axis_x * distances[None, :]
+            )
+            axis_sample_z = (
+                center_z[:, None] - axis_z * distances[None, :]
+            )
+            sample_x = (
+                axis_sample_x[:, :, None]
+                - transverse_x
+                * lower_cross_section[None, None, :]
+            )
+            sample_y = np.broadcast_to(
+                y_global_m + lateral[None, None, :],
+                sample_x.shape,
+            )
+            sample_z = (
+                axis_sample_z[:, :, None]
+                - transverse_z
+                * lower_cross_section[None, None, :]
+            )
+            x_float = (
+                sample_x - region.origin_x_m
+            ) / region.resolution_x_m
+            y_float = (
+                sample_y - region.origin_y_m
+            ) / region.resolution_y_m
+            if (
+                np.any(x_float < 0.0)
+                or np.any(x_float > height.shape[1] - 1)
+                or np.any(y_float < 0.0)
+                or np.any(y_float > height.shape[0] - 1)
+            ):
+                raise ValueError(
+                    f"pin {pin_index} 2-D rod-clearance samples lie "
+                    "outside terrain"
+                )
+            x0 = np.minimum(
+                np.floor(x_float).astype(np.int64),
+                height.shape[1] - 2,
+            )
+            y0 = np.minimum(
+                np.floor(y_float).astype(np.int64),
+                height.shape[0] - 2,
+            )
+            tx = x_float - x0
+            ty = y_float - y0
+            h00 = np.asarray(height[y0, x0], dtype=np.float64)
+            h01 = np.asarray(height[y0, x0 + 1], dtype=np.float64)
+            h10 = np.asarray(height[y0 + 1, x0], dtype=np.float64)
+            h11 = np.asarray(height[y0 + 1, x0 + 1], dtype=np.float64)
+            terrain_z = (
+                (1.0 - ty) * ((1.0 - tx) * h00 + tx * h01)
+                + ty * ((1.0 - tx) * h10 + tx * h11)
+            )
+            minimum[:, pin_index] = np.min(
+                sample_z - terrain_z,
+                axis=(1, 2),
+            )
+    finally:
+        if getattr(height, "_mmap", None) is not None:
+            height._mmap.close()
     return minimum
 
 
@@ -676,6 +794,14 @@ def run_case(parameters: Mapping[str, Any], context: RunContext) -> CaseOutput:
     summary["loading_protocol_id"] = parameters.get(
         "loading_protocol_id"
     )
+    summary["engineering_proxy"] = parameters.get("engineering_proxy")
+    summary["engineering_proxy_scenario_id"] = (
+        parameters.get("engineering_proxy", {})
+        .get("scenario", {})
+        .get("scenario_id")
+        if isinstance(parameters.get("engineering_proxy"), Mapping)
+        else None
+    )
     summary["output_level"] = output_level
     summary["ranking_inclusion_allowed"] = bool(
         result.summary.initial_preload_success
@@ -725,9 +851,15 @@ def run_case(parameters: Mapping[str, Any], context: RunContext) -> CaseOutput:
             "rod_collision_detected": rod_collision,
             "minimum_rod_clearance_m": minimum_rod_clearance,
             "rod_clearance_assumption": (
-                "cylindrical_shank_begins_one_radius_behind_tip_center"
+                "2d_height_field_cylindrical_shank_lower_surface_postcheck"
                 if rod_clearance is not None
                 else None
+            ),
+            "rod_clearance_axial_sample_count": (
+                24 if rod_clearance is not None else None
+            ),
+            "rod_clearance_lateral_sample_count": (
+                9 if rod_clearance is not None else None
             ),
         }
     )

@@ -22,7 +22,7 @@ from spine_sim.core.identity import identity
 from spine_sim.core.states import ModelState, NumericalState
 
 
-M3_MODULE_VERSION = "m3.2.0"
+M3_MODULE_VERSION = "m3.3.0"
 M3_MODEL_LEVEL = (
     "project_model_P_common_rigid_backplate_z_dynamic_"
     "continuous_total_preload_v3"
@@ -316,6 +316,15 @@ class ArrayDynamicState:
     cumulative_friction_dissipation_j: float = 0.0
     cumulative_structural_damping_dissipation_j: float = 0.0
     cumulative_backplate_damping_dissipation_j: float = 0.0
+    cumulative_implicit_euler_dissipation_j: float = 0.0
+    cumulative_normal_contact_work_j: float = 0.0
+    cumulative_tangential_contact_work_j: float = 0.0
+    cumulative_contact_energy_injection_j: float = 0.0
+    cumulative_energy_residual_j: float = 0.0
+    cumulative_energy_reference_j: float = 0.0
+    maximum_abs_energy_residual_j: float = 0.0
+    maximum_relative_energy_residual: float = 0.0
+    maximum_abs_contact_work_identity_residual_j: float = 0.0
 
     @classmethod
     def initial(cls, pin_count: int, backplate_position_z_m: float) -> "ArrayDynamicState":
@@ -413,8 +422,25 @@ class ArrayDynamicPathPoint:
     cumulative_structural_damping_dissipation_j: float
     backplate_damping_dissipation_increment_j: float
     cumulative_backplate_damping_dissipation_j: float
+    implicit_euler_dissipation_increment_j: float
+    cumulative_implicit_euler_dissipation_j: float
+    normal_contact_work_increment_j: float
+    cumulative_normal_contact_work_j: float
+    tangential_contact_work_increment_j: float
+    cumulative_tangential_contact_work_j: float
+    generalized_contact_work_increment_j: float
+    contact_work_identity_residual_j: float
+    contact_energy_injection_increment_j: float
+    cumulative_contact_energy_injection_j: float
     dynamic_residual_n: float
     energy_residual_j: float
+    relative_energy_residual: float
+    cumulative_energy_residual_j: float
+    cumulative_energy_reference_j: float
+    cumulative_relative_energy_error: float
+    running_maximum_abs_energy_residual_j: float
+    running_maximum_relative_energy_residual: float
+    running_maximum_abs_contact_work_identity_residual_j: float
     force_aggregation_residual_n: float
     moment_aggregation_residual_nm: float
     actual_time_step_s: float
@@ -522,6 +548,15 @@ class ArrayDynamicPathSummary:
     event_counts: Mapping[str, int]
     maximum_abs_dynamic_residual_n: float | None
     maximum_abs_energy_residual_j: float | None
+    maximum_relative_energy_residual: float | None
+    cumulative_energy_residual_j: float | None
+    cumulative_energy_reference_j: float | None
+    cumulative_relative_energy_error: float | None
+    cumulative_implicit_euler_dissipation_j: float | None
+    cumulative_normal_contact_work_j: float | None
+    cumulative_tangential_contact_work_j: float | None
+    cumulative_contact_energy_injection_j: float | None
+    maximum_abs_contact_work_identity_residual_j: float | None
     maximum_force_aggregation_residual_n: float | None
     maximum_moment_aggregation_residual_nm: float | None
     minimum_actual_time_step_s: float | None

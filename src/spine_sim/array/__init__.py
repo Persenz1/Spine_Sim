@@ -1,5 +1,13 @@
 """M3 continuous-total-preload common-backplate dynamics APIs."""
 
+from .convergence import (
+    ConvergenceVariant,
+    TrendConvergenceThresholds,
+    build_convergence_sentinels,
+    build_convergence_variants,
+    compare_trend_summaries,
+    convergence_plan_manifest,
+)
 from .design import (
     DRAG_LENGTH_M,
     TERRAIN_FAMILIES,
@@ -46,6 +54,16 @@ from .models import (
     PinDynamicResponse,
     SettlementTracePoint,
 )
+from .proxy_parameters import (
+    BASELINE_PROXY,
+    PROXY_POLICY_VERSION,
+    SENSITIVITY_LEVELS,
+    EngineeringProxyScenario,
+    build_engineering_proxy_scenarios,
+    engineering_proxy_manifest,
+    estimate_backplate_dynamics,
+    nominal_vertical_stiffness_n_m,
+)
 from .solver import LegacyCommonBackplateArray
 
 __all__ = [
@@ -62,6 +80,7 @@ __all__ = [
     "ArrayDynamicPathSummary",
     "ArrayDynamicState",
     "ArrayDynamicStepProposal",
+    "ConvergenceVariant",
     "DynamicCommonBackplateArray",
     "DynamicCommonBackplateExperiment",
     "LegacyArrayExperimentResult",
@@ -76,16 +95,29 @@ __all__ = [
     "LoadSharingMetrics",
     "PinDynamicResponse",
     "SettlementTracePoint",
+    "TrendConvergenceThresholds",
+    "BASELINE_PROXY",
+    "PROXY_POLICY_VERSION",
+    "SENSITIVITY_LEVELS",
+    "EngineeringProxyScenario",
     "DRAG_LENGTH_M",
     "TERRAIN_FAMILIES",
     "TOTAL_PRELOADS_N",
     "build_base_hardware",
     "build_campaign_shard",
     "build_candidate_pool",
+    "build_convergence_sentinels",
+    "build_convergence_variants",
     "build_full_array_design",
+    "build_engineering_proxy_scenarios",
+    "engineering_proxy_manifest",
+    "estimate_backplate_dynamics",
+    "compare_trend_summaries",
+    "convergence_plan_manifest",
     "level_counts",
     "screening_gate_status",
     "select_balanced_candidates",
+    "nominal_vertical_stiffness_n_m",
     "validate_paired_cases",
     "validate_terrain_catalog",
 ]

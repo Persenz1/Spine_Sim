@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "spine-sim://schemas/m3-to-m4-dynamic-unit-sample-v3",
+  "$id": "spine-sim://schemas/m3-to-m4-dynamic-unit-sample-v4",
   "title": "M3 to M4 same-time dynamic unit sample",
   "type": "object",
   "additionalProperties": false,
@@ -28,6 +28,15 @@
     "event_label",
     "dynamic_residual_n",
     "energy_residual_j",
+    "relative_energy_residual",
+    "cumulative_energy_residual_j",
+    "cumulative_energy_reference_j",
+    "cumulative_relative_energy_error",
+    "implicit_euler_dissipation_increment_j",
+    "normal_contact_work_increment_j",
+    "tangential_contact_work_increment_j",
+    "contact_energy_injection_increment_j",
+    "contact_work_identity_residual_j",
     "actual_time_step_s",
     "sample_class",
     "model_level"
@@ -110,6 +119,18 @@
     },
     "dynamic_residual_n": {"type": "number"},
     "energy_residual_j": {"type": "number"},
+    "relative_energy_residual": {"type": "number", "minimum": 0},
+    "cumulative_energy_residual_j": {"type": "number"},
+    "cumulative_energy_reference_j": {"type": "number", "minimum": 0},
+    "cumulative_relative_energy_error": {"type": "number", "minimum": 0},
+    "implicit_euler_dissipation_increment_j": {"type": "number"},
+    "normal_contact_work_increment_j": {"type": "number"},
+    "tangential_contact_work_increment_j": {"type": "number"},
+    "contact_energy_injection_increment_j": {
+      "type": "number",
+      "minimum": 0
+    },
+    "contact_work_identity_residual_j": {"type": "number"},
     "actual_time_step_s": {"type": "number", "exclusiveMinimum": 0},
     "sample_class": {"enum": ["steady", "impact", "other_event", "transient"]},
     "model_level": {
