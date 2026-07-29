@@ -22,10 +22,10 @@ from spine_sim.core.identity import identity
 from spine_sim.core.states import ModelState, NumericalState
 
 
-M3_MODULE_VERSION = "m3.3.0"
+M3_MODULE_VERSION = "m3.4.0"
 M3_MODEL_LEVEL = (
     "project_model_P_common_rigid_backplate_z_dynamic_"
-    "continuous_total_preload_v3"
+    "continuous_total_preload_v4"
 )
 M3_LEGACY_MODULE_VERSION = "m3.0.0"
 M3_LEGACY_MODEL_LEVEL = "project_model_P_common_rigid_backplate_quasistatic_v1"

@@ -9,6 +9,7 @@ from typing import Sequence
 
 from .dynamic_validation import (
     run_dynamic_analytic_validation,
+    run_existing_m1_catalog_smoke,
     run_existing_m1_terrain_smoke,
 )
 from .validation import (
@@ -38,6 +39,11 @@ def build_parser() -> argparse.ArgumentParser:
     )
     existing.add_argument("--drag-length-mm", type=float, default=0.1)
     existing.add_argument("--seed", type=int)
+    existing.add_argument("--terrain-family")
+    existing.add_argument("--condition-name")
+    existing.add_argument("--all-conditions", action="store_true")
+    existing.add_argument("--verify-data-hash", action="store_true")
+    existing.add_argument("--placement-search", action="store_true")
     legacy = subcommands.add_parser("validate-legacy-fixed-z")
     legacy.add_argument(
         "--output",
@@ -66,12 +72,33 @@ def main(argv: Sequence[str] | None = None) -> int:
     if args.command == "validate-analytic":
         report = run_dynamic_analytic_validation(args.output)
     elif args.command == "smoke-existing-m1":
-        report = run_existing_m1_terrain_smoke(
-            args.catalog,
-            output_path=args.output,
-            drag_length_m=args.drag_length_mm * 1e-3,
-            seed=args.seed,
-        )
+        if args.all_conditions:
+            if (
+                args.seed is not None
+                or args.terrain_family is not None
+                or args.condition_name is not None
+            ):
+                raise ValueError(
+                    "--all-conditions cannot be combined with condition selectors"
+                )
+            report = run_existing_m1_catalog_smoke(
+                args.catalog,
+                output_path=args.output,
+                drag_length_m=args.drag_length_mm * 1e-3,
+                verify_data_hash=args.verify_data_hash,
+                placement_search=args.placement_search,
+            )
+        else:
+            report = run_existing_m1_terrain_smoke(
+                args.catalog,
+                output_path=args.output,
+                drag_length_m=args.drag_length_mm * 1e-3,
+                seed=args.seed,
+                terrain_family=args.terrain_family,
+                condition_name=args.condition_name,
+                verify_data_hash=args.verify_data_hash,
+                placement_search=args.placement_search,
+            )
     elif args.command == "validate-legacy-fixed-z":
         report = run_legacy_analytic_validation(args.output)
     else:

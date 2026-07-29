@@ -4,6 +4,7 @@ from .analytic import evaluate_analytic
 from .api import (
     Terrain,
     generate_terrain,
+    refine_material_terrain_same_realization,
     load_terrain,
     register_terrain,
     save_terrain,
@@ -78,6 +79,7 @@ __all__ = [
     "forward_cap_gate",
     "generate_defined_geometry",
     "generate_terrain",
+    "refine_material_terrain_same_realization",
     "generate_formal_terrain_batch",
     "generate_terrain_suite",
     "place_sphere_on_patch",

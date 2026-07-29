@@ -150,7 +150,7 @@ class ArrayDynamicExperimentSettings:
             )
         if self.backplate_rotational_dofs != "locked":
             raise ContactConfigurationError(
-                "m3.3.0 opens common backplate Z only; rotations must be locked"
+                "m3.4.0 opens common backplate Z only; rotations must be locked"
             )
         if self.backplate_inertia_kg_m2 is not None:
             raise ContactConfigurationError(
@@ -315,6 +315,19 @@ class DynamicCommonBackplateArray:
             mass[transverse] = unit.modes_mass[2]
         return mass
 
+    @staticmethod
+    def _axial_modal_damping_stiffness(
+        parameters: SpineParameters,
+    ) -> float:
+        """Use one modal damping reference across axial piecewise branches."""
+
+        compliance = parameters.axial_compliance_m_n
+        if parameters.axial_mode.value == "spring":
+            compliance += 1.0 / float(
+                parameters.spring_stiffness_n_m
+            )
+        return 1.0 / compliance
+
     def _structure(
         self,
         q: NDArray[np.float64],
@@ -355,7 +368,10 @@ class DynamicCommonBackplateArray:
             damping[axial] = (
                 2.0
                 * parameters.axial_damping_ratio
-                * math.sqrt(axial_tangent * mass[axial])
+                * math.sqrt(
+                    self._axial_modal_damping_stiffness(parameters)
+                    * mass[axial]
+                )
             )
             damping[transverse] = (
                 2.0
@@ -410,12 +426,18 @@ class DynamicCommonBackplateArray:
             mode_mass: float,
             stiffness: float,
             damping_ratio: float,
+            damping_stiffness: float | None = None,
             offset_force: float = 0.0,
         ) -> tuple[float, float]:
+            damping_reference = (
+                stiffness
+                if damping_stiffness is None
+                else damping_stiffness
+            )
             damping = (
                 2.0
                 * damping_ratio
-                * math.sqrt(stiffness * mode_mass)
+                * math.sqrt(damping_reference * mode_mass)
                 * damping_scale
             )
             solved_velocity = (
@@ -435,6 +457,9 @@ class DynamicCommonBackplateArray:
             axial, transverse = self._pin_dofs(index)
             compliance = parameters.axial_compliance_m_n
             beam_stiffness = 1.0 / compliance
+            damping_stiffness = self._axial_modal_damping_stiffness(
+                parameters
+            )
             candidates: list[tuple[float, float]] = []
 
             def add_candidate(
@@ -448,6 +473,7 @@ class DynamicCommonBackplateArray:
                     velocity=float(v0[axial]),
                     mode_mass=float(mass[axial]),
                     stiffness=stiffness,
+                    damping_stiffness=damping_stiffness,
                     damping_ratio=parameters.axial_damping_ratio,
                     offset_force=offset_force,
                 )
@@ -794,12 +820,18 @@ class DynamicCommonBackplateArray:
                 mode_mass: float,
                 stiffness: float,
                 damping_ratio: float,
+                damping_stiffness: float | None = None,
                 offset_force: float = 0.0,
             ) -> tuple[float, float]:
+                damping_reference = (
+                    stiffness
+                    if damping_stiffness is None
+                    else damping_stiffness
+                )
                 damping_value = (
                     2.0
                     * damping_ratio
-                    * math.sqrt(stiffness * mode_mass)
+                    * math.sqrt(damping_reference * mode_mass)
                     * damping_scale
                 )
                 solved = (
@@ -823,6 +855,9 @@ class DynamicCommonBackplateArray:
                 axial, transverse = self._pin_dofs(pin_index)
                 compliance = parameters.axial_compliance_m_n
                 beam_stiffness = 1.0 / compliance
+                damping_stiffness = (
+                    self._axial_modal_damping_stiffness(parameters)
+                )
                 candidates: list[tuple[float, float]] = []
 
                 def add_candidate(
@@ -836,6 +871,7 @@ class DynamicCommonBackplateArray:
                         velocity=float(v0[axial]),
                         mode_mass=float(mass[axial]),
                         stiffness=stiffness,
+                        damping_stiffness=damping_stiffness,
                         damping_ratio=parameters.axial_damping_ratio,
                         offset_force=offset_force,
                     )

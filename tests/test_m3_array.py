@@ -27,15 +27,20 @@ from spine_sim.array import (
     validate_terrain_catalog,
 )
 from spine_sim.array.case import (
+    _RodClearanceOutOfBoundsError,
     _arrays,
+    _placement_search_offsets,
     _proxy_array_rod_clearance,
     run_case,
 )
 from spine_sim.array.design import _loading_protocol
 from spine_sim.array.dynamic_validation import (
     _drop_profile,
+    _existing_m1_smoke_contact_settings,
+    _existing_m1_smoke_integrator,
     _integrator,
     _run,
+    _select_existing_m1_condition,
     _settings,
     _tracks,
     run_dynamic_analytic_validation,
@@ -127,6 +132,41 @@ class M3PublicBoundaryAndGeometryTests(unittest.TestCase):
 
 
 class M3JointDynamicTests(unittest.TestCase):
+    def test_axial_modal_damping_is_continuous_across_spring_stop(self):
+        parameters = _fixture_parameters(
+            axial_mode="spring",
+            spring_stiffness_n_m=800.0,
+        )
+        configuration = ArrayConfiguration(
+            2,
+            2,
+            4e-3,
+            parameters,
+        )
+        system = DynamicCommonBackplateArray(
+            configuration,
+            _tracks(configuration),
+            unit_origin_xy_m=(0.0, 0.0),
+        )
+        state = system.initial_state(
+            _settings(drag_length_m=0.1e-3)
+        )
+        q, _velocity = system._pack_state(state)
+        axial_dof = system._pin_dofs(0)[0]
+        lower = q.copy()
+        interior = q.copy()
+        lower[axial_dof] = -1e-10
+        interior[axial_dof] = 1e-10
+        damping_lower = system._structure(
+            lower,
+            _settings(drag_length_m=0.1e-3),
+        )[0][axial_dof]
+        damping_interior = system._structure(
+            interior,
+            _settings(drag_length_m=0.1e-3),
+        )[0][axial_dof]
+        self.assertEqual(damping_lower, damping_interior)
+
     @classmethod
     def setUpClass(cls):
         cls.parameters = _fixture_parameters(
@@ -703,6 +743,33 @@ class M3CaseAdapterTests(unittest.TestCase):
             )
             self.assertTrue(np.all(np.isfinite(clearance)))
             self.assertGreater(float(np.min(clearance)), 0.0)
+            outside_result = replace(
+                result,
+                points=tuple(
+                    replace(
+                        point,
+                        pin_responses=tuple(
+                            replace(
+                                response,
+                                center_xyz_m=(
+                                    response.center_xyz_m[0] + 0.1,
+                                    response.center_xyz_m[1],
+                                    response.center_xyz_m[2],
+                                ),
+                            )
+                            for response in point.pin_responses
+                        ),
+                    )
+                    for point in result.points
+                ),
+            )
+            with self.assertRaises(_RodClearanceOutOfBoundsError):
+                _proxy_array_rod_clearance(
+                    library=library,
+                    result=outside_result,
+                    axial_sample_count=12,
+                    lateral_sample_count=7,
+                )
 
     def test_case_adapter_saves_explicit_dynamic_parameters_and_closes_ranking(self):
         parameters = _fixture_parameters()
@@ -717,7 +784,7 @@ class M3CaseAdapterTests(unittest.TestCase):
                 purpose="module",
             )
             library = TerrainLibrary(directory)
-            library.generate_region(recipe, region)
+            region_metadata = library.generate_region(recipe, region)
             project_parameters = replace(
                 parameters,
                 rod_clearance_mode="unclosed",
@@ -747,6 +814,7 @@ class M3CaseAdapterTests(unittest.TestCase):
                     "terrain_library_root": str(Path(directory)),
                     "terrain_recipe_id": recipe.terrain_recipe_id,
                     "region_id": region.region_id,
+                    "terrain_data_sha256": region_metadata["data_sha256"],
                     "tracks": [
                         {
                             "track_id": track.track_id,
@@ -770,8 +838,40 @@ class M3CaseAdapterTests(unittest.TestCase):
             self.assertIn("backplate_mass_kg", output.summary["experiment"])
             self.assertIn("time_step_s", output.summary["integrator"])
             self.assertIn("normal_model", output.summary["contact"])
+            self.assertEqual(
+                output.summary["terrain_data_sha256"],
+                region_metadata["data_sha256"],
+            )
             self.assertIn("external_total_preload_n", output.arrays)
+            self.assertTrue(
+                np.all(
+                    output.arrays["terrain_data_sha256"]
+                    == region_metadata["data_sha256"]
+                )
+            )
+            self.assertTrue(
+                np.allclose(
+                    output.arrays["selected_unit_origin_xy_m"],
+                    np.zeros((len(output.arrays["time_s"]), 2)),
+                )
+            )
             self.assertFalse(output.validation["formal_ranking_eligible"])
+            with self.assertRaisesRegex(ValueError, "terrain_data_sha256"):
+                run_case(
+                    {
+                        "terrain_library_root": str(Path(directory)),
+                        "terrain_recipe_id": recipe.terrain_recipe_id,
+                        "region_id": region.region_id,
+                        "terrain_data_sha256": "0" * 64,
+                        "configuration": {},
+                        "unit_origin_xy_m": [0.0, 0.0],
+                        "experiment": {},
+                    },
+                    RunContext(
+                        case_id="case_m3_bad_terrain_hash",
+                        backend={"selected": "cpu"},
+                    ),
+                )
 
 
 class M3ScreeningDesignTests(unittest.TestCase):
@@ -833,6 +933,23 @@ class M3ScreeningDesignTests(unittest.TestCase):
             second["loading_protocol_id"],
         )
         self.assertNotIn("output_level", first)
+        self.assertEqual(
+            first["placement_search"]["selection_rule"],
+            "first_collision_free",
+        )
+
+    def test_placement_search_policy_is_deterministic_and_nominal_first(self):
+        offsets = _placement_search_offsets({"enabled": True})
+        self.assertEqual(offsets[0], (0.0, 0.0))
+        self.assertGreater(len(offsets), 1)
+        self.assertEqual(offsets, _placement_search_offsets({"enabled": True}))
+        with self.assertRaisesRegex(ValueError, "nominal"):
+            _placement_search_offsets(
+                {
+                    "enabled": True,
+                    "offsets_xy_m": [[0.0, 1e-3], [0.0, 0.0]],
+                }
+            )
 
     def test_engineering_proxy_is_explicit_and_geometry_scaled(self):
         scenarios = build_engineering_proxy_scenarios()
@@ -889,20 +1006,27 @@ class M3ScreeningDesignTests(unittest.TestCase):
             ("sandpaper", "red_brick", "concrete")
         ):
             for index in range(100):
-                seed = 10_000 * (family_index + 1) + index
+                seed = 41_001 + index
                 conditions.append(
                     {
                         "terrain_family": family,
                         "seed": seed,
+                        "realization_id": (
+                            f"realization_{family}_{seed}"
+                        ),
                         "terrain_recipe_id": f"recipe_{seed}",
-                        "region_id": f"region_{seed}",
-                        "data_sha256": f"{seed:064x}",
+                        "region_id": f"region_{family}_{seed}",
+                        "data_sha256": (
+                            f"{family_index + 1:02x}{seed:062x}"
+                        ),
                         "full_sha256_verified": True,
                     }
                 )
         catalog = {
+            "schema_version": "m1-material-terrain-catalog-v1",
             "status": "complete",
             "all_full_hashes_verified": True,
+            "formal_300_complete": True,
             "m1_module_version": "m1-test",
             "conditions": conditions,
         }
@@ -911,6 +1035,64 @@ class M3ScreeningDesignTests(unittest.TestCase):
         incomplete["conditions"] = conditions[:-1]
         with self.assertRaises(ValueError):
             validate_terrain_catalog(incomplete)
+        missing_schema = dict(catalog)
+        missing_schema.pop("schema_version")
+        with self.assertRaisesRegex(ValueError, "unsupported"):
+            validate_terrain_catalog(missing_schema)
+        unknown_schema = dict(catalog)
+        unknown_schema["schema_version"] = "future-unknown-v9"
+        with self.assertRaisesRegex(ValueError, "unsupported"):
+            validate_terrain_catalog(unknown_schema)
+        malformed_hash = dict(catalog)
+        malformed_conditions = [dict(item) for item in conditions]
+        malformed_conditions[0]["data_sha256"] = "not-a-sha256"
+        malformed_hash["conditions"] = malformed_conditions
+        with self.assertRaisesRegex(ValueError, "data_sha256"):
+            validate_terrain_catalog(malformed_hash)
+        unpaired = dict(catalog)
+        unpaired_conditions = [dict(item) for item in conditions]
+        unpaired_conditions[-1]["seed"] = 999_999
+        unpaired["conditions"] = unpaired_conditions
+        with self.assertRaisesRegex(ValueError, "paired seeds"):
+            validate_terrain_catalog(unpaired)
+
+    def test_existing_m1_smoke_selection_never_guesses_across_families(self):
+        conditions = [
+            {
+                "name": f"{family}_condition",
+                "terrain_family": family,
+                "seed": 41001,
+                "terrain_recipe_id": f"recipe_{family}",
+                "region_id": f"region_{family}",
+                "data_sha256": f"{index + 1:064x}",
+                "full_sha256_verified": True,
+            }
+            for index, family in enumerate(
+                ("sandpaper", "red_brick", "concrete")
+            )
+        ]
+        catalog = {
+            "schema_version": "m1-material-terrain-catalog-v1",
+            "status": "complete",
+            "all_full_hashes_verified": True,
+            "conditions": conditions,
+        }
+        with self.assertRaisesRegex(ValueError, "ambiguous"):
+            _select_existing_m1_condition(catalog, seed=41001)
+        selected = _select_existing_m1_condition(
+            catalog,
+            seed=41001,
+            terrain_family="red_brick",
+        )
+        self.assertEqual(selected["name"], "red_brick_condition")
+
+    def test_existing_m1_smoke_uses_production_proxy_contact_baseline(self):
+        contact = _existing_m1_smoke_contact_settings()
+        integrator = _existing_m1_smoke_integrator()
+        self.assertEqual(contact.position_correction, 0.20)
+        self.assertEqual(contact.projection_iterations, 20)
+        self.assertEqual(integrator.time_step_s, 1e-3)
+        self.assertEqual(integrator.maximum_settling_time_s, 2.0)
 
     def test_missing_paired_condition_is_rejected(self):
         designs = build_full_array_design()[:2]

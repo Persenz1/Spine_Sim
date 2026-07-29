@@ -41,6 +41,18 @@ GRADIENT_LAYOUTS = (AngleLayout.GRADIENT_80_TO_60,)
 TOTAL_PRELOADS_N = (0.5, 1.0, 2.0)
 DRAG_LENGTH_M = 0.1
 TERRAIN_FAMILIES = ("sandpaper", "red_brick", "concrete")
+SUPPORTED_M1_TERRAIN_CATALOG_SCHEMAS = {
+    "m1-material-terrain-catalog-v1",
+}
+PLACEMENT_SEARCH_OFFSETS_XY_M = (
+    (0.0, 0.0),
+    (0.0, 1e-3),
+    (0.0, -1e-3),
+    (0.0, 2e-3),
+    (0.0, -2e-3),
+    (1e-3, 0.0),
+    (-1e-3, 0.0),
+)
 
 
 def _proxy_spine(
@@ -430,6 +442,13 @@ def validate_terrain_catalog(
 ) -> list[dict[str, Any]]:
     """Validate that M1 supplied complete, hashed, uniquely paired terrain."""
 
+    schema_version = catalog.get("schema_version")
+    if schema_version not in SUPPORTED_M1_TERRAIN_CATALOG_SCHEMAS:
+        raise ValueError(
+            "unsupported M1 terrain catalog schema_version "
+            f"{schema_version!r}; supported versions are "
+            f"{sorted(SUPPORTED_M1_TERRAIN_CATALOG_SCHEMAS)}"
+        )
     if catalog.get("status") != "complete":
         raise ValueError("M1 terrain catalog status must be complete")
     if not catalog.get("all_full_hashes_verified"):
@@ -462,8 +481,18 @@ def validate_terrain_catalog(
                 raise ValueError(
                     f"{family}/seed={seed} is missing {field}"
                 )
+        data_sha256 = str(condition["data_sha256"]).lower()
+        if len(data_sha256) != 64 or any(
+            character not in "0123456789abcdef"
+            for character in data_sha256
+        ):
+            raise ValueError(
+                f"{family}/seed={seed} data_sha256 must contain 64 "
+                "hexadecimal characters"
+            )
         condition["terrain_family"] = family
         condition["seed"] = seed
+        condition["data_sha256"] = data_sha256
         condition["terrain_condition_id"] = identity(
             "terrain_condition",
             {
@@ -483,6 +512,10 @@ def validate_terrain_catalog(
         )
     )
     if require_formal_300:
+        if catalog.get("formal_300_complete") is not True:
+            raise ValueError(
+                "formal M3 requires catalog formal_300_complete=true"
+            )
         counts = Counter(
             condition["terrain_family"] for condition in normalized
         )
@@ -491,6 +524,39 @@ def validate_terrain_catalog(
             raise ValueError(
                 "formal M3 requires exactly 100 verified seeds for each of "
                 "sandpaper, red_brick and concrete"
+            )
+        seed_sets = {
+            family: {
+                condition["seed"]
+                for condition in normalized
+                if condition["terrain_family"] == family
+            }
+            for family in TERRAIN_FAMILIES
+        }
+        if len({frozenset(seeds) for seeds in seed_sets.values()}) != 1:
+            raise ValueError(
+                "formal M3 requires the same 100 paired seeds in all "
+                "three terrain families"
+            )
+        missing_realization = [
+            (
+                condition["terrain_family"],
+                condition["seed"],
+            )
+            for condition in normalized
+            if not condition.get("realization_id")
+        ]
+        if missing_realization:
+            raise ValueError(
+                "formal M3 requires a stable realization_id for every "
+                "terrain condition"
+            )
+        realization_ids = {
+            str(condition["realization_id"]) for condition in normalized
+        }
+        if len(realization_ids) != len(normalized):
+            raise ValueError(
+                "formal M3 terrain realization_id values must be unique"
             )
     return normalized
 
@@ -512,6 +578,14 @@ def _loading_protocol(
         "settlement_damping_scale": 10.0,
         "output_spacing_m": float(output_spacing_m),
         "time_step_s": float(time_step_s),
+        "placement_search": {
+            "mode": "deterministic_replay_from_start",
+            "trigger": "geometry_collision_or_terrain_bounds",
+            "selection_rule": "first_collision_free",
+            "offsets_xy_m": [
+                list(offset) for offset in PLACEMENT_SEARCH_OFFSETS_XY_M
+            ],
+        },
     }
     protocol["loading_protocol_id"] = identity(
         "loading_protocol",
@@ -606,6 +680,7 @@ def build_campaign_shard(
             "terrain_seed": condition["seed"],
             "terrain_recipe_id": condition["terrain_recipe_id"],
             "region_id": condition["region_id"],
+            "terrain_data_sha256": condition["data_sha256"],
             "track_requests": track_requests,
             "configuration": design["configuration"],
             "engineering_proxy": {
@@ -613,6 +688,14 @@ def build_campaign_shard(
                 "backplate": backplate,
             },
             "unit_origin_xy_m": [0.0, 0.0],
+            "placement_search": {
+                "enabled": True,
+                "selection_rule": "first_collision_free",
+                "offsets_xy_m": [
+                    list(offset)
+                    for offset in PLACEMENT_SEARCH_OFFSETS_XY_M
+                ],
+            },
             "loading_protocol_id": protocol["loading_protocol_id"],
             "experiment": {
                 "drag_length_m": DRAG_LENGTH_M,

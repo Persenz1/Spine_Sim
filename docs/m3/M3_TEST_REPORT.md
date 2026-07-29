@@ -1,13 +1,13 @@
 # M3 测试与收敛报告
 
-> 本报告同时包含当前代码的专项回归结论和清理前的历史数值快照。旧 M1 地形及
-> `results/m3_validation/` 机器可读产物已经删除；凡引用这些路径的命令均是原始
-> 复现记录，接入新 M1 catalog 后必须重新运行。
+> 本报告同时包含当前代码的专项回归、新 M1 增强地形验证和清理前的历史数值
+> 快照。历史旧 M1 地形及其机器可读产物已经删除；本轮生成的新证据位于
+> `results/m3_validation/`，仍不具备正式排名资格。
 
 **执行日期：** 2026-07-29
-**模块版本：** `m3.3.0`
+**模块版本：** `m3.4.0`
 **模型等级：**
-`project_model_P_common_rigid_backplate_z_dynamic_continuous_total_preload_v3`
+`project_model_P_common_rigid_backplate_z_dynamic_continuous_total_preload_v4`
 **正式 campaign：** 未启动
 **正式排名：** 未开放
 
@@ -20,9 +20,8 @@
   --output results\m3_validation\dynamic_analytic_validation_v4.json
 ```
 
-历史结果：**16/16 通过**，耗时 22.7 s。机器可读报告原位于
-`results/m3_validation/dynamic_analytic_validation_v4.json`，现已随可再生结果
-清理。
+当前结果：**16/16 通过**，耗时 24.8 s。机器可读报告为
+`results/m3_validation/dynamic_analytic_validation_m3_4_0.json`。
 
 | 门禁 | 关键结果 |
 |---|---|
@@ -51,7 +50,7 @@
 .venv\Scripts\python.exe -m pytest tests\test_m3_array.py -q
 ```
 
-结果：**32 passed**，耗时 119.9 s；本次清理后再次复核仍为 **32 passed**。覆盖：
+结果：**36 passed**，耗时 114.47 s。覆盖：
 
 - 总反力平衡、平滑斜坡、沉降速度/反力/残差/连续稳定门；
 - 对称 2×2、2×5/5×2 方向身份、针遍历顺序和拒绝原子性；
@@ -66,6 +65,9 @@
 - 工程代理参数身份、随阵列外廓缩放的背板质量/刚度/阻尼；
 - 8 个哨兵、11 个单轴变体和条件性能趋势收敛门；
 - 圆柱杆下表面在 M1 二维高度场上的轴向/横向净空查询。
+- 弹簧针轴向 lower/interior/hard-stop 分支之间的名义模态阻尼连续性；
+- M1 catalog schema、数据哈希和跨材质重号 seed 的显式拒绝；
+- 确定性换落点顺序、名义落点优先和碰撞 case 的排名隔离。
 
 ## 3. 全仓回归
 
@@ -75,23 +77,67 @@
 .venv\Scripts\python.exe -m pytest -q
 ```
 
-历史结果：**98 passed，另有 12 个 subtests 通过**，耗时 146.60 s；0 失败。
-这是材料地形改进完成前的全仓快照，不替代当前 M1 材料测试报告。本次文档清理按
-用户要求不重跑 M1 或全仓测试。
+当前结果：**107 passed，另有 15 个 subtests 通过**，耗时 138.56 s；0 失败。
+测试期间出现 16 条来自 CuPy padding 与 NumPy 2.5 的弃用警告，不影响结果。
 
 在完整性写入的最后一次调整后，另行复跑：
 
 ```powershell
-.venv\Scripts\python.exe -m pytest tests\test_results_runner.py -q
+.venv\Scripts\python.exe -m pytest `
+  tests\test_results_runner.py tests\test_m3_summary_merge.py -q
 ```
 
-结果：**6 passed**，耗时 2.14 s；覆盖 marker、路径/事件哈希、空事件清理和续跑。
+结果完整性与流式 summary 合并合跑：**7 passed**，耗时 2.73 s；覆盖 marker、
+路径/事件哈希、空事件清理、续跑、原子 Parquet/JSONL 产物和跨分片重复 case ID
+拒绝。
 
-流式 summary 合并另行执行
-`pytest tests\test_m3_summary_merge.py -q`：**1 passed**，覆盖原子
-Parquet/JSONL 产物和跨分片重复 case ID 拒绝。
+另用真实 M1 条件执行 1 个 2×2 runner case：
 
-## 4. 历史旧 M1 地形短程 smoke
+- nominal 落点从路径 0 即检测到杆体碰撞，最小净空 \(-638.61\) μm；
+- 第 2 个候选 `y=+1 mm` 从沉降起点重放，到达 `path_end`，净空
+  \(+91.45\) μm；
+- case 完整写入并标记 `complete`，resume 用时约 0.8 s 且未重复计算；
+- summary 合并验证 1 个 case 的 COMPLETE marker、payload hash 和结果集哈希；
+  当前环境无 Parquet 引擎，按既定协议输出 JSONL fallback。
+
+## 4. 新 M1 十五地形短程验证
+
+输入为
+`results/m1_material_m3_test/terrain_catalog.json`：砂纸、红砖、混凝土各 5 条，
+共 15 条全尺寸 10 μm 材料增强地形，约 3.57 GB。先前一轮已对 15 个数据文件
+逐一重算完整 SHA-256，catalog、recipe、region、material/subtype、路径和数据哈希
+身份均一致。
+
+修复轴向阻尼分支不连续后，用生产工程代理基线（位置修正 0.20）对每个条件执行
+2×2/4×4/6×6、1 N、0.1 mm 短程 smoke：
+
+- 15/15 条件通过，45/45 用例完成沉降并到达 `path_end`；
+- 45/45 数值流程通过，拒绝步为 0；最大动力学残差
+  \(9.653\times10^{-4}\) N，低于 1 mN 门；
+- 最大单步能量残差 \(3.575\times10^{-8}\) J，最大累计相对能量误差
+  \(1.774\times10^{-5}\)，最大接触功恒等式残差
+  \(5.204\times10^{-18}\) J；
+- 总耗时 940.74 s，单用例 2.24--113.41 s；
+- nominal 落点下 15/45 同时通过屈服、屈曲和杆体净空；30 条被物理约束排除：
+  24 条仅杆体碰撞、5 条杆体碰撞且屈服代理超限、1 条仅屈服代理超限。所有屈曲
+  检查均通过。约束失败不计作数值流程失败，也不能进入排名。
+
+碰撞规避另以 P60 做了中途碰撞重放验证：
+
+- 2×2 nominal 首次碰撞在 27 μm；依序测试候选后，`x=-1 mm` 从起点重放，
+  最小净空由 \(-605.53\) μm 改善为 \(+142.30\) μm并完成；
+- 4×4 nominal 首次碰撞在 18 μm；`y=+1 mm` 重放后净空
+  \(+53.06\) μm并完成；
+- 6×6 nominal 已有 \(+1.36\) μm 净空，无需换落点，但屈服代理仍不通过，故
+  保持排名隔离。
+
+机器可读结果为
+`results/m3_validation/m1_material_15_after_fix.json` 和
+`results/m3_validation/m1_material_P60_placement_search.json`。这些结果证明 15 条
+增强地形的读取、沉降、短程拖拽、碰撞检测和落点重放流程可运行；不证明 100 mm
+收敛，也不替代 300 条正式 catalog。
+
+## 5. 历史旧 M1 地形短程 smoke
 
 命令：
 
@@ -124,7 +170,7 @@ Parquet/JSONL 产物和跨分片重复 case ID 拒绝。
 
 因此不能比较表中三个规模的正式拉力优劣。
 
-## 5. 未执行内容
+## 6. 未执行内容
 
 - 未运行任何 100 mm 正式扫描；
 - 未物化 120 万 case；

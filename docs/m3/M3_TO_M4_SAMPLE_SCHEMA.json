@@ -7,7 +7,10 @@
   "required": [
     "seed",
     "terrain_recipe_id",
+    "region_id",
+    "terrain_data_sha256",
     "configuration_id",
+    "selected_unit_origin_xy_m",
     "time_s",
     "path_position_m",
     "external_total_preload_n",
@@ -44,7 +47,13 @@
   "properties": {
     "seed": {"type": "integer", "minimum": 0},
     "terrain_recipe_id": {"type": "string", "minLength": 1},
+    "region_id": {"type": "string", "minLength": 1},
+    "terrain_data_sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
     "configuration_id": {"type": "string", "minLength": 1},
+    "selected_unit_origin_xy_m": {"$ref": "#/$defs/vector2"},
     "time_s": {"type": "number", "minimum": 0},
     "path_position_m": {"type": "number", "minimum": 0},
     "external_total_preload_n": {"type": "number", "minimum": 0},
@@ -134,10 +143,19 @@
     "actual_time_step_s": {"type": "number", "exclusiveMinimum": 0},
     "sample_class": {"enum": ["steady", "impact", "other_event", "transient"]},
     "model_level": {
-      "const": "project_model_P_common_rigid_backplate_z_dynamic_continuous_total_preload_v3"
+      "const": "project_model_P_common_rigid_backplate_z_dynamic_continuous_total_preload_v4"
     }
   },
   "$defs": {
+    "vector2": {
+      "type": "array",
+      "prefixItems": [
+        {"type": "number"},
+        {"type": "number"}
+      ],
+      "minItems": 2,
+      "maxItems": 2
+    },
     "vector3": {
       "type": "array",
       "items": {"type": "number"},

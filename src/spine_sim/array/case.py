@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import json
+import math
 import time
 from dataclasses import asdict
 from pathlib import Path
@@ -48,6 +50,64 @@ _EXPLICIT_EXPERIMENT_PARAMETERS = {
 }
 _EXPLICIT_CONTACT_PARAMETERS = set(DynamicContactSettings.__dataclass_fields__)
 _EXPLICIT_INTEGRATOR_PARAMETERS = set(DynamicIntegratorSettings.__dataclass_fields__)
+_DEFAULT_PLACEMENT_SEARCH_OFFSETS_XY_M = (
+    (0.0, 0.0),
+    (0.0, 1e-3),
+    (0.0, -1e-3),
+    (0.0, 2e-3),
+    (0.0, -2e-3),
+    (1e-3, 0.0),
+    (-1e-3, 0.0),
+)
+
+
+class _RodClearanceOutOfBoundsError(ValueError):
+    """The shank postcheck cannot be evaluated inside the M1 region."""
+
+
+def _placement_search_offsets(
+    raw: Mapping[str, Any] | None,
+) -> tuple[tuple[float, float], ...]:
+    if raw is None:
+        return ((0.0, 0.0),)
+    allowed = {"enabled", "offsets_xy_m", "selection_rule"}
+    unknown = set(raw) - allowed
+    if unknown:
+        raise ValueError(
+            f"M3 placement_search contains unknown fields: {sorted(unknown)}"
+        )
+    enabled = bool(raw.get("enabled", True))
+    if not enabled:
+        return ((0.0, 0.0),)
+    if raw.get("selection_rule", "first_collision_free") != (
+        "first_collision_free"
+    ):
+        raise ValueError(
+            "M3 placement_search.selection_rule must be "
+            "'first_collision_free'"
+        )
+    raw_offsets = raw.get(
+        "offsets_xy_m",
+        _DEFAULT_PLACEMENT_SEARCH_OFFSETS_XY_M,
+    )
+    offsets: list[tuple[float, float]] = []
+    for raw_offset in raw_offsets:
+        if not isinstance(raw_offset, (list, tuple)) or len(raw_offset) != 2:
+            raise ValueError(
+                "every M3 placement-search offset must contain x and y"
+            )
+        offset = (float(raw_offset[0]), float(raw_offset[1]))
+        if not np.all(np.isfinite(offset)):
+            raise ValueError(
+                "M3 placement-search offsets must be finite"
+            )
+        if offset not in offsets:
+            offsets.append(offset)
+    if not offsets or offsets[0] != (0.0, 0.0):
+        raise ValueError(
+            "M3 placement search must try the nominal (0, 0) offset first"
+        )
+    return tuple(offsets)
 
 
 def _summary_dict(result) -> dict[str, Any]:
@@ -607,7 +667,7 @@ def _proxy_array_rod_clearance(
                 or np.any(y_float < 0.0)
                 or np.any(y_float > height.shape[0] - 1)
             ):
-                raise ValueError(
+                raise _RodClearanceOutOfBoundsError(
                     f"pin {pin_index} 2-D rod-clearance samples lie "
                     "outside terrain"
                 )
@@ -674,6 +734,7 @@ def run_case(parameters: Mapping[str, Any], context: RunContext) -> CaseOutput:
         "terrain_library_root",
         "terrain_recipe_id",
         "region_id",
+        "terrain_data_sha256",
         "configuration",
         "unit_origin_xy_m",
         "experiment",
@@ -697,6 +758,19 @@ def run_case(parameters: Mapping[str, Any], context: RunContext) -> CaseOutput:
             "M3 output.level must be summary, aggregate_trace or full_pin_trace"
         )
     library = TerrainLibrary(Path(str(parameters["terrain_library_root"])))
+    terrain_recipe_id = str(parameters["terrain_recipe_id"])
+    region_id = str(parameters["region_id"])
+    terrain_data_sha256 = str(parameters["terrain_data_sha256"])
+    region_metadata = json.loads(
+        library.region_manifest_path(
+            terrain_recipe_id,
+            region_id,
+        ).read_text(encoding="utf-8")
+    )
+    if region_metadata.get("data_sha256") != terrain_data_sha256:
+        raise ValueError(
+            "M3 terrain_data_sha256 does not match the M1 region manifest"
+        )
     configuration = ArrayConfiguration.from_mapping(parameters["configuration"])
     has_tracks = "tracks" in parameters
     has_requests = "track_requests" in parameters
@@ -705,35 +779,28 @@ def run_case(parameters: Mapping[str, Any], context: RunContext) -> CaseOutput:
             "M3 case requires exactly one of tracks or track_requests"
         )
     if has_tracks:
-        tracks = tuple(
+        stored_tracks = tuple(
             library.load_track(
-                str(parameters["terrain_recipe_id"]),
-                str(parameters["region_id"]),
+                terrain_recipe_id,
+                region_id,
                 float(item["radius_m"]),
                 str(item["track_id"]),
             )
             for item in parameters["tracks"]
         )
+        requests = None
+        recipe_for_tracks = None
+        region_for_tracks = None
     else:
         requests = list(parameters["track_requests"])
         if len(requests) != configuration.pin_count:
             raise ValueError("M3 track_requests must contain one row per pin")
-        recipe_for_tracks = library.load_recipe(
-            str(parameters["terrain_recipe_id"])
-        )
+        recipe_for_tracks = library.load_recipe(terrain_recipe_id)
         region_for_tracks = library.load_region_spec(
-            str(parameters["terrain_recipe_id"]),
-            str(parameters["region_id"]),
+            terrain_recipe_id,
+            region_id,
         )
-        tracks = tuple(
-            library.cache_track(
-                recipe_for_tracks,
-                region_for_tracks,
-                radius_m=float(request["radius_m"]),
-                y_global_m=float(request["y_global_m"]),
-            )
-            for request in requests
-        )
+        stored_tracks = None
     if configuration.fixture_only:
         raise ValueError("fixture-only singleton arrays cannot run as saved project cases")
     if configuration.base_spine.rod_clearance_mode == "disabled_analytic_fixture":
@@ -761,18 +828,180 @@ def run_case(parameters: Mapping[str, Any], context: RunContext) -> CaseOutput:
     contact = DynamicContactSettings.from_mapping(contact_data)
     integrator = DynamicIntegratorSettings.from_mapping(integrator_data)
     experiment = ArrayDynamicExperimentSettings.from_mapping(experiment_data)
-    system = DynamicCommonBackplateArray(
-        configuration,
-        tracks,
-        unit_origin_xy_m=tuple(parameters["unit_origin_xy_m"]),
-        contact=contact,
+    base_origin_raw = tuple(parameters["unit_origin_xy_m"])
+    if len(base_origin_raw) != 2:
+        raise ValueError("M3 unit_origin_xy_m must contain x and y")
+    base_origin_xy_m = (
+        float(base_origin_raw[0]),
+        float(base_origin_raw[1]),
     )
-    result = DynamicCommonBackplateExperiment(
-        system,
-        experiment,
-        integrator,
-    ).run()
-    recipe = library.load_recipe(str(parameters["terrain_recipe_id"]))
+    placement_offsets = _placement_search_offsets(
+        (
+            dict(parameters["placement_search"])
+            if "placement_search" in parameters
+            else None
+        )
+    )
+    if stored_tracks is not None and len(placement_offsets) > 1:
+        raise ValueError(
+            "M3 placement search requires track_requests so alternative "
+            "global y tracks can be generated"
+        )
+
+    placement_attempts: list[dict[str, Any]] = []
+    selected = None
+    best_clearance = -math.inf
+    geometry_retry_triggered = False
+    for attempt_index, offset_xy_m in enumerate(placement_offsets):
+        if stored_tracks is not None:
+            tracks = stored_tracks
+        else:
+            assert (
+                requests is not None
+                and recipe_for_tracks is not None
+                and region_for_tracks is not None
+            )
+            tracks = tuple(
+                library.cache_track(
+                    recipe_for_tracks,
+                    region_for_tracks,
+                    radius_m=float(request["radius_m"]),
+                    y_global_m=(
+                        float(request["y_global_m"]) + offset_xy_m[1]
+                    ),
+                )
+                for request in requests
+            )
+        origin_xy_m = (
+            base_origin_xy_m[0] + offset_xy_m[0],
+            base_origin_xy_m[1] + offset_xy_m[1],
+        )
+        system = DynamicCommonBackplateArray(
+            configuration,
+            tracks,
+            unit_origin_xy_m=origin_xy_m,
+            contact=contact,
+        )
+        candidate_result = DynamicCommonBackplateExperiment(
+            system,
+            experiment,
+            integrator,
+        ).run()
+        candidate_clearance = None
+        candidate_minimum_clearance = None
+        candidate_collision = None
+        first_collision_path_position_m = None
+        rod_clearance_failure_code = None
+        if (
+            configuration.base_spine.rod_clearance_mode
+            == "proxy_cylindrical_shank_postcheck"
+            and candidate_result.points
+        ):
+            try:
+                candidate_clearance = _proxy_array_rod_clearance(
+                    library=library,
+                    result=candidate_result,
+                )
+            except _RodClearanceOutOfBoundsError:
+                candidate_collision = True
+                rod_clearance_failure_code = (
+                    "rod_clearance_samples_out_of_bounds"
+                )
+            else:
+                candidate_minimum_clearance = float(
+                    np.min(candidate_clearance)
+                )
+                candidate_collision = candidate_minimum_clearance < 0.0
+                if candidate_collision:
+                    first_collision_index = int(
+                        np.flatnonzero(
+                            np.any(candidate_clearance < 0.0, axis=1)
+                        )[0]
+                    )
+                    first_collision_path_position_m = float(
+                        candidate_result.points[
+                            first_collision_index
+                        ].path_position_m
+                    )
+        placement_attempts.append(
+            {
+                "attempt_index": attempt_index,
+                "offset_xy_m": list(offset_xy_m),
+                "unit_origin_xy_m": list(origin_xy_m),
+                "run_terminal_state": (
+                    candidate_result.summary.run_terminal_state.value
+                ),
+                "initial_preload_success": (
+                    candidate_result.summary.initial_preload_success
+                ),
+                "initialization_failure_category": (
+                    candidate_result.summary.initialization_failure_category
+                ),
+                "minimum_rod_clearance_m": (
+                    candidate_minimum_clearance
+                ),
+                "rod_collision_detected": candidate_collision,
+                "first_collision_path_position_m": (
+                    first_collision_path_position_m
+                ),
+                "rod_clearance_failure_code": (
+                    rod_clearance_failure_code
+                ),
+                "selected": False,
+            }
+        )
+        candidate = (
+            candidate_result,
+            candidate_clearance,
+            candidate_minimum_clearance,
+            candidate_collision,
+            origin_xy_m,
+            attempt_index,
+            rod_clearance_failure_code,
+        )
+        if selected is None:
+            selected = candidate
+        if (
+            candidate_minimum_clearance is not None
+            and candidate_result.summary.run_terminal_state.value
+            == "path_end"
+            and candidate_result.summary.initial_preload_success
+            and candidate_minimum_clearance > best_clearance
+        ):
+            best_clearance = candidate_minimum_clearance
+            selected = candidate
+        if (
+            candidate_result.summary.run_terminal_state.value == "path_end"
+            and candidate_result.summary.initial_preload_success
+            and candidate_collision is False
+        ):
+            selected = candidate
+            break
+        retryable_geometry_failure = (
+            candidate_collision is True
+            or candidate_result.summary.initialization_failure_category
+            == "geometry_out_of_bounds"
+            or candidate_result.summary.run_terminal_state.value
+            == "terrain_bounds"
+        )
+        if retryable_geometry_failure:
+            geometry_retry_triggered = True
+            continue
+        if attempt_index == 0 or not geometry_retry_triggered:
+            selected = candidate
+            break
+    assert selected is not None
+    (
+        result,
+        rod_clearance,
+        minimum_rod_clearance,
+        rod_collision,
+        selected_origin_xy_m,
+        selected_attempt_index,
+        selected_rod_clearance_failure_code,
+    ) = selected
+    placement_attempts[selected_attempt_index]["selected"] = True
+    recipe = library.load_recipe(terrain_recipe_id)
     validation_passed = (
         result.summary.initial_preload_success
         and result.summary.numerical_state.value == "converged"
@@ -791,6 +1020,7 @@ def run_case(parameters: Mapping[str, Any], context: RunContext) -> CaseOutput:
         "terrain_condition_id"
     )
     summary["terrain_catalog_id"] = parameters.get("terrain_catalog_id")
+    summary["terrain_data_sha256"] = terrain_data_sha256
     summary["loading_protocol_id"] = parameters.get(
         "loading_protocol_id"
     )
@@ -803,28 +1033,22 @@ def run_case(parameters: Mapping[str, Any], context: RunContext) -> CaseOutput:
         else None
     )
     summary["output_level"] = output_level
+    summary["placement_search_enabled"] = len(placement_offsets) > 1
+    summary["placement_search_selection_rule"] = "first_collision_free"
+    summary["placement_attempt_count"] = len(placement_attempts)
+    summary["placement_attempts"] = placement_attempts
+    summary["selected_placement_attempt_index"] = selected_attempt_index
+    summary["selected_unit_origin_xy_m"] = list(selected_origin_xy_m)
+    summary["nominal_unit_origin_xy_m"] = list(base_origin_xy_m)
+    summary["placement_relocated"] = selected_attempt_index != 0
     summary["ranking_inclusion_allowed"] = bool(
         result.summary.initial_preload_success
         and result.summary.conditional_performance_available
         and result.summary.run_terminal_state.value == "path_end"
     )
     arrays = _arrays(result, output_level)
-    rod_clearance = None
-    minimum_rod_clearance = None
-    rod_collision = None
-    if (
-        configuration.base_spine.rod_clearance_mode
-        == "proxy_cylindrical_shank_postcheck"
-        and result.points
-    ):
-        rod_clearance = _proxy_array_rod_clearance(
-            library=library,
-            result=result,
-        )
-        minimum_rod_clearance = float(np.min(rod_clearance))
-        rod_collision = bool(minimum_rod_clearance < 0.0)
-        if output_level == "full_pin_trace":
-            arrays["pin_rod_clearance_m"] = rod_clearance
+    if rod_clearance is not None and output_level == "full_pin_trace":
+        arrays["pin_rod_clearance_m"] = rod_clearance
     yield_ok = (
         configuration.base_spine.yield_strength_pa is not None
         and result.summary.maximum_bending_stress_pa is not None
@@ -850,6 +1074,9 @@ def run_case(parameters: Mapping[str, Any], context: RunContext) -> CaseOutput:
             "rod_clearance_checked": rod_clearance is not None,
             "rod_collision_detected": rod_collision,
             "minimum_rod_clearance_m": minimum_rod_clearance,
+            "rod_clearance_failure_code": (
+                selected_rod_clearance_failure_code
+            ),
             "rod_clearance_assumption": (
                 "2d_height_field_cylindrical_shank_lower_surface_postcheck"
                 if rod_clearance is not None
@@ -871,6 +1098,16 @@ def run_case(parameters: Mapping[str, Any], context: RunContext) -> CaseOutput:
             "terrain_recipe_id": np.full(
                 point_count, result.terrain_recipe_id, dtype="U64"
             ),
+            "region_id": np.full(
+                point_count, result.region_id, dtype="U64"
+            ),
+            "terrain_data_sha256": np.full(
+                point_count, terrain_data_sha256, dtype="U64"
+            ),
+            "selected_unit_origin_xy_m": np.broadcast_to(
+                np.asarray(selected_origin_xy_m, dtype=np.float64),
+                (point_count, 2),
+            ).copy(),
             "configuration_id": np.full(
                 point_count,
                 result.configuration.configuration_id,
@@ -905,6 +1142,17 @@ def run_case(parameters: Mapping[str, Any], context: RunContext) -> CaseOutput:
                 "yield_ok": yield_ok,
                 "buckling_ok": buckling_ok,
                 "rod_clearance_ok": clearance_ok,
+            },
+            "placement_search": {
+                "enabled": len(placement_offsets) > 1,
+                "attempt_count": len(placement_attempts),
+                "selected_attempt_index": selected_attempt_index,
+                "selected_unit_origin_xy_m": list(selected_origin_xy_m),
+                "relocated": selected_attempt_index != 0,
+                "all_attempts_exhausted": (
+                    len(placement_attempts) == len(placement_offsets)
+                    and not clearance_ok
+                ),
             },
             "output_level": output_level,
             "same_time_state_sample_contract": True,

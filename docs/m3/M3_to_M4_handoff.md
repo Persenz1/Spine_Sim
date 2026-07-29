@@ -1,8 +1,8 @@
 # M3 → M4 动力学交接
 
-**来源版本：** `m3.3.0`
+**来源版本：** `m3.4.0`
 **模型等级：**
-`project_model_P_common_rigid_backplate_z_dynamic_continuous_total_preload_v3`
+`project_model_P_common_rigid_backplate_z_dynamic_continuous_total_preload_v4`
 
 ## 冻结入口
 
@@ -15,7 +15,10 @@ M4 只读取 M3 保存的同一时刻样本，不在 M4 内重跑针单元，也
 ```text
 seed
 terrain_recipe_id
+region_id
+terrain_data_sha256
 configuration_id
+selected_unit_origin_xy_m
 time_s
 path_position_m
 external_total_preload_n
@@ -52,6 +55,8 @@ model_level
 ## 载荷语义
 
 - `external_total_preload_n` 是施加于整个共同背板的持续恒定外力，不是逐针预载；
+- `terrain_recipe_id`、`region_id` 和 `terrain_data_sha256` 共同冻结 M1 上游地形，
+  `selected_unit_origin_xy_m` 是碰撞规避后实际重放并输出样本的落点；
 - `total_contact_reaction_z_n` 不要求逐点等于外载：脱离期可更小，冲击期可显著更大；
 - 首版共同背板只有 Z 动力学，x 是规定拖动运动，俯仰/横滚锁定；
 - M4 不得把背板惯性力、阻尼力或外载重复加入墙面接触 wrench；

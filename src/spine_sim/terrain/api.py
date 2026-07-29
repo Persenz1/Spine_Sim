@@ -377,6 +377,147 @@ def generate_terrain(
     )
 
 
+def refine_material_terrain_same_realization(
+    coarse: Terrain,
+    fine_detail: Terrain,
+) -> Terrain:
+    """Create a nested 2x refinement while preserving every coarse node.
+
+    ``fine_detail`` supplies only the sub-grid residual of the same
+    material/profile/seed.  The returned 5 um-style field is exactly equal to
+    ``coarse`` at all stride-2 nodes, so 10/5 um comparisons cannot drift onto
+    a different large-scale realization.
+    """
+
+    if (
+        coarse.material != fine_detail.material
+        or coarse.subtype != fine_detail.subtype
+        or coarse.seed != fine_detail.seed
+    ):
+        raise TerrainConfigurationError(
+            "same-realization refinement requires matching material, "
+            "subtype and seed"
+        )
+    if coarse.resolved_mode != fine_detail.resolved_mode:
+        raise TerrainConfigurationError(
+            "same-realization refinement requires matching generation mode"
+        )
+    if coarse.metadata.get("profile_hash") != fine_detail.metadata.get(
+        "profile_hash"
+    ):
+        raise TerrainConfigurationError(
+            "same-realization refinement requires one material profile"
+        )
+    if not (
+        math.isclose(
+            coarse.dx,
+            2.0 * fine_detail.dx,
+            rel_tol=0.0,
+            abs_tol=1e-15,
+        )
+        and math.isclose(
+            coarse.dy,
+            2.0 * fine_detail.dy,
+            rel_tol=0.0,
+            abs_tol=1e-15,
+        )
+    ):
+        raise TerrainConfigurationError(
+            "fine-detail spacing must be exactly half the coarse spacing"
+        )
+    expected_shape = (
+        2 * coarse.height.shape[0] - 1,
+        2 * coarse.height.shape[1] - 1,
+    )
+    if fine_detail.height.shape != expected_shape:
+        raise TerrainConfigurationError(
+            "fine-detail shape must contain the same extent at 2x resolution"
+        )
+
+    coarse_height = np.asarray(coarse.height, dtype=np.float32)
+    detail_height = np.asarray(fine_detail.height, dtype=np.float32)
+    refined = np.empty_like(detail_height)
+    refined[::2, ::2] = coarse_height
+    refined[1::2, ::2] = (
+        0.5 * (coarse_height[:-1, :] + coarse_height[1:, :])
+        + detail_height[1::2, ::2]
+        - 0.5
+        * (
+            detail_height[:-2:2, ::2]
+            + detail_height[2::2, ::2]
+        )
+    )
+    refined[::2, 1::2] = (
+        0.5 * (coarse_height[:, :-1] + coarse_height[:, 1:])
+        + detail_height[::2, 1::2]
+        - 0.5
+        * (
+            detail_height[::2, :-2:2]
+            + detail_height[::2, 2::2]
+        )
+    )
+    refined[1::2, 1::2] = (
+        0.25
+        * (
+            coarse_height[:-1, :-1]
+            + coarse_height[1:, :-1]
+            + coarse_height[:-1, 1:]
+            + coarse_height[1:, 1:]
+        )
+        + detail_height[1::2, 1::2]
+        - 0.25
+        * (
+            detail_height[:-2:2, :-2:2]
+            + detail_height[2::2, :-2:2]
+            + detail_height[:-2:2, 2::2]
+            + detail_height[2::2, 2::2]
+        )
+    )
+
+    coarse_mask = np.asarray(coarse.valid_mask, dtype=np.bool_)
+    refined_mask = np.asarray(
+        fine_detail.valid_mask,
+        dtype=np.bool_,
+    ).copy()
+    refined_mask[::2, ::2] &= coarse_mask
+    refined_mask[1::2, ::2] &= coarse_mask[:-1, :] & coarse_mask[1:, :]
+    refined_mask[::2, 1::2] &= coarse_mask[:, :-1] & coarse_mask[:, 1:]
+    refined_mask[1::2, 1::2] &= (
+        coarse_mask[:-1, :-1]
+        & coarse_mask[1:, :-1]
+        & coarse_mask[:-1, 1:]
+        & coarse_mask[1:, 1:]
+    )
+
+    metadata = dict(fine_detail.metadata)
+    metadata["same_realization_refinement"] = {
+        "algorithm": (
+            "coarse_exact_nodes_plus_fine_model_subgrid_residual_v1"
+        ),
+        "coarse_spacing_x_m": coarse.dx,
+        "coarse_spacing_y_m": coarse.dy,
+        "fine_spacing_x_m": fine_detail.dx,
+        "fine_spacing_y_m": fine_detail.dy,
+        "coarse_shape_yx": list(coarse.height.shape),
+        "fine_shape_yx": list(fine_detail.height.shape),
+        "coarse_node_identity_exact": True,
+        "material": coarse.material,
+        "subtype": coarse.subtype,
+        "seed": coarse.seed,
+        "profile_hash": coarse.metadata.get("profile_hash"),
+    }
+    return Terrain(
+        height=refined,
+        dx=fine_detail.dx,
+        dy=fine_detail.dy,
+        valid_mask=refined_mask,
+        material=coarse.material,
+        subtype=coarse.subtype,
+        seed=coarse.seed,
+        metadata=metadata,
+    )
+
+
 def save_terrain(path: str | Path, terrain: Terrain) -> Path:
     """Atomically save a portable NPZ artifact containing height, mask and metadata."""
 

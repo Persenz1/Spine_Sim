@@ -6,11 +6,120 @@
 
 **分支：** `main`
 
-**M3 版本：** `m3.3.0`
+**M3 版本：** `m3.4.0`
 
-**正式 campaign：** 未启动
+**正式 campaign：** 未启动；用户已授权下一窗口在关闭执行门禁后自主安排全量仿真
 
 **正式排名：** `formal_ranking_eligible=false`
+
+## 0. 2026-07-29 夜间最新交接（下一窗口优先读）
+
+用户即将离线休息，已明确授权下一窗口：
+
+1. 自主把 M3 修到完整流程可运行；
+2. 自主安排并执行全量仿真，不必等待用户在线确认；
+3. 做完后结束会话并留下完整结果、失败清单、恢复点和结论。
+
+该授权允许在本仓库、本机 scratch 和现有正式 M1 catalog 范围内生成 campaign、
+预生成轨迹、运行仿真、恢复失败 case、合并结果和生成分析报告；不等于允许删除
+地形、scratch 或其他用户数据，也不等于允许把代理结果宣称为实验标定结果。
+
+### 已完成的最新输入
+
+- 正式 M1 catalog 已生成：
+  `D:\Code\Spine_Sim\results\m1_material_formal_300\terrain_catalog.json`；
+- 砂纸、红砖、混凝土各 100 条，共 300 条全尺寸 10 μm 条件；
+- 三类严格共用 seed 41001--41100；
+- 砂纸 P40/P60/P100/P180/P240 各 20 条；
+- 300 个唯一 `realization_id` 和 300 个唯一数据哈希；
+- M3 严格 catalog 校验 300/300 通过；
+- manifest、`COMPLETE`、数据 SHA-256 均一致；
+- 高度与有效掩码载荷约 83.12 GiB，生成结束时 D 盘约剩余 327 GB；
+- catalog ID：
+  `945375fc19c5af12a3b22abb2045cd5debeefc7a017d0a2df0448f479d0442c3`。
+
+正式地形生成报告：
+`D:\Code\Spine_Sim\results\m1_material_formal_300\generation_report.json`。
+
+### 当前工作树
+
+工作树未提交。除本轮 M3 修复外，还新增/修改了：
+
+- `scripts/generate_m1_material_formal_catalog.py`：可断点续跑的正式 300 地形生成器；
+- `scripts/generate_m1_material_fine_refinements.py`：选定条件的嵌套 5 μm 细化入口；
+- `refine_material_terrain_same_realization`：保持所有 10 μm 节点精确不变的 5 μm
+  子网格细化函数；
+- M3 正式 catalog 校验现强制三类使用相同 seed 集，并要求唯一
+  `realization_id`。
+
+上述 M1 细化和严格配对校验加入后的最终全仓回归为
+`107 passed + 15 subtests`，另有 16 条 CuPy/NumPy 弃用警告，无失败。
+
+### 仍未解决的问题（按执行优先级）
+
+1. **全量吞吐目前不可接受。** 当前计划为
+   \(1344\times300\times3=1,209,600\) case，每个正式 case 又是 100 mm、
+   1 mm/s、约 100,000 个内部时间步。15 地形的 45 个 0.1 mm smoke 已耗时
+   940.74 s，粗糙面 6×6 单个短程用例可达 113 s。不能直接无脑启动 120.96 万
+   case；必须先完成性能剖析、轨迹预生成、合理并行度、存储压测和分阶段执行策略，
+   否则运行时间和 120 万目录的文件系统开销不可控。
+2. **正式 campaign 参数门仍是未闭合状态。** `build_campaign_shard` 当前写入
+   `physical_calibration_completed=false`、各种 convergence flag=false，
+   因而即使 case 跑完也保持 `parameter_unclosed` 和
+   `formal_ranking_eligible=false`。没有实验数据时可以完成“全量代理仿真”，但
+   不能伪造标定或开启正式物理排名；报告应明确区分 proxy ranking 与 calibrated
+   ranking。
+3. **100 mm 收敛未运行。** 必须先从少量地形、哨兵构型和预载做时间步、投影次数、
+   位置修正、沉降阻尼、拖速和路径长度的有界收敛。现有计划为每个地形 264 case，
+   仍需物化为真实 campaign，并采用逐级扩大路径而非一次全跑。
+4. **接触稳定化注能仍偏大。** 新 15 地形短程 smoke 的最大动力学残差为
+   \(9.653\times10^{-4}\) N，已接近 1 mN 门；P60 6×6 累计位置修正注能为
+   \(2.21\times10^{-2}\) J。必须检查其随时间步和路径长度是否收敛，不能只看
+   `path_end`。
+5. **5 μm 尚未生成全尺寸证据。** 嵌套细化代码和小尺寸单测已完成，但
+   `generate_m1_material_fine_refinements.py` 尚未在正式 catalog 上运行。应先对
+   每类一个代表 realization 生成 5 μm，全尺寸单条约 1.19 GiB（含掩码），机器
+   只有 16 GB RAM，必须逐条运行并监控内存；最终候选再扩大，不需要给全部 300 条
+   都生成 5 μm。
+6. **碰撞规避仍是后检查重放。** 当前能处理初始和中途保存点发现的杆体碰撞，
+   固定候选顺序换落点并从沉降起点完整重放；P60 已验证 27 μm/18 μm 中途碰撞
+   可规避。但净空是保存点上的 24×9 圆柱代理，不是连续杆体接触自由度，保存点
+   之间仍可能漏检。
+7. **换落点会改变局部地形。** 所有构型使用相同候选顺序且只按几何可行性选择，
+   但不同构型可能在同一 realization 上选择不同落点。分析必须保存/分层
+   `selected_unit_origin_xy_m`，不能声称它们比较了完全相同的局部 patch。
+8. **物理约束失败很多。** 15 地形 nominal smoke 中只有 15/45 同时通过屈服、
+   屈曲和杆体净空；30 条被排除（24 条仅杆碰撞、5 条杆碰撞且屈服超限、1 条仅
+   屈服超限）。换落点只能解决几何碰撞，不能掩盖屈服代理超限。
+9. **M1 材料仍是代理。** 正式 300 catalog 在数量、配对、身份和哈希上完整，但
+   红砖/混凝土及部分砂纸 profile 仍缺项目实测标定。因此
+   `formal_ranking_eligible=false` 是正确状态。
+10. **轨迹缓存并发风险未解决。** 多 worker 首次请求同一 terrain/y/radius 可能
+    竞争写 cache。全量运行前必须串行预生成并冻结所需轨迹，正式 worker 只读。
+11. **结果存储尚未做百万级压测。** 当前每 case 一个目录；120 万目录可能成为
+    主要瓶颈。必须先做有界分片、峰值空间和 inode/目录操作压测。当前环境没有
+    pyarrow，summary 合并会退化为 JSONL；全量前应提供 Parquet 引擎或确认可接受
+    的列式替代方案。
+12. **文档状态需要刷新。** `M3_OPEN_ISSUES.md`、`M3_TEST_REPORT.md` 和本文件后文
+    仍有“正式 catalog 不存在/正式条件数为 0”的旧描述，应以本节最新状态为准并
+    在下一窗口统一修订。
+13. **最新代码尚未做最终提交。** 先检查 `git diff`，保留用户已有 M1 工作，
+    完成测试和数值证据后再决定提交；用户本轮没有要求推送。
+
+### 下一窗口建议的自主执行顺序
+
+1. `git status --short`，完整审阅未提交 diff；
+2. 重跑 M1/M3 定向测试和全仓测试；
+3. 用正式 catalog 物化一个最小 M3 shard，验证 300 catalog 到
+   `run_case → COMPLETE → resume → merge`；
+4. 串行预生成代表地形的全部所需 y/radius 轨迹，并测量缓存体积；
+5. 对 2×2/4×4/6×6 做 profiler 和 2/10/100 mm 路径外推，先解决吞吐/存储；
+6. 跑少量哨兵的数值与拖速收敛，关闭或量化接触注能问题；
+7. 每类生成一个嵌套 5 μm realization 并做同节点/趋势对照；
+8. 确定可恢复的分片大小、worker 数、scratch 预算和 Parquet 合并方案；
+9. 先跑一小批正式分片并验证分析契约，再自主扩大到全量；
+10. 全量结束后合并、校验 case 数与结果集哈希，分别报告初始化覆盖、约束排除、
+    proxy 条件性能和失败恢复；不得自动删除原始 scratch。
 
 ## 1. 用户最终需求
 
@@ -64,8 +173,9 @@
 - 正式计划：\(1344\times300\) 地形条件 \(\times3\) 预载
   = 1,209,600 cases。
 
-不要加入固定 50° 或 80°→50° 梯度。不要启动上述正式扫描，除非用户在新窗口再次
-明确授权且所有前置门已关闭。
+不要加入固定 50° 或 80°→50° 梯度。用户已经在本次夜间交接中明确授权下一窗口
+在关闭执行门禁后自主启动正式扫描，不需要再次等待用户确认；但不能跳过本文件
+第 0 节列出的吞吐、收敛、缓存和存储前置检查。
 
 ## 4. 等待 M1 完成后必须核对的接口
 
@@ -82,16 +192,26 @@ M3 不生成砂纸、红砖或混凝土地形，只读消费 M1 catalog 和轨�
 如果 M1 改变字段名或 catalog schema，应在 M3 adapter 中做显式版本兼容，不能静默
 猜测或由 M3 重新合成地形。
 
+本轮已接入 `m1-material-terrain-catalog-v1` 的 15 条增强测试 catalog（每类 5 条）：
+15 个全尺寸文件的 SHA-256 已逐一重算一致，45/45 个 2×2/4×4/6×6 短程数值流程
+到达 `path_end`。该 catalog 仍明确标记 `formal_300_complete=false`，且没有同
+realization 的 5 μm 版本，因此只能关闭接口与短程流程问题，不能关闭正式门禁。
+
 ## 5. 当前代码与历史验证基线
 
-当前 `m3.3.0` 专项回归在清理后复核为 `tests/test_m3_array.py` 32 passed。
-以下解析、全仓和粗糙地形数值是清理前保存的历史验证快照；对应 `results/`
-机器可读产物和旧 45 个 M1 `defined_geometry` 条件现已删除：
+此前 `m3.3.0` 专项回归在清理后复核为 `tests/test_m3_array.py` 32 passed；
+本轮修复后的 `m3.4.0` 结果见 `M3_TEST_REPORT.md`。
+当前 `m3.4.0` 回归和流程证据为：
 
 - 解析验收：16/16；
-- 结果存储/续跑：6 passed；
-- summary 合并：1 passed；
-- 全仓：98 passed，另有 12 subtests；
+- M3 专项：36 passed；
+- 结果存储/续跑与 summary 合并：7 passed；
+- 全仓：106 passed，另有 15 subtests；
+- 真实 M1 runner case 完成，碰撞后换落点重放成功，resume 未重复计算。
+
+以下粗糙地形数值是清理前保存的历史验证快照；对应旧 45 个 M1
+`defined_geometry` 条件现已删除：
+
 - 旧 M1 地形 0.1 mm smoke：2×2、4×4、6×6 均沉降成功并到达 `path_end`。
 
 解析平面夹具：
@@ -217,7 +337,14 @@ git log -3 --oneline --decorate
 .venv\Scripts\python.exe -m spine_sim.array.cli smoke-existing-m1 `
   <new_m1_catalog.json> `
   --output results\m3_validation\existing_m1_smoke_after_m1_update.json `
-  --drag-length-mm 0.1 --seed <available_seed>
+  --drag-length-mm 0.1 --terrain-family <family> --seed <available_seed>
+
+# 对有界测试 catalog 中的每一条 condition 运行 2x2/4x4/6x6：
+.venv\Scripts\python.exe -m spine_sim.array.cli smoke-existing-m1 `
+  <new_m1_catalog.json> `
+  --output results\m3_validation\existing_m1_catalog_smoke.json `
+  --drag-length-mm 0.1 --all-conditions --verify-data-hash `
+  --placement-search
 ```
 
 ## 9. 存储和排名禁止项

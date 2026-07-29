@@ -51,6 +51,11 @@
 `(array_configuration_id, terrain_condition_id, loading_protocol_id)` 恰好一次；
 少一项、重复一项或跨构型地形不配对都拒绝正式分析。
 
+加载协议还冻结确定性换落点策略：名义落点优先，其后尝试 y=±1/±2 mm 和
+x=±1 mm 的全单元偏移。只有几何碰撞或地形越界触发下一候选；每次都从沉降开始
+重放整段 +x 路径。该策略用于尽量完成拖拽，不允许把多落点中的最大拉力当作排名
+值。
+
 ## 2. 当前与后续 M1 地形
 
 M3 不在内部合成“砂纸/红砖/混凝土”。`track_requests` 只根据 M1 catalog 中同一
@@ -126,6 +131,22 @@ one-factor-at-a-time 情景；不得据此把绝对拉力称为已标定预测�
 ```
 
 以上只是未来运行说明；本次任务没有执行这些正式命令。
+
+若只有有界 M1 测试 catalog，可用独立入口物化 1–3 个真实 M3 case，以验证
+runner、换落点、结果完整性和续跑；它不会放松正式 shard 的 300 条件门：
+
+```powershell
+.venv\Scripts\python.exe scripts\prepare_m3_validation_campaign.py `
+  <test_catalog.json> --terrain-family sandpaper --seed 41001 `
+  --size 2 --drag-length-mm 0.1 `
+  --output <m3_validation_campaign.json>
+
+.venv\Scripts\python.exe -m spine_sim.cli run-campaign `
+  <m3_validation_campaign.json> --output <local_validation_scratch>
+```
+
+该 campaign 固定为 `mode=small`、`formal_ranking_eligible=false`，不能与正式
+分片混用。
 
 ## 5. 输出分层与存储
 

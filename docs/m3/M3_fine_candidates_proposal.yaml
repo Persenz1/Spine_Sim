@@ -1,5 +1,5 @@
 schema_version: "2"
-m3_module_version: "m3.3.0"
+m3_module_version: "m3.4.0"
 status: "not_generated_formal_campaign_not_run"
 formal_round1_completed: false
 selected_candidate_count: 0

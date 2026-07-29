@@ -15,6 +15,7 @@ from spine_sim.terrain import (
     generate_terrain,
     load_material_profile,
     load_terrain,
+    refine_material_terrain_same_realization,
     register_terrain,
     save_terrain,
 )
@@ -84,6 +85,56 @@ class MaterialGenerationTests(unittest.TestCase):
         self.assertEqual(
             first.metadata["profile_hash"], second.metadata["profile_hash"]
         )
+
+    def test_same_realization_refinement_preserves_every_coarse_node(
+        self,
+    ) -> None:
+        coarse = self._generate(
+            "red_brick",
+            "fired_brick_standard",
+            seed=41_001,
+        )
+        fine_detail = generate_terrain(
+            material="red_brick",
+            subtype="fired_brick_standard",
+            size_x_m=0.6e-3,
+            size_y_m=0.4e-3,
+            resolution_m=5e-6,
+            seed=41_001,
+            mode="synthetic",
+        )
+        refined = refine_material_terrain_same_realization(
+            coarse,
+            fine_detail,
+        )
+        self.assertEqual(refined.height.shape, (81, 121))
+        np.testing.assert_array_equal(
+            refined.height[::2, ::2],
+            coarse.height,
+        )
+        self.assertTrue(np.all(refined.valid_mask))
+        self.assertTrue(
+            refined.metadata["same_realization_refinement"][
+                "coarse_node_identity_exact"
+            ]
+        )
+        other_seed = generate_terrain(
+            material="red_brick",
+            subtype="fired_brick_standard",
+            size_x_m=0.6e-3,
+            size_y_m=0.4e-3,
+            resolution_m=5e-6,
+            seed=41_002,
+            mode="synthetic",
+        )
+        with self.assertRaisesRegex(
+            TerrainConfigurationError,
+            "material, subtype and seed",
+        ):
+            refine_material_terrain_same_realization(
+                coarse,
+                other_seed,
+            )
 
     @unittest.skipUnless(
         importlib.util.find_spec("cupy"),

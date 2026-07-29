@@ -1,8 +1,8 @@
 # M3 共同背板阵列动力学数据字典
 
-**生产模块版本：** `m3.3.0`
+**生产模块版本：** `m3.4.0`
 **模型等级：**
-`project_model_P_common_rigid_backplate_z_dynamic_continuous_total_preload_v3`
+`project_model_P_common_rigid_backplate_z_dynamic_continuous_total_preload_v4`
 **单位：** 状态、索引、计数和无量纲指标以外均为 SI。
 
 ## 1. 物理与接口边界
@@ -14,6 +14,11 @@
 背板 \(x_B(t)\) 是规定的 +x 拖动输入，当前俯仰/横滚锁定。`external_total_preload_n`
 是整个单元唯一外部总法向载荷，不是逐针载荷；沉降结束后保持 0.5、1 或 2 N 到
 100 mm 路径终点。逐时刻接触反力可因惯性和阻尼偏离该外载。
+
+若圆柱杆体净空后检查发现初始或途中几何碰撞，可启用确定性落点搜索。搜索按冻结的
+全单元 x/y 偏移顺序，从沉降起点完整重放同一 +x 拖拽；它不会在途中瞬移背板、
+跳过碰撞段或中断总预载。改变 y 时，全部针从同一 M1 二维 region 的新全局 y 生成
+轨迹，不能生成新的随机地形。
 
 ## 2. 配置身份
 
@@ -41,8 +46,11 @@ x 方向逐列线性变化，并保持统一的竖直未加载伸出量。默认
 ### terrain 与 case 身份
 
 - M3 只消费 M1 catalog 或由 catalog recipe/region 派生的轨迹请求，不伪造地形。
-- `terrain_condition_id` 标识 family+seed+realization，`terrain_data_hash` 标识实际
-  地形数据。
+- 当前显式支持 `m1-material-terrain-catalog-v1`；出现未知的非空
+  `schema_version` 时拒绝适配，不能静默猜测字段语义。
+- `terrain_condition_id` 标识 family+seed+realization；
+  `terrain_data_sha256` 是每个 M3 case 的必填输入，必须与对应 M1 region manifest
+  的完整数据哈希一致，否则在读取或生成轨迹前拒绝运行。
 - `loading_protocol_id` 至少包含总预载、100 mm 路径、拖速、预载斜坡、沉降阻尼和
   积分/接触协议。
 - `case_id` 由完整硬件、阵列、terrain condition/data hash、加载协议及上游身份
@@ -146,6 +154,21 @@ lower/interior/upper hard-stop。轴向设置为 300、800、2000 N/m 或 `rigid
 杆体净空代理在每个保存点对圆柱杆下表面做默认 24 个轴向×9 个横向采样，并在
 M1 二维高度场上双线性查询。摘要保存最小净空、碰撞标志、采样数和假设名；这不
 等价于杆体/锥段的动态接触求解。
+
+启用 `placement_search` 时，摘要还保存：
+
+- 名义和最终 `unit_origin_xy_m`、是否换落点；
+- 每次尝试的偏移、初始化/终止状态、最小净空和首次碰撞路径位置；
+- 净空采样越过 M1 region 时的 `rod_clearance_failure_code`；
+- 尝试次数及最终选中的 attempt index。
+
+选择规则固定为“候选顺序中的第一个无碰撞完整路径”；所有候选都碰撞时，仅选择
+最小净空最大的尝试用于诊断，仍禁止排名。所有构型必须使用同一候选顺序，不能按
+构型从地形中挑选最大拉力落点。
+
+`aggregate_trace`/`full_pin_trace` 还逐样本重复保存 `region_id`、
+`terrain_data_sha256` 和 `selected_unit_origin_xy_m`，使 M4 无需猜测该路径实际
+使用的 M1 region、数据内容或碰撞规避后落点。
 
 ## 8. 完整性与合并
 
