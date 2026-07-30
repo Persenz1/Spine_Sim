@@ -26,6 +26,7 @@ from spine_sim.m3_fast.model import (
 )
 from spine_sim.m3_fast.solver import (
     MAX_STATION_EVALUATIONS,
+    STATION_NUMERICAL_FAILURE,
     STATION_OK,
     STATION_PRELOAD_UNREACHABLE,
     STATION_RECONTACT_REQUIRED,
@@ -292,7 +293,7 @@ def test_rejected_station_does_not_commit_candidate_state() -> None:
         backplate_travel_m=1e-6,
     )
 
-    assert status == STATION_SUPPORT_LOST
+    assert status == STATION_PRELOAD_UNREACHABLE
     assert returned_z_m == accepted_z_m
     assert evaluations <= MAX_STATION_EVALUATIONS
     assert np.array_equal(state.mode, accepted_state[0])
@@ -379,7 +380,7 @@ def test_detach_represses_from_fresh_state_and_finishes_path(
     assert np.allclose(calls[3]["delta_arc"], settings.dx_m)
     assert metrics["case_status"] == "complete"
     assert metrics["completion_ratio"] == 1.0
-    assert metrics["path_end_reached"] is True
+    assert metrics["path_end_attempted"] is True
     assert metrics["recontact_count"] == 1
     assert metrics["detach_count"] == 1
     assert diagnostics["station_count_attempted"] == 2
@@ -484,11 +485,73 @@ def test_invalid_station_is_recorded_but_does_not_abort_traversal(
     )
 
     assert metrics["case_status"] == "completed_with_gaps"
-    assert metrics["path_progress_ratio"] == 1.0
+    assert metrics["traversal_attempt_ratio"] == 1.0
     assert metrics["unsupported_station_count"] == 1
     assert metrics["track_invalid_station_count"] == 1
     assert diagnostics["station_count_attempted"] == 1
     assert trace.station_status[-1] == STATION_TRACK_INVALID
+
+
+def test_numerical_failure_does_not_clear_contact_history(
+    monkeypatch,
+) -> None:
+    batch = _test_batch()
+    bank = _flat_track_bank(np.unique(batch.y_m))
+    calls: list[dict[str, np.ndarray]] = []
+
+    def scripted_solve(
+        current_batch,
+        previous_state,
+        workspace,
+        _station_workspace,
+        *,
+        delta_arc_m,
+        preload_N,
+        previous_z_m,
+        **_kwargs,
+    ):
+        calls.append(
+            {
+                "mode": previous_state.mode.copy(),
+                "history": previous_state.u_t_history_m.copy(),
+                "delta_arc": np.asarray(delta_arc_m).copy(),
+            }
+        )
+        if len(calls) == 2:
+            return (
+                STATION_NUMERICAL_FAILURE,
+                previous_z_m,
+                MAX_STATION_EVALUATIONS,
+                0.02,
+            )
+        _accept_scripted_station(
+            current_batch, previous_state, workspace, preload_N
+        )
+        return STATION_OK, -1e-3, 1, 0.0
+
+    monkeypatch.setattr(solver_module, "solve_station", scripted_solve)
+    settings = PathSettings(
+        preload_N=1.0,
+        path_length_m=0.0002,
+        dx_m=0.0001,
+        relanding_search_steps=2,
+    )
+    metrics, diagnostics = simulate_path(
+        batch,
+        bank,
+        bank.rows_for_y(batch.y_m),
+        settings,
+    )
+
+    assert len(calls) == 3
+    assert np.all(calls[2]["mode"] == STICK)
+    assert np.all(calls[2]["history"] == 2e-5)
+    assert np.allclose(calls[2]["delta_arc"], 2 * settings.dx_m)
+    assert metrics["case_status"] == "completed_with_gaps"
+    assert metrics["numerical_failure_station_count"] == 1
+    assert metrics["recontact_count"] == 0
+    assert metrics["detach_count"] == 0
+    assert diagnostics["station_count_attempted"] == 2
 
 
 def test_candidate_coverage_never_reintroduces_ineligible_cases() -> None:

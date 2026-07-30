@@ -115,6 +115,10 @@ spine-m3-fast full-auto --workers 6
 并在摘要和完整路径中记录重新压合次数、落点偏移、求解尝试次数和未支撑站点，
 不会再把一次脱离直接当作 case 终点。
 
+每个落点求解尝试仍最多执行 9 次阵列评估；重新压合或更换候选落点会在同一空间
+站产生额外尝试，因此同时记录 `max_station_evaluations`（单次）和
+`max_station_total_evaluations`（该站合计）。纯数值未收敛不会触发接触历史清零。
+
 ```powershell
 .\.venv\Scripts\pythonw.exe scripts\monitor_m3_full_scan.py `
   --output results\m3_fast\full_scan

@@ -42,8 +42,8 @@ SUMMARY_FIELDS = (
     "preload",
     "path_length",
     "completion_ratio",
-    "path_progress_ratio",
-    "path_end_reached",
+    "traversal_attempt_ratio",
+    "path_end_attempted",
     "initial_preload_established",
     "Fx_q10",
     "Fx_median",
@@ -78,7 +78,7 @@ DEFAULT_CATALOG = (
 DEFAULT_OUTPUT_ROOT = (
     Path(__file__).resolve().parents[3] / "results" / "m3_fast"
 )
-FULL_SCAN_SOLVER_SEMANTICS = "constant-preload-reseat-v2"
+FULL_SCAN_SOLVER_SEMANTICS = "constant-preload-reseat-v3"
 
 
 @dataclass(frozen=True)
@@ -780,8 +780,10 @@ def _summary_schema() -> Any:
             pa.field("preload", pa.float64(), nullable=False),
             pa.field("path_length", pa.float64(), nullable=False),
             pa.field("completion_ratio", pa.float64(), nullable=False),
-            pa.field("path_progress_ratio", pa.float64(), nullable=False),
-            pa.field("path_end_reached", pa.bool_(), nullable=False),
+            pa.field(
+                "traversal_attempt_ratio", pa.float64(), nullable=False
+            ),
+            pa.field("path_end_attempted", pa.bool_(), nullable=False),
             pa.field(
                 "initial_preload_established", pa.bool_(), nullable=False
             ),
@@ -1484,6 +1486,12 @@ def _full_condition_worker(
                 "max_station_evaluations": int(
                     marker["max_station_evaluations"]
                 ),
+                "max_station_total_evaluations": int(
+                    marker["max_station_total_evaluations"]
+                ),
+                "max_station_attempts": int(
+                    marker["max_station_attempts"]
+                ),
                 "resumed": True,
             }
 
@@ -1501,6 +1509,8 @@ def _full_condition_worker(
     )
     rows: list[dict[str, Any]] = []
     maximum_evaluations = 0
+    maximum_total_evaluations = 0
+    maximum_attempts = 0
     case_count = len(designs) * len(FULL_SCAN_PRELOADS_N)
     trace_shard: dict[str, np.ndarray] | None = None
     if capture_paths:
@@ -1546,6 +1556,14 @@ def _full_condition_worker(
                 maximum_evaluations,
                 int(diagnostics["max_station_evaluations"]),
             )
+            maximum_total_evaluations = max(
+                maximum_total_evaluations,
+                int(diagnostics["max_station_total_evaluations"]),
+            )
+            maximum_attempts = max(
+                maximum_attempts,
+                int(diagnostics["max_station_attempts"]),
+            )
             row = _full_case_summary(
                 condition,
                 design,
@@ -1582,6 +1600,8 @@ def _full_condition_worker(
         "terrain_id": condition.terrain_id,
         "case_count": len(rows),
         "max_station_evaluations": maximum_evaluations,
+        "max_station_total_evaluations": maximum_total_evaluations,
+        "max_station_attempts": maximum_attempts,
         "summary_path": str(summary_path),
         "trace_path": str(trace_path) if capture_paths else None,
     }
@@ -1590,6 +1610,8 @@ def _full_condition_worker(
         "terrain_id": condition.terrain_id,
         "case_count": len(rows),
         "max_station_evaluations": maximum_evaluations,
+        "max_station_total_evaluations": maximum_total_evaluations,
+        "max_station_attempts": maximum_attempts,
         "resumed": False,
     }
 
@@ -2110,6 +2132,14 @@ def run_full_scan_stage(
         "selected_design_count": len(selected),
         "max_station_evaluations_observed": max(
             int(item["max_station_evaluations"])
+            for item in worker_results
+        ),
+        "max_station_total_evaluations_observed": max(
+            int(item["max_station_total_evaluations"])
+            for item in worker_results
+        ),
+        "max_station_attempts_observed": max(
+            int(item["max_station_attempts"])
             for item in worker_results
         ),
         "resumed_condition_count": sum(

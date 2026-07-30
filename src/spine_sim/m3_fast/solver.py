@@ -361,6 +361,7 @@ def solve_station(
     tolerance_N = _force_tolerance_N(preload_N)
     evaluation_count = 0
     best_abs_residual_N = math.inf
+    branch_transition_observed = False
 
     if math.isfinite(previous_z_m):
         z_m = float(
@@ -385,6 +386,14 @@ def solve_station(
             envelope_slope_x=envelope_slope_x,
             delta_arc_m=delta_arc_m,
             valid_mask=valid_mask,
+        )
+        branch_transition_observed = bool(
+            branch_transition_observed
+            or np.any(model_workspace.mode != previous_state.mode)
+            or np.any(
+                model_workspace.spring_branch
+                != previous_state.spring_branch
+            )
         )
         residual_N = total_fz_N - preload_N
         station_workspace.z_samples_m[evaluation_count] = z_m
@@ -466,6 +475,14 @@ def solve_station(
             delta_arc_m=delta_arc_m,
             valid_mask=valid_mask,
         )
+        branch_transition_observed = bool(
+            branch_transition_observed
+            or np.any(model_workspace.mode != previous_state.mode)
+            or np.any(
+                model_workspace.spring_branch
+                != previous_state.spring_branch
+            )
+        )
         lower_residual_N = total_fz_N - preload_N
         station_workspace.z_samples_m[evaluation_count] = z_min_m
         station_workspace.residual_samples_N[evaluation_count] = lower_residual_N
@@ -538,6 +555,14 @@ def solve_station(
             delta_arc_m=delta_arc_m,
             valid_mask=valid_mask,
         )
+        branch_transition_observed = bool(
+            branch_transition_observed
+            or np.any(model_workspace.mode != previous_state.mode)
+            or np.any(
+                model_workspace.spring_branch
+                != previous_state.spring_branch
+            )
+        )
         residual_N = total_fz_N - preload_N
         station_workspace.z_samples_m[evaluation_count] = z_m
         station_workspace.residual_samples_N[evaluation_count] = residual_N
@@ -562,7 +587,11 @@ def solve_station(
             upper_residual_N = residual_N
 
     return (
-        STATION_RECONTACT_REQUIRED,
+        (
+            STATION_RECONTACT_REQUIRED
+            if branch_transition_observed
+            else STATION_NUMERICAL_FAILURE
+        ),
         previous_z_m,
         evaluation_count,
         best_abs_residual_N,
@@ -711,10 +740,22 @@ def simulate_path(
             maximum_attempt_evaluations = max(
                 maximum_attempt_evaluations, evaluations
             )
-            if station_status != STATION_OK:
+            if station_status in {
+                STATION_RECONTACT_REQUIRED,
+                STATION_PRELOAD_UNREACHABLE,
+            }:
                 detach_count += 1
 
-        if station_status != STATION_OK:
+        should_reseat = (
+            not was_engaged
+            or station_status
+            in {
+                STATION_RECONTACT_REQUIRED,
+                STATION_TRACK_INVALID,
+                STATION_PRELOAD_UNREACHABLE,
+            }
+        )
+        if station_status != STATION_OK and should_reseat:
             attempted_statuses: set[int] = (
                 {station_status} if was_engaged else set()
             )
@@ -819,6 +860,15 @@ def simulate_path(
                     station_status = STATION_RECONTACT_REQUIRED
                     numerical_failure_stations += int(station > 0)
 
+        if (
+            station_status == STATION_NUMERICAL_FAILURE
+            and not should_reseat
+        ):
+            unsupported_stations += int(station > 0)
+            numerical_failure_stations += int(station > 0)
+            if first_unsupported_position_m is None:
+                first_unsupported_position_m = path_x_m
+
         station_total_evaluations[station] = total_evaluations
         station_attempts[station] = attempts
         if station == 0:
@@ -904,8 +954,8 @@ def simulate_path(
 
     metrics: dict[str, Any] = {
         "completion_ratio": supported_stations / station_count,
-        "path_progress_ratio": 1.0,
-        "path_end_reached": True,
+        "traversal_attempt_ratio": 1.0,
+        "path_end_attempted": True,
         "initial_preload_established": initial_status == STATION_OK,
         "Fx_q10": fx_q10,
         "Fx_median": fx_median,
