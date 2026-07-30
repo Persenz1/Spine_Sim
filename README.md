@@ -1,13 +1,15 @@
-# Spine Sim — M0/M1 基础与地形生成
+# Spine Sim — M0/M1 与独立 M3-fast 阵列筛选
 
-当前仓库只保留：
+当前仓库保留：
 
 - **M0 公共基础**：配置、单位与坐标系、稳定身份、运行后端、结果存储和批量运行骨架。
 - **M1 地形生成**：解析地形、全局坐标可重建随机场、材料特定地形、实测数据导入、
   本地地形库、有限球针尖包络、轨迹缓存与可视化。
+- **M3-fast 阵列筛选**：直接读取 M1 静态一维轨迹，以向量化闭式单针核和共同背板
+  标量平衡完成固定步长路径、Parquet 摘要、M3-A 参数包筛选和 M3-B 几何筛选。
 
-M2 单刺和 M3 阵列的实现、命令行入口、运行脚本、测试及专属文档已移除，等待重新设计。
-保留的跨模块工程背景只用于后续重构追溯，不代表当前实现。
+M2、M4 仍不在当前实现范围；M3-fast 不导入或兼容它们。跨模块工程背景仅供追溯，
+如与 M3 快速重构指导冲突，以后者为准。
 本地 `results/`、`output/`、`reports/` 与地形缓存未被删除。
 
 ## 环境
@@ -21,7 +23,7 @@ M2 单刺和 M3 阵列的实现、命令行入口、运行脚本、测试及专�
 安装开发版本：
 
 ```powershell
-python -m pip install -e ".[test,plot]"
+python -m pip install -e ".[test,plot,parquet]"
 ```
 
 CUDA 13 环境：
@@ -81,6 +83,35 @@ generate_m1_material_fine_refinements.py
 generate_m1_material_formal_catalog.py
 render_material_terrain_gallery.py
 terrain_data_probe.py
+```
+
+## M3-fast 命令
+
+默认从 `results/m1_material_formal_300/` 中读取已生成的 M1 轨迹；不重新生成地形。
+
+```powershell
+spine-m3-fast smoke
+spine-m3-fast m3a
+spine-m3-fast m3b
+spine-m3-fast all
+spine-m3-fast full-auto --workers 6
+```
+
+默认粗筛使用 P240 的 6 个配对 seed。可用 `--material`、`--subtype` 和
+`--seeds S1 S2 S3 S4 S5 S6` 指定同一地形配方的其他正式条件。结果写入
+`results/m3_fast/` 下的 Parquet、manifest 和候选选择 JSON。上游目录中声明的
+材料标定与 10/5 μm 收敛限制会原样保留在 M3-A manifest；当前排序只用于相对筛选，
+不代表绝对承载标定。
+
+`full-auto` 依次执行粗筛、细筛和终筛。粗筛遍历 1,344 个机械构型、3 档恒定
+推力和 45 个分层地形，只保存 case 摘要；细筛保留约 96 个构型并在 150 个
+地形上保存全局及逐针路径；终筛保留约 24 个构型，在全部 300 个地形上拖拽
+20 mm 并保存完整路径，最后给出 6 个构型。可分别使用 `full-coarse`、
+`full-fine`、`full-final` 断点续跑。运行期间可启动只读进度弹窗：
+
+```powershell
+.\.venv\Scripts\pythonw.exe scripts\monitor_m3_full_scan.py `
+  --output results\m3_fast\full_scan
 ```
 
 ## 测试
