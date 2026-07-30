@@ -1,4 +1,4 @@
-"""Reproducible formal-terrain batches shared by M0, M1, M2 and M3."""
+"""Reproducible formal-terrain batches built on the M0/M1 contracts."""
 
 from __future__ import annotations
 
@@ -61,7 +61,7 @@ def generate_formal_terrain_batch(
     backend: Literal["cpu", "cuda"] = "cuda",
     overwrite: bool = False,
 ) -> dict[str, Any]:
-    """Generate a resumable batch of full 2-D campaign terrains and M2 tracks."""
+    """Generate a resumable batch of full 2-D terrains and finite-tip tracks."""
 
     allowed = {
         "schema_version",

@@ -1,11 +1,9 @@
-"""Public M0-M3 interfaces for the spine coupling simulator."""
+"""Public M0/M1 interfaces for the spine coupling simulator."""
 
 from .core.config import (
     BackendConfig,
+    BaseCaseSpec,
     CampaignSpec,
-    M2CaseSpec,
-    M3CaseSpec,
-    M4CaseSpec,
     ProjectConfig,
     TerrainRecipeRef,
     TerrainRegionSpec,
@@ -13,56 +11,18 @@ from .core.config import (
 from .core.frames import FrameMetadata, Wrench
 from .core.identity import identity, stable_hash
 from .core.states import Event, EventType, StateBundle
-from .contact import (
-    AxialMode,
-    ContactState,
-    LegacyPrescribedPoseConstitutiveCore,
-    SingleSpineExperiment,
-    SingleSpineState,
-    SpineParameters,
-)
 from .terrain.models import RegionSpec, TerrainRecipe, TrackGeometry
-from .array import (
-    AngleLayout,
-    ArrayConfiguration,
-    ArrayDynamicExperimentSettings,
-    ArrayDynamicState,
-    DynamicCommonBackplateArray,
-    DynamicCommonBackplateExperiment,
-    LegacyArrayExperimentSettings,
-    LegacyArrayState,
-    LegacyCommonBackplateArray,
-    LegacyFixedZCommonBackplateExperiment,
-)
 
 __all__ = [
     "BackendConfig",
+    "BaseCaseSpec",
     "CampaignSpec",
-    "AxialMode",
-    "AngleLayout",
-    "ArrayConfiguration",
-    "ArrayDynamicExperimentSettings",
-    "ArrayDynamicState",
-    "ContactState",
-    "DynamicCommonBackplateArray",
-    "DynamicCommonBackplateExperiment",
     "Event",
     "EventType",
     "FrameMetadata",
-    "M2CaseSpec",
-    "M3CaseSpec",
-    "M4CaseSpec",
-    "LegacyArrayExperimentSettings",
-    "LegacyArrayState",
-    "LegacyCommonBackplateArray",
-    "LegacyFixedZCommonBackplateExperiment",
     "ProjectConfig",
-    "LegacyPrescribedPoseConstitutiveCore",
     "RegionSpec",
     "StateBundle",
-    "SingleSpineExperiment",
-    "SingleSpineState",
-    "SpineParameters",
     "TerrainRecipe",
     "TerrainRecipeRef",
     "TerrainRegionSpec",
@@ -72,4 +32,4 @@ __all__ = [
     "stable_hash",
 ]
 
-__version__ = "0.5.0"
+__version__ = "0.2.0"

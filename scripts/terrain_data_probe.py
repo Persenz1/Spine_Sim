@@ -1,7 +1,7 @@
 """Probe, download, and parse public surface-topography evidence.
 
 This Phase 0-1 utility intentionally does not generate terrain and does not
-modify the M1-to-M3 runtime interface.  Its first supported measured format is
+modify the M1 runtime interface.  Its first supported measured format is
 the Hirox CSV export used by the Sandpaper Wind Turbine Blade Benchmark
 Dataset, DOI 10.17632/hcgcnm269w.2.
 """

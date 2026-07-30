@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
-from typing import Any, ClassVar, Mapping
+from typing import Any, Mapping
 
 from .errors import ConfigurationError
 from .identity import identity, stable_hash
@@ -102,11 +102,9 @@ class BaseCaseSpec:
     upstream_hash: str = ""
     tags: tuple[str, ...] = ()
 
-    MODULE: ClassVar[str] = ""
-
     def __post_init__(self) -> None:
-        if self.module != self.MODULE:
-            raise ConfigurationError(f"{type(self).__name__} module must be {self.MODULE}")
+        if not self.module:
+            raise ConfigurationError("module cannot be empty")
         if not self.module_version:
             raise ConfigurationError("module_version cannot be empty")
 
@@ -126,40 +124,13 @@ class BaseCaseSpec:
     def config_hash(self) -> str:
         return stable_hash(asdict(self))
 
-
-@dataclass(frozen=True)
-class M2CaseSpec(BaseCaseSpec):
-    MODULE: ClassVar[str] = "m2"
-
     @classmethod
-    def from_mapping(cls, data: Mapping[str, Any]) -> "M2CaseSpec":
-        return _case_from_mapping(cls, data)
-
-
-@dataclass(frozen=True)
-class M3CaseSpec(BaseCaseSpec):
-    MODULE: ClassVar[str] = "m3"
-
-    @classmethod
-    def from_mapping(cls, data: Mapping[str, Any]) -> "M3CaseSpec":
-        return _case_from_mapping(cls, data)
-
-
-@dataclass(frozen=True)
-class M4CaseSpec(BaseCaseSpec):
-    MODULE: ClassVar[str] = "m4"
-
-    @classmethod
-    def from_mapping(cls, data: Mapping[str, Any]) -> "M4CaseSpec":
-        return _case_from_mapping(cls, data)
-
-
-def _case_from_mapping(case_type: type[BaseCaseSpec], data: Mapping[str, Any]) -> Any:
-    allowed = {"module", "module_version", "parameters", "upstream_hash", "tags"}
-    _unknown(data, allowed, case_type.__name__)
-    normalized = dict(data)
-    normalized["tags"] = tuple(normalized.get("tags", ()))
-    return case_type(**normalized)
+    def from_mapping(cls, data: Mapping[str, Any]) -> "BaseCaseSpec":
+        allowed = {"module", "module_version", "parameters", "upstream_hash", "tags"}
+        _unknown(data, allowed, "case")
+        normalized = dict(data)
+        normalized["tags"] = tuple(normalized.get("tags", ()))
+        return cls(**normalized)
 
 
 @dataclass(frozen=True)
@@ -198,14 +169,10 @@ class CampaignSpec:
     def from_mapping(cls, data: Mapping[str, Any]) -> "CampaignSpec":
         allowed = {"name", "module_version", "callable", "cases", "workers", "mode"}
         _unknown(data, allowed, "campaign")
-        case_types = {"m2": M2CaseSpec, "m3": M3CaseSpec, "m4": M4CaseSpec}
-        cases: list[BaseCaseSpec] = []
-        for raw in data.get("cases", []):
-            try:
-                case_type = case_types[raw["module"]]
-            except KeyError as exc:
-                raise ConfigurationError("case module must be m2, m3 or m4") from exc
-            cases.append(case_type.from_mapping(raw))
+        cases = [
+            BaseCaseSpec.from_mapping(raw)
+            for raw in data.get("cases", [])
+        ]
         return cls(
             name=str(data["name"]),
             module_version=str(data["module_version"]),

@@ -14,7 +14,7 @@ terrain_library/
 
 该目录是可重建缓存，不提交大型二进制文件。`recipes/` 和 `manifests/`
 定义重建身份；`regions/` 保存 10 μm `float32 .npy` 原始高度；
-`tracks/` 保存 M2/M3 使用的一维有限针尖几何；`sources/` 只登记文件高度图
+`tracks/` 保存供下游使用的一维有限针尖几何；`sources/` 只登记文件高度图
 的原始路径、单位、网格和哈希。
 
 生产地形以 `np.load(path, mmap_mode="r")` 只读打开。删除区域缓存时保留

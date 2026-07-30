@@ -368,7 +368,7 @@ class TerrainLibrary:
         *,
         overwrite: bool = False,
     ) -> dict[str, Any]:
-        """Atomically store a material terrain without changing M3's mmap contract."""
+        """Atomically store a material terrain using the M1 mmap contract."""
 
         if recipe.generator_name != "material_hybrid":
             raise TerrainConfigurationError(

@@ -1,13 +1,12 @@
 # M1 文档
 
-M1 负责地形生成、存储、有限针尖包络和向 M2/M3 提供稳定的地形身份。当前实现已
-加入砂纸、红砖和混凝土的材料特定生成；旧 M2 campaign 内嵌的地形不再是当前
-正式输入。当前没有已生成的正式 M1 catalog。
+M1 负责地形生成、存储、有限针尖包络和向下游提供稳定的地形身份。当前实现已
+加入砂纸、红砖和混凝土的材料特定生成。当前没有已生成的正式 M1 catalog。
 
 - [`M1_TERRAIN_LIBRARY.md`](M1_TERRAIN_LIBRARY.md)：本地库与命令入口。
 - [`M1_DATA_DICTIONARY.md`](M1_DATA_DICTIONARY.md)：recipe、region、track 和哈希字段。
 - [`M1_10UM_5UM_RULE.md`](M1_10UM_5UM_RULE.md)：同 realization 的 10/5 μm 规则。
-- [`M1_to_M2_handoff.md`](M1_to_M2_handoff.md)：M2/M3 消费接口。
+- [`M1_to_M2_handoff.md`](M1_to_M2_handoff.md)：历史下游消费接口，仅供重构参考。
 - [`M1_OPEN_ISSUES.md`](M1_OPEN_ISSUES.md)：剩余问题。
 - [`M1_TEST_REPORT.md`](M1_TEST_REPORT.md)、[`M1_BENCHMARK_REPORT.md`](M1_BENCHMARK_REPORT.md)、
   [`M1_GPU_TERRAIN_SUITE_REPORT.md`](M1_GPU_TERRAIN_SUITE_REPORT.md)：2026-07-27

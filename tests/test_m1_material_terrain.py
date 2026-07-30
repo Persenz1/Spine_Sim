@@ -5,7 +5,6 @@ import importlib.util
 import tempfile
 import unittest
 from pathlib import Path
-from types import SimpleNamespace
 
 import numpy as np
 
@@ -303,54 +302,6 @@ class MaterialGenerationTests(unittest.TestCase):
             )
             self.assertEqual(manifest["material"], "red_brick")
             self.assertEqual(metadata["valid_fraction"], 1.0)
-
-    def test_m3_two_dimensional_reader_smoke_for_each_material(self) -> None:
-        from spine_sim.array.case import _proxy_array_rod_clearance
-
-        specifications = (
-            ("sandpaper", "P200"),
-            ("red_brick", "fired_brick_standard"),
-            ("concrete", "rough_wall"),
-        )
-        parameters = SimpleNamespace(
-            diameter_m=0.1e-3,
-            exposed_length_m=0.2e-3,
-            axis_xz=(0.0, 1.0),
-            transverse_xz=(1.0, 0.0),
-        )
-        response = SimpleNamespace(
-            holder_xyz_m=(0.0, 0.0, 1.0e-3),
-            center_xyz_m=(0.0, 0.0, 1.0e-3),
-        )
-        point = SimpleNamespace(pin_responses=(response,))
-        with tempfile.TemporaryDirectory() as temporary:
-            for material, subtype in specifications:
-                with self.subTest(material=material):
-                    terrain = self._generate(material, subtype)
-                    library_root = Path(temporary) / material
-                    recipe, region, _ = register_terrain(
-                        library_root,
-                        terrain,
-                        origin_x_m=-0.3e-3,
-                        origin_y_m=-0.2e-3,
-                    )
-                    result = SimpleNamespace(
-                        points=(point,),
-                        configuration=SimpleNamespace(
-                            pin_count=1, pin_parameters=(parameters,)
-                        ),
-                        terrain_recipe_id=recipe.terrain_recipe_id,
-                        region_id=region.region_id,
-                    )
-                    clearance = _proxy_array_rod_clearance(
-                        library=TerrainLibrary(library_root),
-                        result=result,
-                        axial_sample_count=4,
-                        lateral_sample_count=3,
-                    )
-                    self.assertEqual(clearance.shape, (1, 1))
-                    self.assertTrue(np.all(np.isfinite(clearance)))
-
 
 class MeasuredPreprocessingTests(unittest.TestCase):
     def test_zero_is_valid_by_default_and_nonfinite_mask_is_preserved(self) -> None:

@@ -5,8 +5,8 @@ import unittest
 from pathlib import Path
 
 from spine_sim.core.config import (
+    BaseCaseSpec,
     CampaignSpec,
-    M2CaseSpec,
     ProjectConfig,
     TerrainRegionSpec,
 )
@@ -71,12 +71,14 @@ class ConfigTests(unittest.TestCase):
 
     def test_case_and_campaign_identity_are_deterministic(self) -> None:
         raw = {
-            "module": "m2",
+            "module": "m0",
             "module_version": "1",
             "parameters": {"seed": 3, "radius_m": 5e-5},
         }
-        one = M2CaseSpec.from_mapping(raw)
-        two = M2CaseSpec.from_mapping({**raw, "parameters": {"radius_m": 5e-5, "seed": 3}})
+        one = BaseCaseSpec.from_mapping(raw)
+        two = BaseCaseSpec.from_mapping(
+            {**raw, "parameters": {"radius_m": 5e-5, "seed": 3}}
+        )
         self.assertEqual(one.case_id, two.case_id)
         campaign = CampaignSpec("x", "1", "spine_sim.examples.fake_module:run_case", (one,))
         self.assertTrue(campaign.campaign_id.startswith("campaign_"))

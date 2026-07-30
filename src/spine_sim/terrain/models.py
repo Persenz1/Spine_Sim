@@ -408,7 +408,7 @@ class RegionSpec:
 
 @dataclass(frozen=True)
 class TrackGeometry:
-    """One-dimensional finite-tip geometry consumed by M2 and M3."""
+    """One-dimensional finite-tip geometry for downstream consumers."""
 
     terrain_recipe_id: str
     region_id: str

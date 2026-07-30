@@ -2,7 +2,7 @@
 
 The batch is deterministic and resumable.  Sandpaper subtypes cycle through
 P40/P60/P100/P180/P240 in a frozen order while all three material families use
-the same 100 seeds, preserving the paired M3 condition design.
+the same 100 seeds, preserving the paired downstream condition design.
 """
 
 from __future__ import annotations
@@ -381,8 +381,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             "Red-brick and concrete profiles remain provisional pending "
             "project measurement calibration.",
             "Material-hybrid 10/5 um same-realization convergence must be "
-            "closed for final M3 candidates.",
-            "M1 terrain completeness does not close M3 numerical or physical "
+            "closed for final downstream candidates.",
+            "M1 terrain completeness does not close downstream numerical or physical "
             "calibration gates.",
         ],
         "conditions": conditions,

@@ -160,7 +160,7 @@ def _correlated_field_cuda(
 
     Random draws remain on NumPy's PCG64 stream so the seed semantics do not
     depend on the installed CuPy version.  Interpolation is tiled in Y and
-    copied directly into the final host array, which keeps full M3 campaign
+    copied directly into the final host array, which keeps large campaign
     regions within an 8 GB device.
     """
 

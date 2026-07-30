@@ -8,7 +8,7 @@ from pathlib import Path
 
 import numpy as np
 
-from spine_sim.core.config import CampaignSpec, M2CaseSpec
+from spine_sim.core.config import BaseCaseSpec, CampaignSpec
 from spine_sim.io.results import (
     CompactResultStore,
     ResultStore,
@@ -21,11 +21,11 @@ from spine_sim.runtime.runner import CampaignRunner
 
 def make_campaign(*, include_failure: bool = False, workers: int = 1) -> CampaignSpec:
     cases = [
-        M2CaseSpec("m2", "fake-1", {"seed": 1, "samples": 5}),
-        M2CaseSpec("m2", "fake-1", {"seed": 2, "samples": 5}),
+        BaseCaseSpec("m0", "fake-1", {"seed": 1, "samples": 5}),
+        BaseCaseSpec("m0", "fake-1", {"seed": 2, "samples": 5}),
     ]
     if include_failure:
-        cases.append(M2CaseSpec("m2", "fake-1", {"seed": 3, "fail": True}))
+        cases.append(BaseCaseSpec("m0", "fake-1", {"seed": 3, "fail": True}))
     return CampaignSpec(
         "test", "m0-test", "spine_sim.examples.fake_module:run_case", tuple(cases), workers
     )
@@ -155,8 +155,8 @@ class RunnerTests(unittest.TestCase):
     ) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             cases = tuple(
-                M2CaseSpec(
-                    "m2",
+                BaseCaseSpec(
+                    "m0",
                     "fake-1",
                     {
                         "seed": seed,
