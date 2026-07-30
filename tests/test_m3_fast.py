@@ -6,6 +6,7 @@ import numpy as np
 import spine_sim.m3_fast.solver as solver_module
 
 from spine_sim.m3_fast.campaign import (
+    _full_stage_definition,
     _select_m3b_configurations,
     generate_full_scan_designs,
     generate_m3a_packages,
@@ -126,6 +127,16 @@ def test_full_scan_has_1344_designs_and_plus_x_angle_gradient() -> None:
         for value in columns
     ]
     assert np.allclose(column_angles, np.linspace(60.0, 80.0, 5))
+
+
+def test_full_final_uses_ten_mm_path_with_fifty_um_stations() -> None:
+    _, path, capture_paths, target = _full_stage_definition("final")
+
+    assert math.isclose(path.path_length_m, 0.010)
+    assert math.isclose(path.dx_m, 0.00005)
+    assert path.station_count == 200
+    assert capture_paths
+    assert target == 6
 
 
 def test_vectorized_model_produces_finite_full_array_trial() -> None:

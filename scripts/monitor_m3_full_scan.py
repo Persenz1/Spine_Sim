@@ -20,13 +20,27 @@ class ScanMonitor:
     def __init__(self, root: tk.Tk, output_root: Path) -> None:
         self.root = root
         self.output_root = output_root
-        self.root.title("M3 全量扫描进度")
-        self.root.geometry("720x430")
-        self.root.minsize(660, 390)
+        terminal_only = (
+            (output_root / "terminal_plan.json").is_file()
+            and not (output_root / "coarse" / "manifest.json").is_file()
+            and not (output_root / "fine" / "manifest.json").is_file()
+        )
+        self.stages = (
+            (("final", "终筛", 300),) if terminal_only else STAGES
+        )
+        self.root.title(
+            "M3 终筛进度" if terminal_only else "M3 全量扫描进度"
+        )
+        self.root.geometry("720x250" if terminal_only else "720x430")
+        self.root.minsize(660, 230 if terminal_only else 390)
 
         heading = ttk.Label(
             root,
-            text="M3 独立阵列全量扫描",
+            text=(
+                "M3 独立阵列12构型终筛"
+                if terminal_only
+                else "M3 独立阵列全量扫描"
+            ),
             font=("Microsoft YaHei UI", 16, "bold"),
         )
         heading.pack(anchor="w", padx=20, pady=(18, 4))
@@ -37,7 +51,7 @@ class ScanMonitor:
         ).pack(anchor="w", padx=20, pady=(0, 14))
 
         self.stage_widgets: dict[str, tuple[ttk.Progressbar, ttk.Label]] = {}
-        for stage, label, _ in STAGES:
+        for stage, label, _ in self.stages:
             frame = ttk.LabelFrame(root, text=label, padding=12)
             frame.pack(fill="x", padx=20, pady=6)
             progress = ttk.Progressbar(
@@ -108,7 +122,7 @@ class ScanMonitor:
         total_complete = 0
         all_complete = True
         any_started = False
-        for stage, _, expected in STAGES:
+        for stage, _, expected in self.stages:
             manifest = self._manifest(stage)
             completed = min(self._completed_conditions(stage), expected)
             total_expected += expected

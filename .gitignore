@@ -13,3 +13,6 @@ results/
 /data/raw/
 /data/derived/
 *.part
+node_modules/
+/report_build/previews/
+/report_build/previews_terminal/

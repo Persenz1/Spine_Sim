@@ -1988,8 +1988,8 @@ def _full_stage_definition(
             FULL_SCAN_FINAL_SEEDS,
             PathSettings(
                 preload_N=1.0,
-                path_length_m=0.020,
-                dx_m=0.0001,
+                path_length_m=0.010,
+                dx_m=0.00005,
             ),
             True,
             6,
