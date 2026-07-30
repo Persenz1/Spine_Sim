@@ -1,4 +1,4 @@
-"""Analytic and existing-M1 gates for m3.4.0 common-backplate dynamics."""
+"""Analytic and existing-M1 gates for m3.5.0 common-backplate dynamics."""
 
 from __future__ import annotations
 
@@ -205,6 +205,8 @@ def _steady_mean(result) -> float:
 
 def run_dynamic_analytic_validation(
     output_path: Path | None = None,
+    *,
+    terrain_catalog: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Run only the production dynamic M3 gates; no legacy screen is executed."""
 
@@ -754,6 +756,46 @@ def run_dynamic_analytic_validation(
         )
     )
 
+    formal_blockers = [
+        "dynamic parameters are not project calibrated/frozen",
+        "100 mm path time-step/contact/settlement-damping convergence is open",
+        "5 um final terrain-resolution convergence is open",
+        "rough-terrain 6x6 contact-stabilization convergence is open",
+    ]
+    catalog_evidence = None
+    if terrain_catalog is None:
+        formal_blockers.insert(
+            1,
+            "the required 3-family x 100-seed paired M1 catalog "
+            "was not supplied to this validation",
+        )
+    else:
+        try:
+            formal_conditions = validate_terrain_catalog(
+                terrain_catalog, require_formal_300=True
+            )
+        except ValueError as exc:
+            formal_blockers.insert(
+                1, f"formal M1 catalog validation failed: {exc}"
+            )
+        else:
+            catalog_evidence = {
+                "terrain_catalog_id": terrain_catalog.get(
+                    "terrain_catalog_id"
+                ),
+                "condition_count": len(formal_conditions),
+                "family_counts": {
+                    family: sum(
+                        condition["terrain_family"] == family
+                        for condition in formal_conditions
+                    )
+                    for family in (
+                        "sandpaper",
+                        "red_brick",
+                        "concrete",
+                    )
+                },
+            }
     report = {
         "generated_at_utc": utc_now(),
         "m3_module_version": M3_MODULE_VERSION,
@@ -766,13 +808,8 @@ def run_dynamic_analytic_validation(
         "passed_count": sum(bool(gate["passed"]) for gate in gates),
         "all_passed": all(bool(gate["passed"]) for gate in gates),
         "formal_m3_round1_allowed": False,
-        "formal_m3_round1_blockers": [
-            "dynamic parameters are not project calibrated/frozen",
-            "the required 3-family x 100-seed paired M1 catalog is absent",
-            "100 mm path time-step/contact/settlement-damping convergence is open",
-            "5 um final terrain-resolution convergence is open",
-            "rough-terrain 6x6 contact-stabilization convergence is open",
-        ],
+        "formal_terrain_catalog_evidence": catalog_evidence,
+        "formal_m3_round1_blockers": formal_blockers,
         "gates": gates,
     }
     if output_path is not None:

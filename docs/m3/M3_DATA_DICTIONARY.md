@@ -1,6 +1,6 @@
 # M3 共同背板阵列动力学数据字典
 
-**生产模块版本：** `m3.4.0`
+**生产模块版本：** `m3.5.0`
 **模型等级：**
 `project_model_P_common_rigid_backplate_z_dynamic_continuous_total_preload_v4`
 **单位：** 状态、索引、计数和无量纲指标以外均为 SI。
@@ -15,10 +15,10 @@
 是整个单元唯一外部总法向载荷，不是逐针载荷；沉降结束后保持 0.5、1 或 2 N 到
 100 mm 路径终点。逐时刻接触反力可因惯性和阻尼偏离该外载。
 
-若圆柱杆体净空后检查发现初始或途中几何碰撞，可启用确定性落点搜索。搜索按冻结的
-全单元 x/y 偏移顺序，从沉降起点完整重放同一 +x 拖拽；它不会在途中瞬移背板、
-跳过碰撞段或中断总预载。改变 y 时，全部针从同一 M1 二维 region 的新全局 y 生成
-轨迹，不能生成新的随机地形。
+若圆柱杆体净空在线检查发现初始或途中几何碰撞，可启用确定性落点搜索。当前候选在
+首次命中的正式保留路径点以 `structural_boundary` 终止，随后按冻结的全单元 x/y
+偏移顺序从沉降起点重放同一 +x 拖拽；它不会在途中瞬移背板或跳过碰撞段。改变 y
+时，全部针从同一 M1 二维 region 的新全局 y 生成轨迹，不能生成新的随机地形。
 
 ## 2. 配置身份
 
@@ -46,9 +46,11 @@ x 方向逐列线性变化，并保持统一的竖直未加载伸出量。默认
 ### terrain 与 case 身份
 
 - M3 只消费 M1 catalog 或由 catalog recipe/region 派生的轨迹请求，不伪造地形。
-- 当前显式支持 `m1-material-terrain-catalog-v1`；出现未知的非空
-  `schema_version` 时拒绝适配，不能静默猜测字段语义。
+- 当前显式支持 `m1-material-terrain-catalog-v1` 和有界同 realization 对照用的
+  `m1-material-fine-refinement-catalog-v1`；出现未知的非空 `schema_version`
+  时拒绝适配，不能静默猜测字段语义。
 - `terrain_condition_id` 标识 family+seed+realization；
+  `terrain_realization_id` 显式保存粗/细分辨率共享的 realization 身份；
   `terrain_data_sha256` 是每个 M3 case 的必填输入，必须与对应 M1 region manifest
   的完整数据哈希一致，否则在读取或生成轨迹前拒绝运行。
 - `loading_protocol_id` 至少包含总预载、100 mm 路径、拖速、预载斜坡、沉降阻尼和
@@ -127,7 +129,7 @@ lower/interior/upper hard-stop。轴向设置为 300、800、2000 N/m 或 `rigid
 
 | 级别 | 所有 case | 内容 |
 |---|---:|---|
-| `summary` | 是 | `summary.json` 中的配置、摘要、验证、失败诊断和哈希；不写 `path.npz` |
+| `summary` | 是 | 正式分片写入事务型 SQLite 摘要记录；小规模运行可用 `summary.json`；均不写 `path.npz` |
 | `aggregate_trace` | 选定 | 沉降曲线；背板状态、阵列总力/总矩、有效针数、Neff、Gini、能量和残差等降采样数组 |
 | `full_pin_trace` | 少量 | aggregate 全部内容加逐针状态、力、冲量、wrench、应力/屈曲/硬限位及杆体净空代理 |
 
@@ -142,7 +144,10 @@ lower/interior/upper hard-stop。轴向设置为 300、800、2000 N/m 或 `rigid
 2. 初始化：斜坡、时间、阻尼倍数、步数、连续稳定步数、实际/最大接近量、最终外载、
    反力误差、最大模态速度和动力学残差。
 3. 条件性能：稳态/冲击拉力统计、反力范围、接触比例、Neff/Gini、最大/平均针载荷、
-   应力/屈曲/弹簧限位、事件计数以及各类残差。
+   应力/屈曲/弹簧限位、事件计数以及各类残差。`path_point_count` 包含按需保留的
+   事件点，`performance_sample_count` 只统计统一路径位置样本，
+   `steady_sample_count` 是去除前 20% 路径和冲击点后的性能样本数；分位数和
+   Neff 中位数只使用统一位置样本，避免不同时间步因事件频率不同而改变权重。
 4. 门禁：时间步、接触参数、沉降阻尼、地形分辨率收敛和物理标定标志，
    `unclosed_parameter_names`、`formal_ranking_eligible`。
 
@@ -151,20 +156,29 @@ lower/interior/upper hard-stop。轴向设置为 300、800、2000 N/m 或 `rigid
 不得以零承载加入性能排名。已完成路径但违反屈服、屈曲或杆体净空约束的 case 可保留
 条件性能用于诊断，但 `ranking_inclusion_allowed=false`。
 
-杆体净空代理在每个保存点对圆柱杆下表面做默认 24 个轴向×9 个横向采样，并在
-M1 二维高度场上双线性查询。摘要保存最小净空、碰撞标志、采样数和假设名；这不
-等价于杆体/锥段的动态接触求解。
+杆体净空代理在每个正式保留路径点对圆柱杆下表面做默认 24 个轴向×9 个横向采样，
+并在 M1 二维高度场上双线性查询。首次碰撞会立即停止当前候选；摘要保存最小净空、
+碰撞标志、采样数和假设名。这不等价于杆体/锥段的动态接触求解，保存点之间仍可能
+漏检。
 
 启用 `placement_search` 时，摘要还保存：
 
 - 名义和最终 `unit_origin_xy_m`、是否换落点；
 - 每次尝试的偏移、初始化/终止状态、最小净空和首次碰撞路径位置；
 - 净空采样越过 M1 region 时的 `rod_clearance_failure_code`；
+- 起点已碰撞而短路完整拖动时的
+  `initial_clearance_precheck_short_circuited`；
 - 尝试次数及最终选中的 attempt index。
 
 选择规则固定为“候选顺序中的第一个无碰撞完整路径”；所有候选都碰撞时，仅选择
 最小净空最大的尝试用于诊断，仍禁止排名。所有构型必须使用同一候选顺序，不能按
 构型从地形中挑选最大拉力落点。
+
+成对收敛分析还要求参考和候选均为 `path_end`、初始化成功、
+`conditional_performance_available=true`、`ranking_inclusion_allowed=true`、
+无杆碰撞、`selected_unit_origin_xy_m` 完全相同且各有至少 20 个稳态性能样本。
+任一项不满足时，分析器将该对
+标为 `ineligible_or_numerically_invalid`，不会用仍保留的诊断拉力字段声称收敛。
 
 `aggregate_trace`/`full_pin_trace` 还逐样本重复保存 `region_id`、
 `terrain_data_sha256` 和 `selected_unit_origin_xy_m`，使 M4 无需猜测该路径实际
@@ -172,10 +186,16 @@ M1 二维高度场上双线性查询。摘要保存最小净空、碰撞标志�
 
 ## 8. 完整性与合并
 
-每个完成 case 的目录含 `summary.json`、可选 `path.npz` 和 `COMPLETE`。
+小规模或 trace 输出中，每个完成 case 的目录含 `summary.json`、可选 `path.npz`
+和 `COMPLETE`。
 `COMPLETE` 必须等于 `summary.json` 记录的结果哈希；存在路径数组时还校验
 `path_sha256`，存在事件文件时还校验 `events_sha256`；summary 级别则要求两者均
 不存在。续跑跳过完整且哈希正确的 case，损坏或不完整目录按失败恢复流程重算。
 
-`scripts/merge_m3_summaries.py` 校验上述哈希后，将 summary 原子合并为 zstd
-Parquet；没有 pyarrow 时可显式回退 JSONL，并另写 manifest/result-set hash。
+正式 summary 分片使用 `case_summaries.sqlite3`：每个 case 在单事务中保存摘要、
+验证、结果哈希、payload SHA-256 和完成状态，不创建逐 case 目录。resume 只跳过
+事务完成且 payload 哈希正确的记录。
+
+`scripts/merge_m3_summaries.py` 同时支持上述两种存储，校验完成状态和 payload
+哈希后将 summary 原子合并为 zstd Parquet；没有 pyarrow 时可显式回退 JSONL，
+并另写 manifest/result-set hash。

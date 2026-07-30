@@ -234,6 +234,18 @@ class M3JointDynamicTests(unittest.TestCase):
         self.assertIn(EventLabel.DETACH_TO_FREE.value, labels)
         self.assertIn(EventLabel.RECONTACT.value, labels)
         self.assertEqual(result.summary.run_terminal_state.value, "path_end")
+        self.assertEqual(
+            result.summary.path_point_count,
+            len(result.points),
+        )
+        self.assertGreater(
+            result.summary.path_point_count,
+            result.summary.performance_sample_count,
+        )
+        self.assertLessEqual(
+            result.summary.steady_sample_count,
+            result.summary.performance_sample_count,
+        )
         self.assertNotIn(
             "no_admissible_contact_equilibrium",
             result.summary.termination_reason,
@@ -485,6 +497,40 @@ class M3JointDynamicTests(unittest.TestCase):
         self.assertIsNone(result.summary.tangential_force_median_n)
         self.assertIsNone(result.summary.total_contact_reaction_time_mean_n)
         self.assertFalse(result.summary.formal_ranking_eligible)
+
+    def test_retained_point_callback_stops_partial_path(self):
+        observed_positions: list[float] = []
+
+        def stop_after_first_output(point):
+            observed_positions.append(point.path_position_m)
+            if point.path_position_m > 0.0:
+                return "fixture_retained_point_boundary"
+            return None
+
+        result = DynamicCommonBackplateExperiment(
+            self.plane_system,
+            _settings(drag_length_m=0.04e-3),
+            _integrator(1e-3),
+        ).run(point_stop_callback=stop_after_first_output)
+        self.assertEqual(
+            result.summary.run_terminal_state.value,
+            "structural_boundary",
+        )
+        self.assertEqual(
+            result.summary.termination_reason,
+            "fixture_retained_point_boundary",
+        )
+        self.assertFalse(result.summary.conditional_performance_available)
+        self.assertFalse(result.summary.formal_ranking_eligible)
+        self.assertEqual(len(result.points), 2)
+        self.assertEqual(
+            observed_positions,
+            [point.path_position_m for point in result.points],
+        )
+        self.assertLess(
+            result.points[-1].path_position_m,
+            _settings(drag_length_m=0.04e-3).drag_length_m,
+        )
 
     def test_output_levels_do_not_change_summary_values(self):
         before = asdict(self.plane.summary)
@@ -978,7 +1024,7 @@ class M3ScreeningDesignTests(unittest.TestCase):
 
     def test_bounded_convergence_plan_and_trend_gate(self):
         self.assertEqual(len(build_convergence_sentinels()), 8)
-        self.assertEqual(len(build_convergence_variants()), 11)
+        self.assertEqual(len(build_convergence_variants()), 12)
         reference = {
             "run_terminal_state": "path_end",
             "initial_preload_success": True,
@@ -987,6 +1033,7 @@ class M3ScreeningDesignTests(unittest.TestCase):
             "neff_resultant_median": 4.0,
             "maximum_pin_normal_force_n": 0.3,
             "contact_fraction": 0.9,
+            "steady_sample_count": 100,
             "cumulative_relative_energy_error": 1e-8,
             "maximum_abs_contact_work_identity_residual_j": 1e-16,
         }
@@ -998,6 +1045,11 @@ class M3ScreeningDesignTests(unittest.TestCase):
         failed["tangential_force_median_n"] = 1.2
         self.assertFalse(
             compare_trend_summaries(reference, failed)["passed"]
+        )
+        collided = dict(reference)
+        collided["rod_collision_detected"] = True
+        self.assertFalse(
+            compare_trend_summaries(reference, collided)["passed"]
         )
 
     def test_formal_catalog_requires_three_families_by_100(self):

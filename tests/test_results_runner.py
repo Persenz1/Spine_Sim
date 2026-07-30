@@ -9,7 +9,12 @@ from pathlib import Path
 import numpy as np
 
 from spine_sim.core.config import CampaignSpec, M2CaseSpec
-from spine_sim.io.results import ResultStore, atomic_write_json
+from spine_sim.io.results import (
+    CompactResultStore,
+    ResultStore,
+    atomic_write_json,
+    open_result_store,
+)
 from spine_sim.runtime.backend import BackendConfig, discover_backend
 from spine_sim.runtime.runner import CampaignRunner
 
@@ -144,6 +149,55 @@ class RunnerTests(unittest.TestCase):
                 os.environ.pop("SPINE_SIM_FORCE_CUDA", None)
             else:
                 os.environ["SPINE_SIM_FORCE_CUDA"] = previous
+
+    def test_formal_summary_campaign_uses_compact_transactional_store(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            cases = tuple(
+                M2CaseSpec(
+                    "m2",
+                    "fake-1",
+                    {
+                        "seed": seed,
+                        "samples": 5,
+                        "output": {"level": "summary"},
+                    },
+                )
+                for seed in (1, 2)
+            )
+            campaign = CampaignSpec(
+                "formal-summary-test",
+                "m0-test",
+                "spine_sim.examples.fake_module:run_summary_case",
+                cases,
+                workers=1,
+                mode="formal",
+            )
+            runner = CampaignRunner(
+                campaign,
+                Path(temporary),
+                discover_backend(BackendConfig(preference="cpu")),
+            )
+            self.assertIsInstance(runner.store, CompactResultStore)
+            runner.initialize({"test": True})
+            records = runner.run()
+            self.assertEqual(
+                [record.run_state for record in records],
+                ["complete", "complete"],
+            )
+            self.assertFalse((Path(temporary) / "paths").exists())
+            reopened = open_result_store(temporary)
+            self.assertIsInstance(reopened, CompactResultStore)
+            self.assertEqual(len(reopened.list_records()), 2)
+            before = {
+                row.case_id: row.result_hash for row in records
+            }
+            after = {
+                row.case_id: row.result_hash
+                for row in runner.run(resume=True)
+            }
+            self.assertEqual(before, after)
 
 
 if __name__ == "__main__":

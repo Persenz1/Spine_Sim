@@ -6,7 +6,7 @@ import sys
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
-from spine_sim.io.results import ResultStore
+from spine_sim.io.results import CompactResultStore, ResultStore
 
 
 def _write_summary(shard: Path, case_id: str) -> None:
@@ -19,6 +19,28 @@ def _write_summary(shard: Path, case_id: str) -> None:
             "ranking_inclusion_allowed": False,
             "nested": {"value": case_id},
             "nullable_metric_n": None if case_id == "case_a" else 1.5,
+        },
+        complete=True,
+    )
+
+
+def _write_compact_summary(shard: Path, case_id: str) -> None:
+    store = CompactResultStore(shard)
+    store.initialize(
+        manifest={"schema_version": "1"},
+        raw_config={"case": case_id},
+        normalized_config={"case": case_id},
+        lineage={"case": case_id},
+    )
+    store.write_case(
+        case_id=case_id,
+        config={"case": case_id},
+        summary={
+            "run_state": "complete",
+            "initial_preload_success": True,
+            "ranking_inclusion_allowed": False,
+            "nested": {"value": case_id},
+            "nullable_metric_n": 2.5,
         },
         complete=True,
     )
@@ -79,3 +101,34 @@ def test_streaming_summary_merge_and_duplicate_rejection() -> None:
         )
         assert rejected.returncode != 0
         assert "duplicate case_id" in (rejected.stdout + rejected.stderr)
+
+
+def test_streaming_summary_merge_accepts_compact_formal_store() -> None:
+    with TemporaryDirectory() as temporary:
+        root = Path(temporary)
+        compact = root / "compact"
+        regular = root / "regular"
+        _write_compact_summary(compact, "case_compact")
+        _write_summary(regular, "case_regular")
+        output = root / "mixed"
+        completed = subprocess.run(
+            [
+                sys.executable,
+                "scripts/merge_m3_summaries.py",
+                str(compact),
+                str(regular),
+                "--output",
+                str(output),
+            ],
+            cwd=Path(__file__).resolve().parents[1],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        assert completed.returncode == 0, completed.stderr
+        manifest = json.loads(
+            output.with_suffix(".manifest.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        assert manifest["case_count"] == 2

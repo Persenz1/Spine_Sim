@@ -27,6 +27,7 @@ def build_parser() -> argparse.ArgumentParser:
         type=Path,
         default=Path("results/m3_validation/dynamic_analytic_validation.json"),
     )
+    analytic.add_argument("--catalog", type=Path)
     existing = subcommands.add_parser("smoke-existing-m1")
     existing.add_argument(
         "catalog",
@@ -70,7 +71,15 @@ def build_parser() -> argparse.ArgumentParser:
 def main(argv: Sequence[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     if args.command == "validate-analytic":
-        report = run_dynamic_analytic_validation(args.output)
+        terrain_catalog = (
+            json.loads(args.catalog.read_text(encoding="utf-8"))
+            if args.catalog is not None
+            else None
+        )
+        report = run_dynamic_analytic_validation(
+            args.output,
+            terrain_catalog=terrain_catalog,
+        )
     elif args.command == "smoke-existing-m1":
         if args.all_conditions:
             if (

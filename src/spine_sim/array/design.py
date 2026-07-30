@@ -43,6 +43,7 @@ DRAG_LENGTH_M = 0.1
 TERRAIN_FAMILIES = ("sandpaper", "red_brick", "concrete")
 SUPPORTED_M1_TERRAIN_CATALOG_SCHEMAS = {
     "m1-material-terrain-catalog-v1",
+    "m1-material-fine-refinement-catalog-v1",
 }
 PLACEMENT_SEARCH_OFFSETS_XY_M = (
     (0.0, 0.0),
@@ -678,9 +679,13 @@ def build_campaign_shard(
             "terrain_condition_id": condition["terrain_condition_id"],
             "terrain_family": terrain_family,
             "terrain_seed": condition["seed"],
+            "terrain_realization_id": condition.get(
+                "realization_id"
+            ),
             "terrain_recipe_id": condition["terrain_recipe_id"],
             "region_id": condition["region_id"],
             "terrain_data_sha256": condition["data_sha256"],
+            "track_cache_mode": "read_only",
             "track_requests": track_requests,
             "configuration": design["configuration"],
             "engineering_proxy": {
@@ -722,6 +727,7 @@ def build_campaign_shard(
                 "settling_stable_steps": 20,
                 "dynamic_residual_tolerance_n": 1e-3,
                 "coupled_projection_relaxation": 0.8,
+                "coupled_projection_position_tolerance_m": 1e-12,
                 "output_spacing_m": output_spacing_m,
                 "effective_pin_normal_force_min_n": 0.05,
                 "unclosed_parameter_names": [

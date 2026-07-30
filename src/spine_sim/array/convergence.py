@@ -46,10 +46,15 @@ class TrendConvergenceThresholds:
 
 
 def build_convergence_variants() -> tuple[ConvergenceVariant, ...]:
-    """One-axis variants around a strict 0.5 ms reference."""
+    """One-axis variants around a strict 0.25 ms reference."""
 
     variants = (
-        ConvergenceVariant("reference", "reference"),
+        ConvergenceVariant(
+            "reference", "reference", time_step_s=0.25e-3
+        ),
+        ConvergenceVariant(
+            "dt_0p5ms", "time_step", time_step_s=0.5e-3
+        ),
         ConvergenceVariant("dt_1ms", "time_step", time_step_s=1e-3),
         ConvergenceVariant("dt_2ms", "time_step", time_step_s=2e-3),
         ConvergenceVariant("dt_5ms", "time_step", time_step_s=5e-3),
@@ -95,7 +100,11 @@ def build_convergence_variants() -> tuple[ConvergenceVariant, ...]:
 
 
 _SENTINEL_SPECS = (
-    (2, 2, 4e-3, "fixed", 60.0, 50e-6, 0.6e-3, "spring", 300.0),
+    # Feasibility anchor: verified on the formal P40 condition with the
+    # deterministic placement search. More extreme geometries remain below,
+    # but an initially colliding configuration cannot establish trend
+    # convergence.
+    (2, 2, 4e-3, "fixed", 70.0, 100e-6, 0.8e-3, "spring", 800.0),
     (2, 2, 6e-3, "fixed", 80.0, 100e-6, 0.8e-3, "rigid", None),
     (4, 4, 5e-3, "fixed", 70.0, 100e-6, 0.8e-3, "spring", 800.0),
     (
@@ -211,6 +220,7 @@ def compare_trend_summaries(
         "neff_resultant_median",
         "maximum_pin_normal_force_n",
         "contact_fraction",
+        "steady_sample_count",
         "cumulative_relative_energy_error",
         "maximum_abs_contact_work_identity_residual_j",
     )
@@ -257,6 +267,32 @@ def compare_trend_summaries(
             candidate.get("initial_preload_success") is True
             and reference.get("initial_preload_success") is True
         ),
+        "conditional_performance_available": (
+            candidate.get(
+                "conditional_performance_available", True
+            )
+            is True
+            and reference.get(
+                "conditional_performance_available", True
+            )
+            is True
+        ),
+        "ranking_inclusion_allowed": (
+            candidate.get("ranking_inclusion_allowed", True) is True
+            and reference.get("ranking_inclusion_allowed", True) is True
+        ),
+        "rod_clearance_ok": (
+            candidate.get("rod_collision_detected") is not True
+            and reference.get("rod_collision_detected") is not True
+        ),
+        "same_selected_origin": (
+            candidate.get("selected_unit_origin_xy_m")
+            == reference.get("selected_unit_origin_xy_m")
+        ),
+        "sufficient_steady_samples": (
+            int(candidate["steady_sample_count"]) >= 20
+            and int(reference["steady_sample_count"]) >= 20
+        ),
         "cumulative_energy_error_ok": (
             float(candidate["cumulative_relative_energy_error"])
             <= limits.cumulative_relative_energy_error
@@ -274,10 +310,19 @@ def compare_trend_summaries(
         name: value <= getattr(limits, name)
         for name, value in differences.items()
     }
+    numerical_passed = all(numerical_checks.values())
+    differences_passed = all(difference_checks.values())
     return {
-        "passed": all(difference_checks.values())
-        and all(numerical_checks.values()),
-        "failure_reason": None,
+        "passed": differences_passed and numerical_passed,
+        "failure_reason": (
+            None
+            if numerical_passed and differences_passed
+            else (
+                "ineligible_or_numerically_invalid"
+                if not numerical_passed
+                else "trend_threshold_exceeded"
+            )
+        ),
         "differences": differences,
         "difference_checks": difference_checks,
         "numerical_checks": numerical_checks,

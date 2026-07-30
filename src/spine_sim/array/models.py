@@ -22,7 +22,7 @@ from spine_sim.core.identity import identity
 from spine_sim.core.states import ModelState, NumericalState
 
 
-M3_MODULE_VERSION = "m3.4.0"
+M3_MODULE_VERSION = "m3.5.0"
 M3_MODEL_LEVEL = (
     "project_model_P_common_rigid_backplate_z_dynamic_"
     "continuous_total_preload_v4"
@@ -519,6 +519,9 @@ class ArrayDynamicPathSummary:
     steady_normal_balance_error_n: float | None
     contact_fraction: float
     effective_load_fraction: float
+    path_point_count: int
+    performance_sample_count: int
+    steady_sample_count: int
     tangential_force_peak_n: float | None
     tangential_force_steady_peak_n: float | None
     tangential_force_impact_peak_n: float | None

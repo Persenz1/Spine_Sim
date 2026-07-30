@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass, replace
-from typing import Any, Mapping, Sequence
+from typing import Any, Callable, Mapping, Sequence
 
 import numpy as np
 from numpy.typing import NDArray
@@ -95,6 +95,7 @@ class ArrayDynamicExperimentSettings:
     settling_stable_steps: int = 20
     dynamic_residual_tolerance_n: float = 1e-3
     coupled_projection_relaxation: float = 0.8
+    coupled_projection_position_tolerance_m: float = 1e-12
     output_spacing_m: float = 10e-6
     effective_pin_normal_force_min_n: float = 0.05
     unclosed_parameter_names: tuple[str, ...] = (
@@ -114,6 +115,7 @@ class ArrayDynamicExperimentSettings:
             "maximum_preload_approach_m",
             "preload_ramp_time_s",
             "settlement_damping_scale",
+            "coupled_projection_position_tolerance_m",
             "output_spacing_m",
         ):
             value = float(getattr(self, name))
@@ -150,7 +152,7 @@ class ArrayDynamicExperimentSettings:
             )
         if self.backplate_rotational_dofs != "locked":
             raise ContactConfigurationError(
-                "m3.4.0 opens common backplate Z only; rotations must be locked"
+                "m3.5.0 opens common backplate Z only; rotations must be locked"
             )
         if self.backplate_inertia_kg_m2 is not None:
             raise ContactConfigurationError(
@@ -267,6 +269,46 @@ class DynamicCommonBackplateArray:
             DynamicSingleSpineUnit(parameters, track, self.contact)
             for parameters, track in zip(self.pin_parameters, self.tracks)
         )
+        modal_mass = np.empty(self.dof_count, dtype=np.float64)
+        modal_mass[0] = 0.0
+        axial_damping = np.empty(
+            self.pin_count, dtype=np.float64
+        )
+        transverse_damping = np.empty(
+            self.pin_count, dtype=np.float64
+        )
+        transverse_stiffness = np.empty(
+            self.pin_count, dtype=np.float64
+        )
+        for index, (unit, parameters) in enumerate(
+            zip(self.units, self.pin_parameters)
+        ):
+            axial, transverse = self._pin_dofs(index)
+            modal_mass[axial] = unit.modes_mass[1]
+            modal_mass[transverse] = unit.modes_mass[2]
+            transverse_stiffness[index] = (
+                unit.transverse_stiffness_n_m
+            )
+            axial_damping[index] = (
+                2.0
+                * parameters.axial_damping_ratio
+                * math.sqrt(
+                    self._axial_modal_damping_stiffness(parameters)
+                    * modal_mass[axial]
+                )
+            )
+            transverse_damping[index] = (
+                2.0
+                * parameters.transverse_damping_ratio
+                * math.sqrt(
+                    transverse_stiffness[index]
+                    * modal_mass[transverse]
+                )
+            )
+        self._modal_mass_template = modal_mass
+        self._axial_damping_n_s_m = axial_damping
+        self._transverse_damping_n_s_m = transverse_damping
+        self._transverse_stiffness_n_m = transverse_stiffness
 
     @property
     def pin_count(self) -> int:
@@ -307,12 +349,8 @@ class DynamicCommonBackplateArray:
         return q, v
 
     def _mass(self, backplate_mass_kg: float) -> NDArray[np.float64]:
-        mass = np.empty(self.dof_count, dtype=np.float64)
+        mass = self._modal_mass_template.copy()
         mass[0] = backplate_mass_kg
-        for index, unit in enumerate(self.units):
-            axial, transverse = self._pin_dofs(index)
-            mass[axial] = unit.modes_mass[1]
-            mass[transverse] = unit.modes_mass[2]
         return mass
 
     @staticmethod
@@ -341,7 +379,6 @@ class DynamicCommonBackplateArray:
         NDArray[np.float64],
         NDArray[np.float64],
     ]:
-        mass = self._mass(settings.backplate_mass_kg)
         damping = np.zeros(self.dof_count, dtype=np.float64)
         tangent = np.zeros(self.dof_count, dtype=np.float64)
         restoring = np.zeros(self.dof_count, dtype=np.float64)
@@ -360,23 +397,16 @@ class DynamicCommonBackplateArray:
                 spring_state,
                 spring_compression,
             ) = unit.axial_response(float(q[axial]))
-            transverse_stiffness = unit.transverse_stiffness_n_m
+            transverse_stiffness = self._transverse_stiffness_n_m[
+                index
+            ]
             restoring[axial] = axial_force
             restoring[transverse] = transverse_stiffness * q[transverse]
             tangent[axial] = axial_tangent
             tangent[transverse] = transverse_stiffness
-            damping[axial] = (
-                2.0
-                * parameters.axial_damping_ratio
-                * math.sqrt(
-                    self._axial_modal_damping_stiffness(parameters)
-                    * mass[axial]
-                )
-            )
+            damping[axial] = self._axial_damping_n_s_m[index]
             damping[transverse] = (
-                2.0
-                * parameters.transverse_damping_ratio
-                * math.sqrt(transverse_stiffness * mass[transverse])
+                self._transverse_damping_n_s_m[index]
             )
             spring_states.append(spring_state)
             compression[index] = spring_compression
@@ -523,7 +553,9 @@ class DynamicCommonBackplateArray:
                     math.inf,
                 )
             v[axial] = min(candidates, key=lambda item: item[0])[1]
-            transverse_stiffness = unit.transverse_stiffness_n_m
+            transverse_stiffness = self._transverse_stiffness_n_m[
+                index
+            ]
             v[transverse], _position = linear_mode_velocity(
                 position=float(q0[transverse]),
                 velocity=float(v0[transverse]),
@@ -583,35 +615,58 @@ class DynamicCommonBackplateArray:
     ) -> tuple[_ContactGeometry, ...]:
         output: list[_ContactGeometry | None] = [None] * self.pin_count
         for index in traversal_order:
-            center_free, velocity_free = self._pin_kinematics(
-                index,
-                common_ux_m,
-                drag_speed_m_s,
-                q_free,
-                v_free,
+            axial, transverse = self._pin_dofs(index)
+            unit = self.units[index]
+            holder_x_m = self._holder_x_m(
+                index, common_ux_m
             )
-            center_query, _ = self._pin_kinematics(
-                index,
-                common_ux_m,
-                drag_speed_m_s,
-                query_q,
-                v_free,
+            center_query_x = (
+                holder_x_m
+                + self.pin_parameters[index].exposed_length_m
+                * unit.a[0]
+                - query_q[axial] * unit.a[0]
+                + query_q[transverse] * unit.b[0]
             )
-            geometry = self.units[index].geometry.query(float(center_query[0]))
+            center_query_z = (
+                query_q[0]
+                + self.pin_parameters[index].exposed_length_m
+                * unit.a[1]
+                - query_q[axial] * unit.a[1]
+                + query_q[transverse] * unit.b[1]
+            )
+            velocity_free_x = (
+                drag_speed_m_s
+                - v_free[axial] * unit.a[0]
+                + v_free[transverse] * unit.b[0]
+            )
+            velocity_free_z = (
+                v_free[0]
+                - v_free[axial] * unit.a[1]
+                + v_free[transverse] * unit.b[1]
+            )
+            geometry = unit.geometry.query(
+                float(center_query_x)
+            )
             normal = np.asarray(geometry.normal_xz, dtype=np.float64)
             tangent = np.asarray(geometry.tangent_xz, dtype=np.float64)
             output[index] = _ContactGeometry(
                 pin_index=index,
                 geometry=geometry,
                 gap_m=float(
-                    center_query[1] - geometry.envelope_height_m
+                    center_query_z - geometry.envelope_height_m
                 ),
                 normal=normal,
                 tangent=tangent,
                 normal_jacobian=self._global_jacobian(index, normal),
                 tangent_jacobian=self._global_jacobian(index, tangent),
-                normal_velocity_m_s=float(velocity_free @ normal),
-                tangential_velocity_m_s=float(velocity_free @ tangent),
+                normal_velocity_m_s=float(
+                    velocity_free_x * normal[0]
+                    + velocity_free_z * normal[1]
+                ),
+                tangential_velocity_m_s=float(
+                    velocity_free_x * tangent[0]
+                    + velocity_free_z * tangent[1]
+                ),
                 was_active=state.pin_contact_state[index]
                 in _ACTIVE_CONTACT_STATES,
             )
@@ -675,16 +730,11 @@ class DynamicCommonBackplateArray:
             column_vectors.extend(
                 contacts[index].tangent_jacobian for index in stick
             )
-            matrix = np.asarray(
-                [
-                    [
-                        float(row @ (effective_inverse * column))
-                        for column in column_vectors
-                    ]
-                    for row in row_vectors
-                ],
-                dtype=np.float64,
-            )
+            row_matrix = np.stack(row_vectors)
+            column_matrix = np.stack(column_vectors)
+            matrix = (
+                row_matrix * effective_inverse[None, :]
+            ) @ column_matrix.T
             rhs = np.concatenate(
                 (
                     normal_rhs_all[active],
@@ -1001,22 +1051,14 @@ class DynamicCommonBackplateArray:
             columns.extend(
                 contacts[index].tangent_jacobian for index in stick
             )
-            matrix = np.asarray(
-                [
-                    [
-                        float(row @ (effective_inverse * column))
-                        for column in columns
-                    ]
-                    for row in rows
-                ],
-                dtype=np.float64,
+            row_matrix = np.stack(rows)
+            column_matrix = np.stack(columns)
+            weighted_rows = (
+                row_matrix * effective_inverse[None, :]
             )
-            rhs = dt * np.asarray(
-                [
-                    float(row @ (effective_inverse * correction_residual))
-                    for row in rows
-                ],
-                dtype=np.float64,
+            matrix = weighted_rows @ column_matrix.T
+            rhs = dt * (
+                weighted_rows @ correction_residual
             )
             try:
                 impulse_update = np.linalg.solve(matrix, rhs)
@@ -1242,7 +1284,10 @@ class DynamicCommonBackplateArray:
                     + projection_effective_inverse * generalized_impulse
                 )
                 q_candidate = q0 + dt * v_new
-                if float(np.max(np.abs(q_candidate - q))) <= 1e-12:
+                if (
+                    float(np.max(np.abs(q_candidate - q)))
+                    <= settings.coupled_projection_position_tolerance_m
+                ):
                     q = q_candidate
                     v = v_new
                     break
@@ -2180,7 +2225,14 @@ class DynamicCommonBackplateExperiment:
         state, point, _trace = self._settle_with_trace()
         return state, point
 
-    def run(self) -> ArrayDynamicExperimentResult:
+    def run(
+        self,
+        *,
+        settlement_only: bool = False,
+        point_stop_callback: (
+            Callable[[ArrayDynamicPathPoint], str | None] | None
+        ) = None,
+    ) -> ArrayDynamicExperimentResult:
         try:
             (
                 settled_state,
@@ -2289,13 +2341,56 @@ class DynamicCommonBackplateExperiment:
             event_labels=tuple(initial_events),
         )
         points: list[ArrayDynamicPathPoint] = [initial_point]
+        performance_points: list[ArrayDynamicPathPoint] = [
+            initial_point
+        ]
+
+        if settlement_only:
+            summary = self._summarize(
+                points,
+                settlement_trace=settlement_trace,
+                terminal=PathTerminalState.PATH_END,
+                reason="settlement_only_clearance_precheck",
+                accepted_steps=0,
+                rejected_steps=0,
+            )
+            return ArrayDynamicExperimentResult(
+                configuration=self.system.configuration,
+                terrain_recipe_id=self.system.terrain_recipe_id,
+                region_id=self.system.region_id,
+                track_ids=tuple(
+                    track.track_id for track in self.system.tracks
+                ),
+                experiment=self.settings,
+                contact=self.system.contact,
+                integrator=self.integrator,
+                settlement_trace=settlement_trace,
+                points=tuple(points),
+                summary=summary,
+                assumptions=(
+                    M3_MODEL_LEVEL,
+                    "settlement_only_clearance_precheck",
+                ),
+            )
+
+        terminal = PathTerminalState.PATH_END
+        reason = "path_end"
+        rejected_steps = 0
+        if point_stop_callback is not None:
+            stop_reason = point_stop_callback(initial_point)
+            if stop_reason is not None:
+                terminal = PathTerminalState.STRUCTURAL_BOUNDARY
+                reason = stop_reason
 
         total_time = self.settings.drag_length_m / self.settings.drag_speed_m_s
         output_time = self.settings.output_spacing_m / self.settings.drag_speed_m_s
         next_output = output_time
         dt_nominal = self.integrator.time_step_s
         steps = int(math.ceil(total_time / dt_nominal))
-        if steps > self.integrator.maximum_steps:
+        if (
+            terminal is PathTerminalState.PATH_END
+            and steps > self.integrator.maximum_steps
+        ):
             return self._failed_result(
                 reason="drag maximum_steps would be exceeded",
                 failure_category="numerical_failure",
@@ -2303,10 +2398,9 @@ class DynamicCommonBackplateExperiment:
                 settlement_trace=settlement_trace,
                 initial_preload_success=True,
             )
-        terminal = PathTerminalState.PATH_END
-        reason = "path_end"
-        rejected_steps = 0
-        for _ in range(steps):
+        for _ in range(
+            steps if terminal is PathTerminalState.PATH_END else 0
+        ):
             dt = min(dt_nominal, total_time - state.time_s)
             if dt <= 1e-15:
                 break
@@ -2337,14 +2431,25 @@ class DynamicCommonBackplateExperiment:
             state = self.system.commit_step(state, proposal, accept=True)
             path_position = self.settings.drag_speed_m_s * state.time_s
             point = replace(proposal.point, path_position_m=path_position)
-            if (
+            output_due = (
                 state.time_s + 1e-12 >= next_output
-                or point.event_labels
                 or state.time_s + 1e-12 >= total_time
-            ):
+            )
+            if output_due:
                 points.append(point)
+                performance_points.append(point)
                 while next_output <= state.time_s + 1e-12:
                     next_output += output_time
+            elif point.event_labels:
+                points.append(point)
+            else:
+                continue
+            if point_stop_callback is not None:
+                stop_reason = point_stop_callback(point)
+                if stop_reason is not None:
+                    terminal = PathTerminalState.STRUCTURAL_BOUNDARY
+                    reason = stop_reason
+                    break
 
         state = replace(state, rejected_steps=rejected_steps)
         summary = self._summarize(
@@ -2354,6 +2459,7 @@ class DynamicCommonBackplateExperiment:
             reason=reason,
             accepted_steps=state.accepted_steps,
             rejected_steps=rejected_steps,
+            performance_points=performance_points,
         )
         return ArrayDynamicExperimentResult(
             configuration=self.system.configuration,
@@ -2461,6 +2567,9 @@ class DynamicCommonBackplateExperiment:
             steady_normal_balance_error_n=None,
             contact_fraction=0.0,
             effective_load_fraction=0.0,
+            path_point_count=0,
+            performance_sample_count=0,
+            steady_sample_count=0,
             tangential_force_peak_n=None,
             tangential_force_steady_peak_n=None,
             tangential_force_impact_peak_n=None,
@@ -2550,14 +2659,28 @@ class DynamicCommonBackplateExperiment:
         reason: str,
         accepted_steps: int,
         rejected_steps: int,
+        performance_points: (
+            Sequence[ArrayDynamicPathPoint] | None
+        ) = None,
     ) -> ArrayDynamicPathSummary:
+        performance = (
+            points
+            if performance_points is None
+            else performance_points
+        )
         total_normal = np.asarray(
-            [point.total_contact_reaction_z_n for point in points],
+            [
+                point.total_contact_reaction_z_n
+                for point in performance
+            ],
             dtype=np.float64,
         )
         pull = np.abs(
             np.asarray(
-                [point.wall_on_unit_wrench_about_origin[0] for point in points],
+                [
+                    point.wall_on_unit_wrench_about_origin[0]
+                    for point in performance
+                ],
                 dtype=np.float64,
             )
         )
@@ -2567,21 +2690,17 @@ class DynamicCommonBackplateExperiment:
                     label == EventLabel.IMPACT.value
                     for _index, label in point.event_labels
                 )
-                for point in points
+                for point in performance
             ],
             dtype=np.bool_,
         )
         time_values = np.asarray(
-            [point.time_s for point in points], dtype=np.float64
+            [point.time_s for point in performance],
+            dtype=np.float64,
         )
         steady_start = 0.2 * float(time_values[-1])
-        event_mask = np.asarray(
-            [bool(point.event_labels) for point in points],
-            dtype=np.bool_,
-        )
         steady_mask = (
             ~impact_mask
-            & ~event_mask
             & (time_values + 1e-15 >= steady_start)
         )
         if not np.any(steady_mask):
@@ -2605,10 +2724,17 @@ class DynamicCommonBackplateExperiment:
             for _index, label in point.event_labels:
                 event_counts[label] = event_counts.get(label, 0) + 1
         active = np.asarray(
-            [point.active_pin_count > 0 for point in points], dtype=np.bool_
+            [
+                point.active_pin_count > 0
+                for point in performance
+            ],
+            dtype=np.bool_,
         )
         effective = np.asarray(
-            [point.effective_load_pin_count > 0 for point in points],
+            [
+                point.effective_load_pin_count > 0
+                for point in performance
+            ],
             dtype=np.bool_,
         )
         model_state = (
@@ -2644,6 +2770,11 @@ class DynamicCommonBackplateExperiment:
             for point in points
             for pin_index, pin in enumerate(point.pin_responses)
         ]
+        performance_pin_samples = [
+            pin
+            for point in performance
+            for pin in point.pin_responses
+        ]
         maximum_bending_stress = max(
             pin.bending_stress_pa for _index, pin in pin_samples
         )
@@ -2667,11 +2798,33 @@ class DynamicCommonBackplateExperiment:
             pin.spring_state is SpringState.HARD_STOP
             for _index, pin in pin_samples
         )
-        pin_normal_forces = [
+        all_pin_normal_forces = [
             pin.normal_force_n for _index, pin in pin_samples
         ]
-        positive_pin_normal_forces = [
-            value for value in pin_normal_forces if value > 0.0
+        performance_pin_normal_forces = [
+            pin.normal_force_n for pin in performance_pin_samples
+        ]
+        positive_performance_pin_normal_forces = [
+            value
+            for value in performance_pin_normal_forces
+            if value > 0.0
+        ]
+        all_pull = np.abs(
+            np.asarray(
+                [
+                    point.wall_on_unit_wrench_about_origin[0]
+                    for point in points
+                ],
+                dtype=np.float64,
+            )
+        )
+        impact_pull = [
+            abs(point.wall_on_unit_wrench_about_origin[0])
+            for point in points
+            if any(
+                label == EventLabel.IMPACT.value
+                for _index, label in point.event_labels
+            )
         ]
         return ArrayDynamicPathSummary(
             preload_mode="continuous_total_external_force",
@@ -2679,7 +2832,9 @@ class DynamicCommonBackplateExperiment:
             drag_speed_m_s=self.settings.drag_speed_m_s,
             backplate_rotational_dofs=self.settings.backplate_rotational_dofs,
             initial_preload_success=True,
-            conditional_performance_available=True,
+            conditional_performance_available=(
+                terminal is PathTerminalState.PATH_END
+            ),
             failure_category=(
                 None
                 if terminal is PathTerminalState.PATH_END
@@ -2734,12 +2889,15 @@ class DynamicCommonBackplateExperiment:
             ),
             contact_fraction=float(np.mean(active)),
             effective_load_fraction=float(np.mean(effective)),
-            tangential_force_peak_n=float(np.max(pull)),
+            path_point_count=len(points),
+            performance_sample_count=len(performance),
+            steady_sample_count=int(np.count_nonzero(steady_mask)),
+            tangential_force_peak_n=float(np.max(all_pull)),
             tangential_force_steady_peak_n=(
                 float(np.max(steady_pull)) if steady_pull.size else 0.0
             ),
             tangential_force_impact_peak_n=(
-                float(np.max(pull[impact_mask])) if np.any(impact_mask) else 0.0
+                float(max(impact_pull)) if impact_pull else 0.0
             ),
             tangential_force_median_n=float(np.median(steady_pull)),
             tangential_force_p10_n=float(np.quantile(steady_pull, 0.10)),
@@ -2769,18 +2927,28 @@ class DynamicCommonBackplateExperiment:
                 )
             ),
             neff_normal_median=float(
-                np.median([point.sharing.neff_normal for point in points])
+                np.median(
+                    [
+                        point.sharing.neff_normal
+                        for point in performance
+                    ]
+                )
             ),
             neff_target_tangential_median=float(
                 np.median(
                     [
                         point.sharing.neff_target_tangential
-                        for point in points
+                        for point in performance
                     ]
                 )
             ),
             neff_resultant_median=float(
-                np.median([point.sharing.neff_resultant for point in points])
+                np.median(
+                    [
+                        point.sharing.neff_resultant
+                        for point in performance
+                    ]
+                )
             ),
             maximum_normal_load_concentration=float(
                 max(point.sharing.max_mean_normal for point in points)
@@ -2788,11 +2956,19 @@ class DynamicCommonBackplateExperiment:
             maximum_gini_normal=float(
                 max(point.sharing.gini_normal for point in points)
             ),
-            maximum_pin_normal_force_n=float(max(pin_normal_forces)),
-            mean_pin_normal_force_n=float(np.mean(pin_normal_forces)),
+            maximum_pin_normal_force_n=float(
+                max(all_pin_normal_forces)
+            ),
+            mean_pin_normal_force_n=float(
+                np.mean(performance_pin_normal_forces)
+            ),
             mean_active_pin_normal_force_n=(
-                float(np.mean(positive_pin_normal_forces))
-                if positive_pin_normal_forces
+                float(
+                    np.mean(
+                        positive_performance_pin_normal_forces
+                    )
+                )
+                if positive_performance_pin_normal_forces
                 else 0.0
             ),
             maximum_bending_stress_pa=float(maximum_bending_stress),

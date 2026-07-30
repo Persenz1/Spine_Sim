@@ -19,7 +19,12 @@ import numpy as np
 from spine_sim.core.config import BaseCaseSpec, CampaignSpec
 from spine_sim.core.errors import classify_exception
 from spine_sim.core.identity import stable_hash
-from spine_sim.io.results import CaseRecord, ResultStore, utc_now
+from spine_sim.io.results import (
+    CaseRecord,
+    CompactResultStore,
+    ResultStore,
+    utc_now,
+)
 from spine_sim.runtime.backend import BackendCapabilities
 
 
@@ -146,7 +151,19 @@ class CampaignRunner:
         backend: BackendCapabilities,
     ):
         self.campaign = campaign
-        self.store = ResultStore(campaign_dir)
+        summary_only_formal = (
+            campaign.mode == "formal"
+            and all(
+                case.parameters.get("output", {}).get("level")
+                == "summary"
+                for case in campaign.cases
+            )
+        )
+        self.store = (
+            CompactResultStore(campaign_dir)
+            if summary_only_formal
+            else ResultStore(campaign_dir)
+        )
         self.backend = backend
 
     def initialize(self, raw_config: Mapping[str, Any] | None = None) -> None:

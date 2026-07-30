@@ -36,3 +36,16 @@ def run_case(parameters: Mapping[str, Any], context: RunContext) -> CaseOutput:
         validation={"passed": True, "note": "M0 smoke only; no physics evaluated"},
         stage_times_s={"fake_compute": time.perf_counter() - started},
     )
+
+
+def run_summary_case(
+    parameters: Mapping[str, Any], context: RunContext
+) -> CaseOutput:
+    """Summary-only runner fixture for compact formal result storage."""
+
+    output = run_case(parameters, context)
+    return CaseOutput(
+        summary=output.summary,
+        validation=output.validation,
+        stage_times_s=output.stage_times_s,
+    )

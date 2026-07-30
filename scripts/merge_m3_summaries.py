@@ -12,7 +12,7 @@ from collections.abc import Iterator, Mapping, Sequence
 from pathlib import Path
 from typing import Any
 
-from spine_sim.io.results import ResultStore, atomic_write_json
+from spine_sim.io.results import atomic_write_json, open_result_store
 
 
 ROW_GROUP_SIZE = 10_000
@@ -45,20 +45,13 @@ def _summary_stream(
     verify_payloads: bool,
 ) -> Iterator[dict[str, Any]]:
     for campaign_dir in campaign_dirs:
-        store = ResultStore(campaign_dir)
-        if not store.cases_dir.is_dir():
-            raise RuntimeError(
-                f"M3 shard has no paths directory: {campaign_dir}"
-            )
-        for case_dir in sorted(store.cases_dir.iterdir()):
-            if not case_dir.is_dir():
-                continue
-            case_id = case_dir.name
-            if verify_payloads and not store.is_complete(case_id):
-                raise RuntimeError(
-                    "refusing summary merge: incomplete or hash-invalid "
-                    f"{case_id}"
-                )
+        store = open_result_store(campaign_dir)
+        found = False
+        for summary in store.iter_case_summaries(
+            verify_payloads=verify_payloads
+        ):
+            found = True
+            case_id = str(summary["case_id"])
             if duplicate_index is not None:
                 try:
                     duplicate_index.execute(
@@ -69,7 +62,11 @@ def _summary_stream(
                     raise RuntimeError(
                         f"duplicate case_id across M3 shards: {case_id}"
                     ) from exc
-            yield store.load_case_summary(case_id)
+            yield summary
+        if not found:
+            raise RuntimeError(
+                f"M3 shard contains no case summaries: {campaign_dir}"
+            )
 
 
 def _update_result_set_hash(

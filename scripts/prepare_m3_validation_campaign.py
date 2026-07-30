@@ -81,6 +81,9 @@ def build_validation_campaign(
     drag_length_m: float,
     workers: int,
     placement_search: bool,
+    track_cache_mode: str = "read_write",
+    projection_relaxation: float = 0.8,
+    output_spacing_m: float | None = None,
 ) -> dict:
     condition = _select_condition(
         catalog,
@@ -136,9 +139,13 @@ def build_validation_campaign(
             "terrain_condition_id": condition["terrain_condition_id"],
             "terrain_family": condition["terrain_family"],
             "terrain_seed": condition["seed"],
+            "terrain_realization_id": condition.get(
+                "realization_id"
+            ),
             "terrain_recipe_id": condition["terrain_recipe_id"],
             "region_id": condition["region_id"],
             "terrain_data_sha256": condition["data_sha256"],
+            "track_cache_mode": track_cache_mode,
             "track_requests": [
                 {
                     "radius_m": pin.tip_radius_m,
@@ -185,8 +192,13 @@ def build_validation_campaign(
                 "settling_dynamic_residual_tolerance_n": 1e-8,
                 "settling_stable_steps": 20,
                 "dynamic_residual_tolerance_n": 1e-3,
-                "coupled_projection_relaxation": 0.8,
-                "output_spacing_m": min(20e-6, drag_length_m),
+                "coupled_projection_relaxation": projection_relaxation,
+                "coupled_projection_position_tolerance_m": 1e-12,
+                "output_spacing_m": (
+                    min(20e-6, drag_length_m)
+                    if output_spacing_m is None
+                    else min(output_spacing_m, drag_length_m)
+                ),
                 "effective_pin_normal_force_min_n": 0.05,
                 "unclosed_parameter_names": [
                     "bounded_validation_not_formal_campaign",
@@ -281,7 +293,22 @@ def main() -> int:
     )
     parser.add_argument("--preload-n", type=float, default=1.0)
     parser.add_argument("--drag-length-mm", type=float, default=0.1)
+    parser.add_argument(
+        "--output-spacing-um",
+        type=float,
+        default=20.0,
+    )
     parser.add_argument("--workers", type=int, default=1)
+    parser.add_argument(
+        "--track-cache-mode",
+        choices=("read_write", "read_only"),
+        default="read_write",
+    )
+    parser.add_argument(
+        "--projection-relaxation",
+        type=float,
+        default=0.8,
+    )
     parser.add_argument("--no-placement-search", action="store_true")
     parser.add_argument(
         "--output",
@@ -293,6 +320,10 @@ def main() -> int:
         parser.error("--preload-n must be 0.5, 1.0 or 2.0")
     if args.drag_length_mm <= 0.0:
         parser.error("--drag-length-mm must be positive")
+    if args.output_spacing_um <= 0.0:
+        parser.error("--output-spacing-um must be positive")
+    if not 0.0 < args.projection_relaxation <= 1.0:
+        parser.error("--projection-relaxation must be in (0, 1]")
     catalog = json.loads(args.catalog.read_text(encoding="utf-8"))
     campaign = build_validation_campaign(
         catalog,
@@ -303,6 +334,9 @@ def main() -> int:
         drag_length_m=args.drag_length_mm * 1e-3,
         workers=args.workers,
         placement_search=not args.no_placement_search,
+        track_cache_mode=args.track_cache_mode,
+        projection_relaxation=args.projection_relaxation,
+        output_spacing_m=args.output_spacing_um * 1e-6,
     )
     parsed = CampaignSpec.from_mapping(campaign)
     atomic_write_json(args.output, campaign)

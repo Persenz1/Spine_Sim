@@ -5,7 +5,9 @@ from __future__ import annotations
 import json
 import hashlib
 import os
+import sqlite3
 import tempfile
+from contextlib import contextmanager
 from dataclasses import asdict, dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -267,6 +269,24 @@ class ResultStore:
             )
         return records
 
+    def iter_case_summaries(
+        self, *, verify_payloads: bool = False
+    ) -> Iterable[dict[str, Any]]:
+        if not self.cases_dir.exists():
+            return
+        for directory in sorted(self.cases_dir.iterdir()):
+            if not directory.is_dir():
+                continue
+            case_id = directory.name
+            if verify_payloads and not self.is_complete(case_id):
+                raise RuntimeError(
+                    "incomplete or hash-invalid case summary: "
+                    f"{case_id}"
+                )
+            summary = directory / "summary.json"
+            if summary.is_file():
+                yield json.loads(summary.read_text(encoding="utf-8"))
+
     def write_campaign_index(self, records: Iterable[CaseRecord]) -> str:
         rows = [asdict(record) for record in sorted(records, key=lambda row: row.case_id)]
         try:
@@ -318,3 +338,403 @@ class ResultStore:
         current = json.loads(path.read_text(encoding="utf-8"))
         current.update(fields)
         atomic_write_json(path, current)
+
+
+class CompactResultStore:
+    """Transactional summary-only storage for large formal campaign shards.
+
+    A formal shard can contain thousands of cases. Keeping four or five files
+    in one directory per summary case turns filesystem metadata into a larger
+    workload than the summaries themselves. This store retains the same
+    result-hash semantics while committing each summary atomically to SQLite.
+    Aggregate/full trace campaigns continue to use :class:`ResultStore`.
+    """
+
+    DATABASE_NAME = "case_summaries.sqlite3"
+
+    def __init__(self, campaign_dir: str | Path):
+        self.root = Path(campaign_dir).resolve()
+        self.database_path = self.root / self.DATABASE_NAME
+
+    @contextmanager
+    def _connect(self) -> Iterable[sqlite3.Connection]:
+        connection = sqlite3.connect(self.database_path, timeout=60.0)
+        try:
+            connection.execute("PRAGMA journal_mode=WAL")
+            connection.execute("PRAGMA synchronous=FULL")
+            yield connection
+            connection.commit()
+        except BaseException:
+            connection.rollback()
+            raise
+        finally:
+            connection.close()
+
+    def initialize(
+        self,
+        *,
+        manifest: Mapping[str, Any],
+        raw_config: Mapping[str, Any],
+        normalized_config: Mapping[str, Any],
+        lineage: Mapping[str, Any],
+    ) -> None:
+        self.root.mkdir(parents=True, exist_ok=True)
+        (self.root / "config").mkdir(exist_ok=True)
+        compact_manifest = dict(manifest)
+        compact_manifest["result_storage"] = (
+            "sqlite_transactional_summary_v1"
+        )
+        atomic_write_json(self.root / "manifest.json", compact_manifest)
+        atomic_write_json(
+            self.root / "config" / "original.json", raw_config
+        )
+        campaign_document = dict(
+            normalized_config.get("campaign", {})
+        )
+        normalized_cases = list(campaign_document.pop("cases", ()))
+        compact_normalized = dict(normalized_config)
+        compact_normalized["campaign"] = {
+            **campaign_document,
+            "case_count": len(normalized_cases),
+            "case_ids_hash": stable_hash(
+                [
+                    stable_hash(case)
+                    for case in normalized_cases
+                ]
+            ),
+            "case_payload_location": "config/original.json",
+        }
+        atomic_write_json(
+            self.root / "config" / "normalized.json",
+            compact_normalized,
+        )
+        atomic_write_json(self.root / "lineage.json", lineage)
+        if not (self.root / "events.jsonl").exists():
+            atomic_write_bytes(self.root / "events.jsonl", b"")
+        if not (self.root / "validation.json").exists():
+            atomic_write_json(
+                self.root / "validation.json",
+                {"status": "not_run", "checks": []},
+            )
+        with self._connect() as connection:
+            connection.execute(
+                """
+                CREATE TABLE IF NOT EXISTS case_summary (
+                    case_id TEXT PRIMARY KEY,
+                    run_state TEXT NOT NULL,
+                    result_hash TEXT NOT NULL,
+                    wall_time_s REAL NOT NULL,
+                    peak_ram_bytes INTEGER NOT NULL,
+                    peak_python_bytes INTEGER NOT NULL,
+                    error_category TEXT,
+                    error_type TEXT,
+                    error_message TEXT,
+                    summary_json TEXT NOT NULL,
+                    validation_json TEXT NOT NULL,
+                    payload_sha256 TEXT NOT NULL,
+                    complete INTEGER NOT NULL CHECK (complete IN (0, 1))
+                )
+                """
+            )
+
+    @staticmethod
+    def _payload_sha256(
+        summary_json: str, validation_json: str
+    ) -> str:
+        digest = hashlib.sha256()
+        digest.update(summary_json.encode("utf-8"))
+        digest.update(b"\0")
+        digest.update(validation_json.encode("utf-8"))
+        return digest.hexdigest()
+
+    def is_complete(self, case_id: str) -> bool:
+        if not self.database_path.is_file():
+            return False
+        try:
+            with self._connect() as connection:
+                row = connection.execute(
+                    """
+                    SELECT summary_json, validation_json, payload_sha256,
+                           complete
+                    FROM case_summary
+                    WHERE case_id = ?
+                    """,
+                    (case_id,),
+                ).fetchone()
+            if row is None or int(row[3]) != 1:
+                return False
+            summary_json, validation_json, payload_sha256, _complete = row
+            if (
+                self._payload_sha256(summary_json, validation_json)
+                != payload_sha256
+            ):
+                return False
+            document = json.loads(summary_json)
+            return (
+                document.get("case_id") == case_id
+                and document.get("run_state") == "complete"
+                and document.get("result_hash")
+            )
+        except (OSError, sqlite3.Error, json.JSONDecodeError):
+            return False
+
+    def is_incomplete(self, case_id: str) -> bool:
+        if not self.database_path.is_file():
+            return False
+        with self._connect() as connection:
+            present = connection.execute(
+                "SELECT 1 FROM case_summary WHERE case_id = ?",
+                (case_id,),
+            ).fetchone()
+        return present is not None and not self.is_complete(case_id)
+
+    def write_case(
+        self,
+        *,
+        case_id: str,
+        config: Mapping[str, Any],
+        summary: Mapping[str, Any],
+        arrays: Mapping[str, np.ndarray] | None = None,
+        events: Iterable[Event | Mapping[str, Any]] = (),
+        validation: Mapping[str, Any] | None = None,
+        complete: bool,
+    ) -> CaseRecord:
+        if arrays:
+            raise ValueError(
+                "compact formal storage only supports summary output"
+            )
+        event_rows = list(events)
+        if event_rows:
+            raise ValueError(
+                "compact formal storage does not accept per-case events"
+            )
+        document = dict(summary)
+        document["case_id"] = case_id
+        document["completed_at_utc"] = utc_now()
+        document["events_sha256"] = None
+        stable_summary = {
+            key: value
+            for key, value in document.items()
+            if key
+            not in {
+                "completed_at_utc",
+                "wall_time_s",
+                "peak_ram_bytes",
+                "peak_python_bytes",
+                "peak_vram_bytes",
+                "stage_times_s",
+                "diagnostic_traceback",
+            }
+        }
+        document["result_hash"] = stable_hash(
+            {
+                "config": config,
+                "summary": stable_summary,
+                "events": [],
+                "events_sha256": None,
+                "path_sha256": None,
+            }
+        )
+        document["path_sha256"] = None
+        validation_document = dict(validation or {})
+        summary_json = json.dumps(
+            canonicalize(document),
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+            allow_nan=False,
+        )
+        validation_json = json.dumps(
+            canonicalize(validation_document),
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+            allow_nan=False,
+        )
+        payload_sha256 = self._payload_sha256(
+            summary_json, validation_json
+        )
+        error = document.get("error", {})
+        with self._connect() as connection:
+            connection.execute(
+                """
+                INSERT INTO case_summary (
+                    case_id, run_state, result_hash, wall_time_s,
+                    peak_ram_bytes, peak_python_bytes, error_category,
+                    error_type, error_message, summary_json,
+                    validation_json, payload_sha256, complete
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(case_id) DO UPDATE SET
+                    run_state = excluded.run_state,
+                    result_hash = excluded.result_hash,
+                    wall_time_s = excluded.wall_time_s,
+                    peak_ram_bytes = excluded.peak_ram_bytes,
+                    peak_python_bytes = excluded.peak_python_bytes,
+                    error_category = excluded.error_category,
+                    error_type = excluded.error_type,
+                    error_message = excluded.error_message,
+                    summary_json = excluded.summary_json,
+                    validation_json = excluded.validation_json,
+                    payload_sha256 = excluded.payload_sha256,
+                    complete = excluded.complete
+                """,
+                (
+                    case_id,
+                    str(document.get("run_state", "execution_error")),
+                    document["result_hash"],
+                    float(document.get("wall_time_s", 0)),
+                    int(document.get("peak_ram_bytes", 0)),
+                    int(document.get("peak_python_bytes", 0)),
+                    error.get("category"),
+                    error.get("type"),
+                    error.get("message"),
+                    summary_json,
+                    validation_json,
+                    payload_sha256,
+                    int(bool(complete)),
+                ),
+            )
+        return CaseRecord(
+            case_id=case_id,
+            run_state=str(
+                document.get("run_state", "execution_error")
+            ),
+            result_hash=document["result_hash"],
+            wall_time_s=float(document.get("wall_time_s", 0)),
+            peak_ram_bytes=int(document.get("peak_ram_bytes", 0)),
+            peak_python_bytes=int(
+                document.get("peak_python_bytes", 0)
+            ),
+            error_category=error.get("category"),
+            error_type=error.get("type"),
+            error_message=error.get("message"),
+        )
+
+    def load_case_summary(self, case_id: str) -> dict[str, Any]:
+        with self._connect() as connection:
+            row = connection.execute(
+                "SELECT summary_json FROM case_summary WHERE case_id = ?",
+                (case_id,),
+            ).fetchone()
+        if row is None:
+            raise FileNotFoundError(case_id)
+        return json.loads(row[0])
+
+    def list_records(self) -> list[CaseRecord]:
+        if not self.database_path.is_file():
+            return []
+        with self._connect() as connection:
+            rows = connection.execute(
+                """
+                SELECT case_id, run_state, result_hash, wall_time_s,
+                       peak_ram_bytes, peak_python_bytes, error_category,
+                       error_type, error_message
+                FROM case_summary
+                ORDER BY case_id
+                """
+            ).fetchall()
+        return [
+            CaseRecord(
+                case_id=row[0],
+                run_state=row[1],
+                result_hash=row[2],
+                wall_time_s=float(row[3]),
+                peak_ram_bytes=int(row[4]),
+                peak_python_bytes=int(row[5]),
+                error_category=row[6],
+                error_type=row[7],
+                error_message=row[8],
+            )
+            for row in rows
+        ]
+
+    def iter_case_summaries(
+        self, *, verify_payloads: bool = False
+    ) -> Iterable[dict[str, Any]]:
+        if not self.database_path.is_file():
+            return
+        with self._connect() as connection:
+            cursor = connection.execute(
+                """
+                SELECT case_id, summary_json, validation_json,
+                       payload_sha256, complete
+                FROM case_summary
+                ORDER BY case_id
+                """
+            )
+            for (
+                case_id,
+                summary_json,
+                validation_json,
+                payload_sha256,
+                complete,
+            ) in cursor:
+                if verify_payloads and (
+                    int(complete) != 1
+                    or self._payload_sha256(
+                        summary_json, validation_json
+                    )
+                    != payload_sha256
+                ):
+                    raise RuntimeError(
+                        "incomplete or hash-invalid compact case "
+                        f"summary: {case_id}"
+                    )
+                yield json.loads(summary_json)
+
+    def write_campaign_index(
+        self, records: Iterable[CaseRecord]
+    ) -> str:
+        rows = [
+            asdict(record)
+            for record in sorted(records, key=lambda row: row.case_id)
+        ]
+        try:
+            import pyarrow as pa  # type: ignore
+            import pyarrow.parquet as pq  # type: ignore
+
+            table = pa.Table.from_pylist(rows)
+            target = self.root / "cases.parquet"
+            descriptor, temporary = tempfile.mkstemp(
+                prefix=".cases.", suffix=".tmp", dir=self.root
+            )
+            os.close(descriptor)
+            temp_path = Path(temporary)
+            try:
+                pq.write_table(table, temp_path)
+                os.replace(temp_path, target)
+            finally:
+                if temp_path.exists():
+                    temp_path.unlink()
+            fallback = self.root / "cases.jsonl"
+            if fallback.exists():
+                fallback.unlink()
+            return "parquet"
+        except ImportError:
+            payload = "".join(
+                json.dumps(row, ensure_ascii=False, sort_keys=True)
+                + "\n"
+                for row in rows
+            )
+            atomic_write_bytes(
+                self.root / "cases.jsonl", payload.encode("utf-8")
+            )
+            return "jsonl_fallback"
+
+    def rebuild_event_index(self) -> None:
+        atomic_write_bytes(self.root / "events.jsonl", b"")
+
+    def update_manifest(self, **fields: Any) -> None:
+        path = self.root / "manifest.json"
+        current = json.loads(path.read_text(encoding="utf-8"))
+        current.update(fields)
+        atomic_write_json(path, current)
+
+
+def open_result_store(
+    campaign_dir: str | Path,
+) -> ResultStore | CompactResultStore:
+    root = Path(campaign_dir).resolve()
+    if (root / CompactResultStore.DATABASE_NAME).is_file():
+        return CompactResultStore(root)
+    return ResultStore(root)

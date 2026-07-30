@@ -1,6 +1,6 @@
 # M3 → M4 动力学交接
 
-**来源版本：** `m3.4.0`
+**来源版本：** `m3.5.0`
 **模型等级：**
 `project_model_P_common_rigid_backplate_z_dynamic_continuous_total_preload_v4`
 
@@ -78,7 +78,8 @@ model_level
 
 当前已给出明确的 `engineering_proxy_v1` 经验基线和敏感性范围，但背板质量/阻尼、
 针模态参数、摩擦/冲量接触参数和内部时间步仍没有项目实验标定来源。圆柱杆二维
-净空已有路径后检查，杆体/锥段的动态接触仍未闭合。因此结果为
+净空已有正式保留路径点在线检查和碰撞候选即时终止，杆体/锥段的动态接触仍未
+闭合。因此结果为
 `model_state=parameter_unclosed`、`formal_ranking_eligible=false`，只能用于实现
 验收，不能形成正式 M4 能力曲线。
 

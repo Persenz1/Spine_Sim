@@ -26,6 +26,9 @@ from spine_sim.array.proxy_parameters import engineering_proxy_manifest
 from spine_sim.core.config import CampaignSpec
 from spine_sim.core.identity import stable_hash
 from spine_sim.io.results import atomic_write_json, utc_now
+from prepare_m3_track_cache import (
+    validate_complete_track_cache_manifest,
+)
 
 
 def _manifest(catalog: dict | None) -> dict:
@@ -126,7 +129,11 @@ def _manifest(catalog: dict | None) -> dict:
             "dynamic/contact parameters are not experimentally calibrated",
             "time-step convergence is not closed for all candidates",
             "10/5 um convergence is not closed for final candidates",
-            "the planned 300-condition M1 catalog must exist and verify",
+            *(
+                ["the planned 300-condition M1 catalog must exist and verify"]
+                if catalog is None
+                else []
+            ),
         ],
         "base_hardware": base_hardware,
         "array_design": array_design,
@@ -175,6 +182,7 @@ def main() -> int:
     )
     if materialize_shard:
         assert catalog is not None
+        validate_complete_track_cache_manifest(catalog)
         document = build_campaign_shard(
             catalog,
             terrain_family=args.terrain_family,

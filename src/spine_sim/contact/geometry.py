@@ -38,11 +38,37 @@ class TrackInterpolator:
         self.track = track
         self.parameters = parameters
         self._x = x
+        self._height = np.asarray(
+            track.envelope_height_m, dtype=np.float64
+        )
+        self._slope = np.asarray(
+            track.envelope_slope_x, dtype=np.float64
+        )
+        self._support_x = np.asarray(
+            track.support_x_m, dtype=np.float64
+        )
+        self._support_y = np.asarray(
+            track.support_y_m, dtype=np.float64
+        )
+        self._valid = np.asarray(track.valid_mask, dtype=np.bool_)
+        self._near_tie = np.asarray(
+            track.near_tie_flag, dtype=np.bool_
+        )
+        spacing = np.diff(x)
+        self._uniform_spacing_m = (
+            float(spacing[0])
+            if np.allclose(
+                spacing,
+                spacing[0],
+                rtol=0.0,
+                atol=1e-15,
+            )
+            else None
+        )
 
     @property
     def valid_x_range_m(self) -> tuple[float, float]:
-        valid = np.asarray(self.track.valid_mask, dtype=np.bool_)
-        indices = np.flatnonzero(valid)
+        indices = np.flatnonzero(self._valid)
         if indices.size == 0:
             raise ContactGeometryError("geometry_out_of_domain: track has no valid samples")
         return float(self._x[indices[0]]), float(self._x[indices[-1]])
@@ -50,15 +76,32 @@ class TrackInterpolator:
     def _bracket(self, center_x_m: float) -> tuple[int, int, float]:
         if not math.isfinite(center_x_m):
             raise ContactGeometryError("invalid_geometry: non-finite center x")
-        index = int(np.searchsorted(self._x, center_x_m, side="right") - 1)
+        if self._uniform_spacing_m is None:
+            index = int(
+                np.searchsorted(
+                    self._x, center_x_m, side="right"
+                )
+                - 1
+            )
+        else:
+            index = int(
+                math.floor(
+                    (center_x_m - float(self._x[0]))
+                    / self._uniform_spacing_m
+                    + 1e-12
+                )
+            )
         if index < 0:
             raise ContactGeometryError(
                 "geometry_out_of_domain: sphere center left the M1 track"
             )
-        valid = np.asarray(self.track.valid_mask, dtype=np.bool_)
+        if index >= self._x.size:
+            raise ContactGeometryError(
+                "geometry_out_of_domain: sphere center right of the M1 track"
+            )
         if (
             index < self._x.size - 1
-            and bool(valid[index] and valid[index + 1])
+            and bool(self._valid[index] and self._valid[index + 1])
         ):
             lower = index
             upper = index + 1
@@ -70,7 +113,7 @@ class TrackInterpolator:
                 rel_tol=0.0,
                 abs_tol=1e-15,
             )
-            and bool(valid[index - 1] and valid[index])
+            and bool(self._valid[index - 1] and self._valid[index])
         ):
             lower = index - 1
             upper = index
@@ -90,25 +133,25 @@ class TrackInterpolator:
     def query(self, center_x_m: float) -> GeometrySample:
         i0, i1, fraction = self._bracket(center_x_m)
         height = self._lerp(
-            np.asarray(self.track.envelope_height_m, dtype=np.float64),
+            self._height,
             i0,
             i1,
             fraction,
         )
         slope = self._lerp(
-            np.asarray(self.track.envelope_slope_x, dtype=np.float64),
+            self._slope,
             i0,
             i1,
             fraction,
         )
         support_x = self._lerp(
-            np.asarray(self.track.support_x_m, dtype=np.float64),
+            self._support_x,
             i0,
             i1,
             fraction,
         )
         support_y = self._lerp(
-            np.asarray(self.track.support_y_m, dtype=np.float64),
+            self._support_y,
             i0,
             i1,
             fraction,
@@ -141,8 +184,7 @@ class TrackInterpolator:
             + (support_z - height) * axis[1]
         )
         near_tie = bool(
-            np.asarray(self.track.near_tie_flag, dtype=np.bool_)[i0]
-            or np.asarray(self.track.near_tie_flag, dtype=np.bool_)[i1]
+            self._near_tie[i0] or self._near_tie[i1]
         )
         return GeometrySample(
             center_x_m=float(center_x_m),

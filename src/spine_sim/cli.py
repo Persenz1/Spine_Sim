@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Sequence
 
 from spine_sim.core.config import CampaignSpec
-from spine_sim.io.results import ResultStore
+from spine_sim.io.results import open_result_store
 from spine_sim.runtime.backend import discover_backend
 from spine_sim.runtime.runner import CampaignRunner
 from spine_sim.validation.environment import validate_environment
@@ -71,7 +71,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         print(json.dumps(report, ensure_ascii=False, indent=2))
         return 0 if report["passed"] else 2
     if args.command == "summarize":
-        records = ResultStore(args.campaign_dir).list_records()
+        records = open_result_store(args.campaign_dir).list_records()
         counts: dict[str, int] = {}
         for record in records:
             counts[record.run_state] = counts.get(record.run_state, 0) + 1

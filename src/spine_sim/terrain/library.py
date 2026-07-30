@@ -621,52 +621,119 @@ class TerrainLibrary:
             return self.load_track(
                 recipe.terrain_recipe_id, region.region_id, radius_m, track_id
             )
-        height = self.open_region(recipe.terrain_recipe_id, region.region_id)
-        started = time.perf_counter()
+        path.parent.mkdir(parents=True, exist_ok=True)
+        lock_path = path.with_suffix(".lock")
+        lock_started = time.monotonic()
+        owns_lock = False
+        while not owns_lock:
+            try:
+                descriptor = os.open(
+                    lock_path,
+                    os.O_CREAT | os.O_EXCL | os.O_WRONLY,
+                )
+            except FileExistsError:
+                if complete_path.is_file() and not overwrite:
+                    return self.load_track(
+                        recipe.terrain_recipe_id,
+                        region.region_id,
+                        radius_m,
+                        track_id,
+                    )
+                try:
+                    lock_age_s = (
+                        time.time() - lock_path.stat().st_mtime
+                    )
+                except FileNotFoundError:
+                    continue
+                if lock_age_s > 3600.0:
+                    try:
+                        lock_path.unlink()
+                    except FileNotFoundError:
+                        pass
+                    continue
+                if time.monotonic() - lock_started > 300.0:
+                    raise TerrainConfigurationError(
+                        "timed out waiting for the track-cache writer: "
+                        f"{track_id}"
+                    )
+                time.sleep(0.05)
+                continue
+            else:
+                with os.fdopen(descriptor, "w", encoding="ascii") as handle:
+                    handle.write(
+                        f"pid={os.getpid()} created={time.time():.6f}\n"
+                    )
+                    handle.flush()
+                    os.fsync(handle.fileno())
+                owns_lock = True
+
         try:
-            track = compute_track_geometry(
-                height,
-                region,
-                radius_m=radius_m,
-                y_global_m=y_global_m,
-                near_tie_tolerance_m=near_tie_tolerance_m,
+            if complete_path.is_file() and not overwrite:
+                return self.load_track(
+                    recipe.terrain_recipe_id,
+                    region.region_id,
+                    radius_m,
+                    track_id,
+                )
+            height = self.open_region(
+                recipe.terrain_recipe_id, region.region_id
             )
+            started = time.perf_counter()
+            try:
+                track = compute_track_geometry(
+                    height,
+                    region,
+                    radius_m=radius_m,
+                    y_global_m=y_global_m,
+                    near_tie_tolerance_m=near_tie_tolerance_m,
+                )
+            finally:
+                height._mmap.close()
+            if track.track_id != track_id:
+                raise TerrainConfigurationError(
+                    "computed track ID differs from cache key"
+                )
+            arrays = {
+                "x_global_m": track.x_global_m,
+                "envelope_height_m": track.envelope_height_m,
+                "envelope_slope_x": track.envelope_slope_x,
+                "support_x_m": track.support_x_m,
+                "support_y_m": track.support_y_m,
+                "valid_mask": track.valid_mask,
+                "near_tie_flag": track.near_tie_flag,
+            }
+            atomic_write_npz(path, arrays)
+            metadata = {
+                "schema_version": "1",
+                "m1_module_version": M1_MODULE_VERSION,
+                "terrain_recipe_id": track.terrain_recipe_id,
+                "region_id": track.region_id,
+                "track_id": track.track_id,
+                "radius_m": track.radius_m,
+                "y_global_m": track.y_global_m,
+                "resolution_m": track.resolution_m,
+                "envelope_algorithm_version": (
+                    track.envelope_algorithm_version
+                ),
+                "model_warning": list(track.model_warning),
+                "sample_count": int(track.x_global_m.size),
+                "valid_count": int(np.count_nonzero(track.valid_mask)),
+                "generation_time_s": time.perf_counter() - started,
+                "data_sha256": sha256_file(path),
+                "created_at_utc": utc_now(),
+            }
+            atomic_write_json(metadata_path, metadata)
+            atomic_write_bytes(
+                complete_path,
+                (metadata["data_sha256"] + "\n").encode("ascii"),
+            )
+            return track
         finally:
-            height._mmap.close()
-        if track.track_id != track_id:
-            raise TerrainConfigurationError("computed track ID differs from cache key")
-        arrays = {
-            "x_global_m": track.x_global_m,
-            "envelope_height_m": track.envelope_height_m,
-            "envelope_slope_x": track.envelope_slope_x,
-            "support_x_m": track.support_x_m,
-            "support_y_m": track.support_y_m,
-            "valid_mask": track.valid_mask,
-            "near_tie_flag": track.near_tie_flag,
-        }
-        atomic_write_npz(path, arrays)
-        metadata = {
-            "schema_version": "1",
-            "m1_module_version": M1_MODULE_VERSION,
-            "terrain_recipe_id": track.terrain_recipe_id,
-            "region_id": track.region_id,
-            "track_id": track.track_id,
-            "radius_m": track.radius_m,
-            "y_global_m": track.y_global_m,
-            "resolution_m": track.resolution_m,
-            "envelope_algorithm_version": track.envelope_algorithm_version,
-            "model_warning": list(track.model_warning),
-            "sample_count": int(track.x_global_m.size),
-            "valid_count": int(np.count_nonzero(track.valid_mask)),
-            "generation_time_s": time.perf_counter() - started,
-            "data_sha256": sha256_file(path),
-            "created_at_utc": utc_now(),
-        }
-        atomic_write_json(metadata_path, metadata)
-        atomic_write_bytes(
-            complete_path, (metadata["data_sha256"] + "\n").encode("ascii")
-        )
-        return track
+            if owns_lock:
+                try:
+                    lock_path.unlink()
+                except FileNotFoundError:
+                    pass
 
     def load_track(
         self,

@@ -5,22 +5,35 @@ from __future__ import annotations
 import json
 import math
 import time
-from dataclasses import asdict
+from dataclasses import asdict, replace
+from functools import lru_cache
 from pathlib import Path
-from typing import Any, Mapping
+from typing import Any, Mapping, Sequence
 
 import numpy as np
 
-from spine_sim.contact import DynamicContactSettings, DynamicIntegratorSettings
+from spine_sim.contact import (
+    DynamicContactSettings,
+    DynamicIntegratorSettings,
+)
 from spine_sim.runtime.runner import CaseOutput, RunContext
 from spine_sim.terrain import TerrainLibrary
+from spine_sim.terrain.models import (
+    ENVELOPE_ALGORITHM_VERSION,
+    TrackGeometry,
+)
 
 from .dynamics import (
     ArrayDynamicExperimentSettings,
     DynamicCommonBackplateArray,
     DynamicCommonBackplateExperiment,
 )
-from .models import M3_MODEL_LEVEL, M3_MODULE_VERSION, ArrayConfiguration
+from .models import (
+    M3_MODEL_LEVEL,
+    M3_MODULE_VERSION,
+    ArrayConfiguration,
+    ArrayDynamicPathPoint,
+)
 
 
 _EXPLICIT_EXPERIMENT_PARAMETERS = {
@@ -40,6 +53,7 @@ _EXPLICIT_EXPERIMENT_PARAMETERS = {
     "settling_stable_steps",
     "dynamic_residual_tolerance_n",
     "coupled_projection_relaxation",
+    "coupled_projection_position_tolerance_m",
     "output_spacing_m",
     "effective_pin_normal_force_min_n",
     "time_step_convergence_checked",
@@ -63,6 +77,72 @@ _DEFAULT_PLACEMENT_SEARCH_OFFSETS_XY_M = (
 
 class _RodClearanceOutOfBoundsError(ValueError):
     """The shank postcheck cannot be evaluated inside the M1 region."""
+
+
+@lru_cache(maxsize=16)
+def _terrain_library(root: str) -> TerrainLibrary:
+    """Reuse one lightweight library handle per worker process."""
+
+    return TerrainLibrary(root)
+
+
+@lru_cache(maxsize=256)
+def _load_track_cached(
+    library_root: str,
+    terrain_recipe_id: str,
+    region_id: str,
+    radius_m: float,
+    track_id: str,
+) -> TrackGeometry:
+    """Avoid repeated NPZ decompression and hashing inside one worker."""
+
+    return _terrain_library(library_root).load_track(
+        terrain_recipe_id,
+        region_id,
+        radius_m,
+        track_id,
+    )
+
+
+def _track_for_request(
+    *,
+    library: TerrainLibrary,
+    library_root: str,
+    recipe,
+    region,
+    radius_m: float,
+    y_global_m: float,
+    read_only: bool,
+) -> TrackGeometry:
+    track_id = TrackGeometry.make_id(
+        terrain_recipe_id=recipe.terrain_recipe_id,
+        region_id=region.region_id,
+        radius_m=radius_m,
+        y_global_m=y_global_m,
+        envelope_algorithm_version=ENVELOPE_ALGORITHM_VERSION,
+        resolution_m=region.resolution_x_m,
+    )
+    try:
+        return _load_track_cached(
+            library_root,
+            recipe.terrain_recipe_id,
+            region.region_id,
+            radius_m,
+            track_id,
+        )
+    except FileNotFoundError as exc:
+        if read_only:
+            raise ValueError(
+                "formal M3 worker requires a frozen pre-generated "
+                f"track cache; missing track_id={track_id}"
+            ) from exc
+    track = library.cache_track(
+        recipe,
+        region,
+        radius_m=radius_m,
+        y_global_m=y_global_m,
+    )
+    return track
 
 
 def _placement_search_offsets(
@@ -578,31 +658,57 @@ def _proxy_array_rod_clearance(
 ) -> np.ndarray:
     """2-D height-field check of each cylindrical shank's lower surface."""
 
-    if axial_sample_count < 2:
-        raise ValueError(
-            "rod-clearance axial_sample_count must be at least two"
+    with _RodClearanceMonitor(
+        library=library,
+        terrain_recipe_id=result.terrain_recipe_id,
+        region_id=result.region_id,
+        configuration=result.configuration,
+        axial_sample_count=axial_sample_count,
+        lateral_sample_count=lateral_sample_count,
+    ) as monitor:
+        return monitor.evaluate_many(result.points)
+
+
+class _RodClearanceMonitor:
+    """Reusable retained-point clearance evaluator for one array placement."""
+
+    def __init__(
+        self,
+        *,
+        library: TerrainLibrary,
+        terrain_recipe_id: str,
+        region_id: str,
+        configuration: ArrayConfiguration,
+        axial_sample_count: int = 24,
+        lateral_sample_count: int = 9,
+    ) -> None:
+        if axial_sample_count < 2:
+            raise ValueError(
+                "rod-clearance axial_sample_count must be at least two"
+            )
+        if lateral_sample_count < 3 or lateral_sample_count % 2 == 0:
+            raise ValueError(
+                "rod-clearance lateral_sample_count must be odd and at least "
+                "three"
+            )
+        self.height = library.open_region(terrain_recipe_id, region_id)
+        self.region = library.load_region_spec(
+            terrain_recipe_id,
+            region_id,
         )
-    if lateral_sample_count < 3 or lateral_sample_count % 2 == 0:
-        raise ValueError(
-            "rod-clearance lateral_sample_count must be odd and at least three"
-        )
-    point_count = len(result.points)
-    pin_count = result.configuration.pin_count
-    if point_count == 0:
-        return np.empty((0, pin_count), dtype=np.float64)
-    height = library.open_region(result.terrain_recipe_id, result.region_id)
-    region = library.load_region_spec(
-        result.terrain_recipe_id,
-        result.region_id,
-    )
-    minimum = np.empty((point_count, pin_count), dtype=np.float64)
-    try:
-        for pin_index, parameters in enumerate(
-            result.configuration.pin_parameters
-        ):
-            y_global_m = result.points[0].pin_responses[
-                pin_index
-            ].holder_xyz_m[1]
+        self.configuration = configuration
+        self._sampling: list[
+            tuple[
+                np.ndarray,
+                np.ndarray,
+                float,
+                float,
+                float,
+                float,
+                np.ndarray,
+            ]
+        ] = []
+        for parameters in configuration.pin_parameters:
             rod_radius = 0.5 * parameters.diameter_m
             distances = np.linspace(
                 min(rod_radius, parameters.exposed_length_m),
@@ -621,51 +727,73 @@ def _proxy_array_rod_clearance(
             )
             axis_x, axis_z = parameters.axis_xz
             transverse_x, transverse_z = parameters.transverse_xz
-            center_x = np.asarray(
-                [
-                    point.pin_responses[pin_index].center_xyz_m[0]
-                    for point in result.points
-                ],
-                dtype=np.float64,
+            self._sampling.append(
+                (
+                    distances,
+                    lateral,
+                    float(axis_x),
+                    float(axis_z),
+                    float(transverse_x),
+                    float(transverse_z),
+                    lower_cross_section,
+                )
             )
-            center_z = np.asarray(
-                [
-                    point.pin_responses[pin_index].center_xyz_m[2]
-                    for point in result.points
-                ],
-                dtype=np.float64,
-            )
-            axis_sample_x = (
-                center_x[:, None] - axis_x * distances[None, :]
-            )
-            axis_sample_z = (
-                center_z[:, None] - axis_z * distances[None, :]
-            )
+
+    def __enter__(self) -> "_RodClearanceMonitor":
+        return self
+
+    def __exit__(self, *_exc_info: object) -> None:
+        self.close()
+
+    def close(self) -> None:
+        mmap = getattr(self.height, "_mmap", None)
+        if mmap is not None:
+            mmap.close()
+
+    def evaluate(self, point: ArrayDynamicPathPoint) -> np.ndarray:
+        minimum = np.empty(
+            self.configuration.pin_count,
+            dtype=np.float64,
+        )
+        for pin_index, sampling in enumerate(self._sampling):
+            (
+                distances,
+                lateral,
+                axis_x,
+                axis_z,
+                transverse_x,
+                transverse_z,
+                lower_cross_section,
+            ) = sampling
+            pin = point.pin_responses[pin_index]
+            center_x = float(pin.center_xyz_m[0])
+            center_z = float(pin.center_xyz_m[2])
+            y_global_m = float(pin.holder_xyz_m[1])
+            axis_sample_x = center_x - axis_x * distances
+            axis_sample_z = center_z - axis_z * distances
             sample_x = (
-                axis_sample_x[:, :, None]
-                - transverse_x
-                * lower_cross_section[None, None, :]
+                axis_sample_x[:, None]
+                - transverse_x * lower_cross_section[None, :]
             )
             sample_y = np.broadcast_to(
-                y_global_m + lateral[None, None, :],
+                y_global_m + lateral[None, :],
                 sample_x.shape,
             )
             sample_z = (
-                axis_sample_z[:, :, None]
-                - transverse_z
-                * lower_cross_section[None, None, :]
+                axis_sample_z[:, None]
+                - transverse_z * lower_cross_section[None, :]
             )
             x_float = (
-                sample_x - region.origin_x_m
-            ) / region.resolution_x_m
+                sample_x - self.region.origin_x_m
+            ) / self.region.resolution_x_m
             y_float = (
-                sample_y - region.origin_y_m
-            ) / region.resolution_y_m
+                sample_y - self.region.origin_y_m
+            ) / self.region.resolution_y_m
             if (
                 np.any(x_float < 0.0)
-                or np.any(x_float > height.shape[1] - 1)
+                or np.any(x_float > self.height.shape[1] - 1)
                 or np.any(y_float < 0.0)
-                or np.any(y_float > height.shape[0] - 1)
+                or np.any(y_float > self.height.shape[0] - 1)
             ):
                 raise _RodClearanceOutOfBoundsError(
                     f"pin {pin_index} 2-D rod-clearance samples lie "
@@ -673,30 +801,43 @@ def _proxy_array_rod_clearance(
                 )
             x0 = np.minimum(
                 np.floor(x_float).astype(np.int64),
-                height.shape[1] - 2,
+                self.height.shape[1] - 2,
             )
             y0 = np.minimum(
                 np.floor(y_float).astype(np.int64),
-                height.shape[0] - 2,
+                self.height.shape[0] - 2,
             )
             tx = x_float - x0
             ty = y_float - y0
-            h00 = np.asarray(height[y0, x0], dtype=np.float64)
-            h01 = np.asarray(height[y0, x0 + 1], dtype=np.float64)
-            h10 = np.asarray(height[y0 + 1, x0], dtype=np.float64)
-            h11 = np.asarray(height[y0 + 1, x0 + 1], dtype=np.float64)
+            h00 = np.asarray(self.height[y0, x0], dtype=np.float64)
+            h01 = np.asarray(self.height[y0, x0 + 1], dtype=np.float64)
+            h10 = np.asarray(self.height[y0 + 1, x0], dtype=np.float64)
+            h11 = np.asarray(
+                self.height[y0 + 1, x0 + 1],
+                dtype=np.float64,
+            )
             terrain_z = (
                 (1.0 - ty) * ((1.0 - tx) * h00 + tx * h01)
                 + ty * ((1.0 - tx) * h10 + tx * h11)
             )
-            minimum[:, pin_index] = np.min(
-                sample_z - terrain_z,
-                axis=(1, 2),
+            minimum[pin_index] = float(
+                np.min(sample_z - terrain_z)
             )
-    finally:
-        if getattr(height, "_mmap", None) is not None:
-            height._mmap.close()
-    return minimum
+        return minimum
+
+    def evaluate_many(
+        self,
+        points: Sequence[ArrayDynamicPathPoint],
+    ) -> np.ndarray:
+        if not points:
+            return np.empty(
+                (0, self.configuration.pin_count),
+                dtype=np.float64,
+            )
+        return np.stack(
+            [self.evaluate(point) for point in points],
+            axis=0,
+        )
 
 
 def _events(result, case_id: str) -> list[dict[str, Any]]:
@@ -757,7 +898,17 @@ def run_case(parameters: Mapping[str, Any], context: RunContext) -> CaseOutput:
         raise ValueError(
             "M3 output.level must be summary, aggregate_trace or full_pin_trace"
         )
-    library = TerrainLibrary(Path(str(parameters["terrain_library_root"])))
+    library_root = str(
+        Path(str(parameters["terrain_library_root"])).resolve()
+    )
+    library = _terrain_library(library_root)
+    track_cache_mode = str(
+        parameters.get("track_cache_mode", "read_write")
+    )
+    if track_cache_mode not in {"read_only", "read_write"}:
+        raise ValueError(
+            "M3 track_cache_mode must be read_only or read_write"
+        )
     terrain_recipe_id = str(parameters["terrain_recipe_id"])
     region_id = str(parameters["region_id"])
     terrain_data_sha256 = str(parameters["terrain_data_sha256"])
@@ -780,7 +931,8 @@ def run_case(parameters: Mapping[str, Any], context: RunContext) -> CaseOutput:
         )
     if has_tracks:
         stored_tracks = tuple(
-            library.load_track(
+            _load_track_cached(
+                library_root,
                 terrain_recipe_id,
                 region_id,
                 float(item["radius_m"]),
@@ -862,13 +1014,16 @@ def run_case(parameters: Mapping[str, Any], context: RunContext) -> CaseOutput:
                 and region_for_tracks is not None
             )
             tracks = tuple(
-                library.cache_track(
-                    recipe_for_tracks,
-                    region_for_tracks,
+                _track_for_request(
+                    library=library,
+                    library_root=library_root,
+                    recipe=recipe_for_tracks,
+                    region=region_for_tracks,
                     radius_m=float(request["radius_m"]),
                     y_global_m=(
                         float(request["y_global_m"]) + offset_xy_m[1]
                     ),
+                    read_only=track_cache_mode == "read_only",
                 )
                 for request in requests
             )
@@ -882,47 +1037,91 @@ def run_case(parameters: Mapping[str, Any], context: RunContext) -> CaseOutput:
             unit_origin_xy_m=origin_xy_m,
             contact=contact,
         )
-        candidate_result = DynamicCommonBackplateExperiment(
+        candidate_experiment = DynamicCommonBackplateExperiment(
             system,
             experiment,
             integrator,
-        ).run()
+        )
+        candidate_result = None
         candidate_clearance = None
         candidate_minimum_clearance = None
         candidate_collision = None
         first_collision_path_position_m = None
         rod_clearance_failure_code = None
-        if (
+        initial_clearance_precheck_short_circuited = False
+        clearance_mode = (
             configuration.base_spine.rod_clearance_mode
             == "proxy_cylindrical_shank_postcheck"
-            and candidate_result.points
-        ):
-            try:
-                candidate_clearance = _proxy_array_rod_clearance(
-                    library=library,
-                    result=candidate_result,
+        )
+        if clearance_mode:
+            clearance_rows: list[np.ndarray] = []
+            current_path_position_m = 0.0
+
+            def stop_on_rod_collision(
+                point: ArrayDynamicPathPoint,
+            ) -> str | None:
+                nonlocal current_path_position_m
+                current_path_position_m = float(point.path_position_m)
+                try:
+                    row = monitor.evaluate(point)
+                except _RodClearanceOutOfBoundsError:
+                    if point.path_position_m <= 1e-15:
+                        return (
+                            "initial_rod_clearance_samples_out_of_bounds"
+                        )
+                    return "rod_clearance_samples_out_of_bounds"
+                clearance_rows.append(row)
+                if np.any(row < 0.0):
+                    if point.path_position_m <= 1e-15:
+                        return "initial_rod_collision_precheck"
+                    return "rod_collision_online"
+                return None
+
+            with _RodClearanceMonitor(
+                library=library,
+                terrain_recipe_id=terrain_recipe_id,
+                region_id=region_id,
+                configuration=configuration,
+            ) as monitor:
+                candidate_result = candidate_experiment.run(
+                    point_stop_callback=stop_on_rod_collision,
                 )
-            except _RodClearanceOutOfBoundsError:
-                candidate_collision = True
-                rod_clearance_failure_code = (
-                    "rod_clearance_samples_out_of_bounds"
-                )
-            else:
+            if clearance_rows:
+                candidate_clearance = np.stack(clearance_rows, axis=0)
                 candidate_minimum_clearance = float(
                     np.min(candidate_clearance)
                 )
-                candidate_collision = candidate_minimum_clearance < 0.0
-                if candidate_collision:
-                    first_collision_index = int(
-                        np.flatnonzero(
-                            np.any(candidate_clearance < 0.0, axis=1)
-                        )[0]
-                    )
-                    first_collision_path_position_m = float(
-                        candidate_result.points[
-                            first_collision_index
-                        ].path_position_m
-                    )
+            stop_reason = candidate_result.summary.termination_reason
+            if stop_reason in {
+                "initial_rod_clearance_samples_out_of_bounds",
+                "rod_clearance_samples_out_of_bounds",
+                "initial_rod_collision_precheck",
+                "rod_collision_online",
+            }:
+                candidate_collision = True
+                rod_clearance_failure_code = stop_reason
+                first_collision_path_position_m = current_path_position_m
+                initial_clearance_precheck_short_circuited = (
+                    current_path_position_m <= 1e-15
+                )
+                candidate_result = replace(
+                    candidate_result,
+                    summary=replace(
+                        candidate_result.summary,
+                        failure_code=rod_clearance_failure_code,
+                    ),
+                )
+            elif candidate_clearance is not None:
+                candidate_collision = (
+                    candidate_minimum_clearance is not None
+                    and candidate_minimum_clearance < 0.0
+                )
+            elif not candidate_result.points:
+                candidate_collision = None
+            else:
+                candidate_collision = False
+        else:
+            candidate_result = candidate_experiment.run()
         placement_attempts.append(
             {
                 "attempt_index": attempt_index,
@@ -947,6 +1146,9 @@ def run_case(parameters: Mapping[str, Any], context: RunContext) -> CaseOutput:
                 "rod_clearance_failure_code": (
                     rod_clearance_failure_code
                 ),
+                "initial_clearance_precheck_short_circuited": (
+                    initial_clearance_precheck_short_circuited
+                ),
                 "selected": False,
             }
         )
@@ -963,8 +1165,6 @@ def run_case(parameters: Mapping[str, Any], context: RunContext) -> CaseOutput:
             selected = candidate
         if (
             candidate_minimum_clearance is not None
-            and candidate_result.summary.run_terminal_state.value
-            == "path_end"
             and candidate_result.summary.initial_preload_success
             and candidate_minimum_clearance > best_clearance
         ):
@@ -1021,9 +1221,16 @@ def run_case(parameters: Mapping[str, Any], context: RunContext) -> CaseOutput:
     )
     summary["terrain_catalog_id"] = parameters.get("terrain_catalog_id")
     summary["terrain_data_sha256"] = terrain_data_sha256
+    summary["terrain_realization_id"] = parameters.get(
+        "terrain_realization_id"
+    )
     summary["loading_protocol_id"] = parameters.get(
         "loading_protocol_id"
     )
+    if "convergence_case" in parameters:
+        summary["convergence_case"] = dict(
+            parameters["convergence_case"]
+        )
     summary["engineering_proxy"] = parameters.get("engineering_proxy")
     summary["engineering_proxy_scenario_id"] = (
         parameters.get("engineering_proxy", {})

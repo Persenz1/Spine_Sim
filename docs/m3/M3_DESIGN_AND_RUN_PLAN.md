@@ -2,8 +2,10 @@
 
 **当前目标：** 在单元总预载 0.5、1、2 N 下完成沉降，保持该外载并沿 +x 拖拽
 100 mm，比较完整硬件/阵列组合的拉力趋势。
-**当前状态：** 已完成设计和解析测试；只保留一次旧地形短程 smoke 的历史报告。
-旧地形已删除，正式 M1 catalog 尚不存在，未运行正式 campaign。
+**当前状态：** 正式 M1 catalog 已完成并通过 300/300 严格配对、身份和完整数据
+哈希校验；设计、解析测试、真实 runner/恢复/合并以及紧凑 summary 存储均已验证。
+正式 proxy campaign 尚未启动，因为粗糙面时间步对照、代表性 10/5 μm 对照和
+100 mm 吞吐门仍未关闭。
 
 ## 1. 设计空间
 
@@ -47,14 +49,17 @@
 | 80°→60° | 336 | 300 | 3 | 302,400 |
 | 合计 | 1344 | 300 | 3 | 1,209,600 |
 
-这些是计划数量，不代表已经运行。正式完整性检查要求每个
+这些是计划数量，不代表已经运行。正式 catalog 位于
+`results/m1_material_formal_300/terrain_catalog.json`，catalog ID 为
+`945375fc19c5af12a3b22abb2045cd5debeefc7a017d0a2df0448f479d0442c3`。
+正式完整性检查要求每个
 `(array_configuration_id, terrain_condition_id, loading_protocol_id)` 恰好一次；
 少一项、重复一项或跨构型地形不配对都拒绝正式分析。
 
 加载协议还冻结确定性换落点策略：名义落点优先，其后尝试 y=±1/±2 mm 和
-x=±1 mm 的全单元偏移。只有几何碰撞或地形越界触发下一候选；每次都从沉降开始
-重放整段 +x 路径。该策略用于尽量完成拖拽，不允许把多落点中的最大拉力当作排名
-值。
+x=±1 mm 的全单元偏移。只有几何碰撞或地形越界触发下一候选；净空在正式保留
+路径点在线检查，碰撞时立即终止当前候选，下一候选仍从沉降开始重放。该策略用于
+尽量完成拖拽，不允许把多落点中的最大拉力当作排名值。
 
 ## 2. 当前与后续 M1 地形
 
@@ -64,7 +69,7 @@ recipe/region/realization 为各针的全局 y 和针尖半径取轨迹，并使
 历史短程接口 smoke 曾使用
 `results/m2_formal_terrains/terrain_catalog.json`。该旧 M2 地形库已经永久删除；
 它当时只有 45 个 `defined_geometry` 条件，不能满足正式 3×100 配对门，也不能
-作为当前默认输入。新的 M1 材料地形 catalog 应保持以下契约：
+作为当前默认输入。当前正式 M1 材料地形 catalog 已满足以下接口契约：
 
 1. catalog 提供稳定的 family、seed、recipe、region、realization 和数据哈希；
 2. 同 realization 能导出 10 μm 初筛及 5 μm 细筛；
@@ -103,13 +108,28 @@ one-factor-at-a-time 情景；不得据此把绝对拉力称为已标定预测�
 
 ## 4. 生成有界分片
 
+正式 worker 使用只读轨迹缓存。生成任何正式分片前必须串行执行：
+
+```powershell
+.venv\Scripts\python.exe scripts\prepare_m3_track_cache.py `
+  results\m1_material_formal_300\terrain_catalog.json
+```
+
+该命令为每个地形预生成 2 个针尖半径×65 个全局 y（含换落点），总计
+39,000 条轨迹，并原子写入完整 manifest。缺少任一轨迹时正式 worker 明确失败，
+不会并发补写。
+
+当前正式 catalog 的 39,000 条轨迹已全部完成；精确 track ID 集、全部数据文件、
+元数据、COMPLETE 标记和零残留 writer lock 已通过清单核验。完整队列启动时还会
+重新执行该文件清单门禁。
+
 分片必须同时给出一个地形族、有界 seed 范围、一个预载和一个输出级别。例如：
 
 ```powershell
 .venv\Scripts\python.exe scripts\prepare_m3_round1_design.py `
   --catalog <m1_terrain_catalog.json> `
   --terrain-family sandpaper `
-  --seed-min 0 --seed-max 4 `
+  --seed-min 41001 --seed-max 41005 `
   --preload-n 1 `
   --output-level summary `
   --workers 1 `
@@ -130,7 +150,10 @@ one-factor-at-a-time 情景；不得据此把绝对拉力称为已标定预测�
   --output <fast_local_scratch> --workers <N>
 ```
 
-以上只是未来运行说明；本次任务没有执行这些正式命令。
+正式队列由 `scripts/run_m3_formal_queue.py` 逐分片物化和恢复；它只有在
+`m3-preflight-v1` 报告显式允许，且轨迹缓存、时间步收敛、地形分辨率收敛和吞吐
+四项 launch gate 都为 true 时才启动，并保留所有原始 scratch。物理标定仍可为
+false，但这种运行只能称为 proxy，不能进入正式物理排名。
 
 若只有有界 M1 测试 catalog，可用独立入口物化 1–3 个真实 M3 case，以验证
 runner、换落点、结果完整性和续跑；它不会放松正式 shard 的 300 条件门：
@@ -156,11 +179,10 @@ runner、换落点、结果完整性和续跑；它不会放松正式 shard 的 
 2. 指定 seed、每类代表构型和异常 case 用 `aggregate_trace`。
 3. 代表性构型、异常复现及最终候选才用 `full_pin_trace`。
 
-同一 case 改变输出级别不得改变摘要数值。若 summary case 没有路径数组，
-`path.npz` 不会生成；summary 也不会生成空事件文件。每 case 目录仍有
-`config.json`、`validation.json`、`summary.json` 和 `COMPLETE`，所以运行层必须
-采用“有界本地 scratch 分片→校验并合并→归档列式文件”的两阶段策略，不能把
-120 万 case 直接落到移动 SSD。
+同一 case 改变输出级别不得改变摘要数值。正式 `summary` 分片使用单个事务型
+SQLite 数据库和 Parquet 索引，不再创建每 case 一个目录；`aggregate_trace` 和
+`full_pin_trace` 仍用逐 case 原子目录。运行层仍采用“有界本地 scratch 分片→
+校验并合并→归档列式文件”的两阶段策略，不能把 120 万 case 直接落到移动 SSD。
 
 分片结束后：
 
@@ -170,7 +192,8 @@ runner、换落点、结果完整性和续跑；它不会放松正式 shard 的 
   --output <archive_root>\m3_summaries
 ```
 
-合并器会验证每个 `COMPLETE`、结果/路径/事件哈希，原子生成 zstd Parquet
+合并器会验证逐目录结果的 `COMPLETE` 和 payload 哈希，或紧凑数据库中的事务完成
+状态和 payload 哈希，再原子生成 zstd Parquet
 （row group 10,000）及 manifest。它先流式检查类型/哈希，再按批写入，不把全部
 summary 放入内存；跨分片重复 case ID 由临时磁盘索引拒绝。缺少 pyarrow 时明确
 回退流式 JSONL。移动 SSD 建议只长期保存：
@@ -205,7 +228,7 @@ summary 放入内存；跨分片重复 case ID 由临时磁盘索引拒绝。缺
 
 ## 7. 有界收敛方案
 
-先只生成计划：
+可先生成计划：
 
 ```powershell
 .venv\Scripts\python.exe scripts\prepare_m3_convergence_plan.py `
@@ -213,19 +236,27 @@ summary 放入内存；跨分片重复 case ID 由临时磁盘索引拒绝。缺
 ```
 
 计划选择 8 个确定性哨兵，覆盖 2×2/4×4/6×6、2×5/5×2、固定/梯度、尺寸与刚柔
-极值；对 0.5/1/2 N 比较 11 个单轴变体：
+极值；对 0.5/1/2 N 比较 12 个单轴变体：
 
-- 0.5 ms 参考与 1/2/5 ms 时间步；
+- 0.25 ms 参考与 0.5/1/2/5 ms 时间步；
 - 20/40 次投影；
 - 位置修正 0.20/0.50/1.0；
 - 沉降阻尼倍数 5/10/20；
 - 拖速 1/2/5 mm/s。
 
-每个地形条件共 264 case，先用 2 mm 短路径，绝不是正式扫描。成对门限为拉力
+每个地形条件共 288 case，先用 2 mm 短路径，绝不是正式扫描。成对门限为拉力
 中位数 3%、P10 5%、Neff 和最大针载荷 5%、接触比例 2 个百分点，并同时要求累计
 相对能量误差不超过 \(10^{-3}\)、接触功恒等式残差不超过 \(10^{-12}\) J。
 短路径通过后，再只对入围构型做 10/25/50/100 mm 路径长度外推和 10/5 μm
 同 realization 对照。
+
+`scripts/prepare_m3_convergence_campaign.py` 会把计划物化为真实、可恢复的
+summary campaign，`scripts/analyze_m3_convergence.py` 执行机器门禁，并要求
+两边均几何可行、可纳入条件性能、选择同一落点且各有至少 20 个统一保存位置的
+稳态样本。当前 P40/seed 41001 的 2×2、1 N、0.1 mm 对照中，0.5 ms 相对
+0.25 ms 的中位/P10/Neff/最大针载差为 2.09%/21.93%/1.38%/0.58%；
+P240/seed 41005 的几何可行 2 mm 对照仍为
+5.92%/31.43%/11.19%/23.22%，未通过门禁。
 
 ## 8. 正式运行前门禁
 
