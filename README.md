@@ -109,6 +109,12 @@ spine-m3-fast full-auto --workers 6
 20 mm 并保存完整路径，最后给出 6 个构型。可分别使用 `full-coarse`、
 `full-fine`、`full-final` 断点续跑。运行期间可启动只读进度弹窗：
 
+路径求解保持法向预载持续作用。接触崩开时会清除失效接触历史，在同一拖拽位置
+重新压合；若当前几何分支不可达，则按确定顺序尝试当前落点附近
+`0, +dx, -dx, ...` 的候选，默认最多到 `±5dx`。成功后继续完成规定拖拽距离，
+并在摘要和完整路径中记录重新压合次数、落点偏移、求解尝试次数和未支撑站点，
+不会再把一次脱离直接当作 case 终点。
+
 ```powershell
 .\.venv\Scripts\pythonw.exe scripts\monitor_m3_full_scan.py `
   --output results\m3_fast\full_scan

@@ -3,6 +3,7 @@ from __future__ import annotations
 import math
 
 import numpy as np
+import spine_sim.m3_fast.solver as solver_module
 
 from spine_sim.m3_fast.campaign import (
     _select_m3b_configurations,
@@ -26,7 +27,10 @@ from spine_sim.m3_fast.model import (
 from spine_sim.m3_fast.solver import (
     MAX_STATION_EVALUATIONS,
     STATION_OK,
+    STATION_PRELOAD_UNREACHABLE,
+    STATION_RECONTACT_REQUIRED,
     STATION_SUPPORT_LOST,
+    STATION_TRACK_INVALID,
     PathSettings,
     PathTrace,
     StationWorkspace,
@@ -170,6 +174,25 @@ def test_vectorized_model_produces_finite_full_array_trial() -> None:
     assert np.array_equal(state.spring_branch, state_before[2])
 
 
+def test_free_spines_do_not_accumulate_detached_arc_length() -> None:
+    batch = _test_batch()
+    state = make_contact_state(batch)
+    workspace = make_model_workspace(batch)
+
+    evaluate_spines(
+        batch,
+        state,
+        workspace,
+        backplate_z_m=float(-batch.tip_z_offset_m[0] - 10e-6),
+        envelope_height_m=np.zeros(batch.spine_count),
+        envelope_slope_x=np.zeros(batch.spine_count),
+        delta_arc_m=np.full(batch.spine_count, 1e-3),
+        valid_mask=np.ones(batch.spine_count, dtype=np.bool_),
+    )
+
+    assert np.all(workspace.tangent_trial_m == 0.0)
+
+
 def test_common_backplate_path_is_finite_and_never_uses_dense_solve(
     monkeypatch,
 ) -> None:
@@ -275,6 +298,197 @@ def test_rejected_station_does_not_commit_candidate_state() -> None:
     assert np.array_equal(state.mode, accepted_state[0])
     assert np.array_equal(state.u_t_history_m, accepted_state[1])
     assert np.array_equal(state.spring_branch, accepted_state[2])
+
+
+def _accept_scripted_station(
+    batch,
+    previous_state,
+    workspace,
+    preload_N: float,
+) -> None:
+    previous_state.mode.fill(STICK)
+    previous_state.u_t_history_m.fill(2e-5)
+    previous_state.spring_branch.fill(INTERIOR)
+    workspace.mode.fill(STICK)
+    workspace.u_t_history_m.fill(2e-5)
+    workspace.spring_branch.fill(INTERIOR)
+    workspace.force_x_N.fill(-0.1 / batch.spine_count)
+    workspace.force_z_N.fill(preload_N / batch.spine_count)
+    workspace.lambda_n_N.fill(preload_N / batch.spine_count)
+    workspace.tangent_force_N.fill(-0.1 / batch.spine_count)
+    workspace.spring_axial_load_N.fill(0.0)
+
+
+def test_detach_represses_from_fresh_state_and_finishes_path(
+    monkeypatch,
+) -> None:
+    batch = _test_batch()
+    bank = _flat_track_bank(np.unique(batch.y_m))
+    calls: list[dict[str, np.ndarray]] = []
+
+    def scripted_solve(
+        current_batch,
+        previous_state,
+        workspace,
+        _station_workspace,
+        *,
+        delta_arc_m,
+        preload_N,
+        previous_z_m,
+        **_kwargs,
+    ):
+        calls.append(
+            {
+                "mode": previous_state.mode.copy(),
+                "history": previous_state.u_t_history_m.copy(),
+                "delta_arc": np.asarray(delta_arc_m).copy(),
+            }
+        )
+        if len(calls) == 2:
+            return (
+                STATION_RECONTACT_REQUIRED,
+                previous_z_m,
+                1,
+                0.2,
+            )
+        _accept_scripted_station(
+            current_batch, previous_state, workspace, preload_N
+        )
+        return STATION_OK, -1e-3, 1, 0.0
+
+    monkeypatch.setattr(solver_module, "solve_station", scripted_solve)
+    settings = PathSettings(
+        preload_N=1.0,
+        path_length_m=0.0002,
+        dx_m=0.0001,
+        relanding_search_steps=1,
+    )
+    trace = PathTrace.allocate(batch, settings, include_spines=True)
+    metrics, diagnostics = simulate_path(
+        batch,
+        bank,
+        bank.rows_for_y(batch.y_m),
+        settings,
+        trace=trace,
+    )
+
+    assert len(calls) == 4
+    assert np.all(calls[2]["mode"] == FREE)
+    assert np.all(calls[2]["history"] == 0.0)
+    assert np.all(calls[2]["delta_arc"] == 0.0)
+    assert np.allclose(calls[3]["delta_arc"], settings.dx_m)
+    assert metrics["case_status"] == "complete"
+    assert metrics["completion_ratio"] == 1.0
+    assert metrics["path_end_reached"] is True
+    assert metrics["recontact_count"] == 1
+    assert metrics["detach_count"] == 1
+    assert diagnostics["station_count_attempted"] == 2
+    assert diagnostics["station_count_completed"] == 2
+    assert trace.recontacted.tolist() == [False, True, False]
+
+
+def test_unreachable_landing_tries_neighbor_before_continuing(
+    monkeypatch,
+) -> None:
+    batch = _test_batch()
+    bank = _flat_track_bank(np.unique(batch.y_m))
+    call_count = 0
+
+    def scripted_solve(
+        current_batch,
+        previous_state,
+        workspace,
+        _station_workspace,
+        *,
+        preload_N,
+        previous_z_m,
+        **_kwargs,
+    ):
+        nonlocal call_count
+        call_count += 1
+        if call_count in {2, 3}:
+            return (
+                STATION_PRELOAD_UNREACHABLE,
+                previous_z_m,
+                2,
+                0.5,
+            )
+        _accept_scripted_station(
+            current_batch, previous_state, workspace, preload_N
+        )
+        return STATION_OK, -1e-3, 1, 0.0
+
+    monkeypatch.setattr(solver_module, "solve_station", scripted_solve)
+    settings = PathSettings(
+        preload_N=1.0,
+        path_length_m=0.0001,
+        dx_m=0.0001,
+        relanding_search_steps=2,
+    )
+    trace = PathTrace.allocate(batch, settings, include_spines=False)
+    metrics, _ = simulate_path(
+        batch,
+        bank,
+        bank.rows_for_y(batch.y_m),
+        settings,
+        trace=trace,
+    )
+
+    assert call_count == 4
+    assert metrics["case_status"] == "complete"
+    assert metrics["recontact_count"] == 1
+    assert metrics["landing_change_count"] == 1
+    assert np.isclose(trace.landing_offset_m[1], settings.dx_m)
+
+
+def test_invalid_station_is_recorded_but_does_not_abort_traversal(
+    monkeypatch,
+) -> None:
+    batch = _test_batch()
+    bank = _flat_track_bank(np.unique(batch.y_m))
+    call_count = 0
+
+    def scripted_solve(
+        current_batch,
+        previous_state,
+        workspace,
+        _station_workspace,
+        *,
+        preload_N,
+        previous_z_m,
+        **_kwargs,
+    ):
+        nonlocal call_count
+        call_count += 1
+        if call_count > 1:
+            return STATION_TRACK_INVALID, previous_z_m, 0, math.nan
+        _accept_scripted_station(
+            current_batch, previous_state, workspace, preload_N
+        )
+        return STATION_OK, -1e-3, 1, 0.0
+
+    monkeypatch.setattr(solver_module, "solve_station", scripted_solve)
+    settings = PathSettings(
+        preload_N=1.0,
+        path_length_m=0.0001,
+        dx_m=0.0001,
+        relanding_search_steps=1,
+    )
+    trace = PathTrace.allocate(batch, settings, include_spines=False)
+    metrics, diagnostics = simulate_path(
+        batch,
+        bank,
+        bank.rows_for_y(batch.y_m),
+        settings,
+        trace=trace,
+    )
+
+    assert metrics["case_status"] == "completed_with_gaps"
+    assert metrics["path_progress_ratio"] == 1.0
+    assert metrics["unsupported_station_count"] == 1
+    assert metrics["track_invalid_station_count"] == 1
+    assert diagnostics["station_count_attempted"] == 1
+    assert trace.station_status[-1] == STATION_TRACK_INVALID
 
 
 def test_candidate_coverage_never_reintroduces_ineligible_cases() -> None:

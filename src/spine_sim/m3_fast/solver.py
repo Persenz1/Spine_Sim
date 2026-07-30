@@ -21,13 +21,19 @@ from .model import (
     evaluate_spines,
     make_contact_state,
     make_model_workspace,
+    reset_contact_state,
 )
 from .terrain import TrackBank, interpolate_tracks
 
 
 STATION_OK = 0
-STATION_SUPPORT_LOST = 1
+STATION_RECONTACT_REQUIRED = 1
 STATION_TRACK_INVALID = 2
+STATION_NUMERICAL_FAILURE = 3
+STATION_PRELOAD_UNREACHABLE = 4
+# Backward-compatible name for callers that only need the physical
+# no-equilibrium condition.
+STATION_SUPPORT_LOST = STATION_PRELOAD_UNREACHABLE
 
 MAX_NEWTON_CORRECTIONS = 3
 MAX_NEWTON_EVALUATIONS = MAX_NEWTON_CORRECTIONS + 1
@@ -45,6 +51,7 @@ class PathSettings:
     path_start_x_m: float = 0.0
     backplate_travel_m: float = 0.006
     contact_clearance_m: float = 1e-12
+    relanding_search_steps: int = 5
 
     def __post_init__(self) -> None:
         for name, value in (
@@ -62,6 +69,16 @@ class PathSettings:
             or self.contact_clearance_m < 0.0
         ):
             raise ValueError("contact_clearance_m must be finite and non-negative")
+        if (
+            isinstance(self.relanding_search_steps, (bool, np.bool_))
+            or not isinstance(
+                self.relanding_search_steps, (int, np.integer)
+            )
+            or self.relanding_search_steps < 0
+        ):
+            raise ValueError(
+                "relanding_search_steps must be a non-negative integer"
+            )
         station_count = self.path_length_m / self.dx_m
         if not math.isclose(
             station_count,
@@ -84,6 +101,9 @@ class PathTrace:
     accepted: NDArray[np.bool_]
     station_status: NDArray[np.int8]
     root_evaluations: NDArray[np.int16]
+    solve_attempts: NDArray[np.int8]
+    recontacted: NDArray[np.bool_]
+    landing_offset_m: NDArray[np.float32]
     backplate_z_m: NDArray[np.float64]
     force_x_N: NDArray[np.float32]
     force_z_N: NDArray[np.float32]
@@ -139,6 +159,9 @@ class PathTrace:
             accepted=np.zeros(station_count, dtype=np.bool_),
             station_status=np.full(station_count, -1, dtype=np.int8),
             root_evaluations=np.zeros(station_count, dtype=np.int16),
+            solve_attempts=np.zeros(station_count, dtype=np.int8),
+            recontacted=np.zeros(station_count, dtype=np.bool_),
+            landing_offset_m=np.zeros(station_count, dtype=np.float32),
             backplate_z_m=np.full(station_count, np.nan, dtype=np.float64),
             force_x_N=float_values[0],
             force_z_N=float_values[1],
@@ -198,6 +221,9 @@ def _record_trace_station(
     *,
     status: int,
     evaluations: int,
+    attempts: int,
+    recontacted: bool,
+    landing_offset_m: float,
     residual_N: float,
     backplate_z_m: float,
     batch: SpineBatch,
@@ -205,13 +231,16 @@ def _record_trace_station(
 ) -> None:
     trace.station_status[index] = status
     trace.root_evaluations[index] = evaluations
+    trace.solve_attempts[index] = attempts
+    trace.recontacted[index] = recontacted
+    trace.landing_offset_m[index] = landing_offset_m
+    trace.force_residual_N[index] = residual_N
     if status != STATION_OK or workspace is None:
         return
     trace.accepted[index] = True
     trace.backplate_z_m[index] = backplate_z_m
     trace.force_x_N[index] = -float(np.sum(workspace.force_x_N))
     trace.force_z_N[index] = float(np.sum(workspace.force_z_N))
-    trace.force_residual_N[index] = residual_N
     contact = workspace.mode != FREE
     contact_count = int(np.count_nonzero(contact))
     trace.contact_count[index] = contact_count
@@ -441,7 +470,6 @@ def solve_station(
         station_workspace.z_samples_m[evaluation_count] = z_min_m
         station_workspace.residual_samples_N[evaluation_count] = lower_residual_N
         evaluation_count += 1
-        interval_evaluations += 1
         best_abs_residual_N = min(
             best_abs_residual_N, abs(lower_residual_N)
         )
@@ -456,9 +484,16 @@ def solve_station(
                 evaluation_count,
                 lower_residual_N,
             )
-        if not math.isfinite(lower_residual_N) or lower_residual_N < 0.0:
+        if not math.isfinite(lower_residual_N):
             return (
-                STATION_SUPPORT_LOST,
+                STATION_NUMERICAL_FAILURE,
+                previous_z_m,
+                evaluation_count,
+                best_abs_residual_N,
+            )
+        if lower_residual_N < 0.0:
+            return (
+                STATION_PRELOAD_UNREACHABLE,
                 previous_z_m,
                 evaluation_count,
                 best_abs_residual_N,
@@ -482,7 +517,17 @@ def solve_station(
         interval_evaluations < MAX_INTERVAL_EVALUATIONS
         and evaluation_count < MAX_STATION_EVALUATIONS
     ):
-        z_m = 0.5 * (lower_z_m + upper_z_m)
+        denominator_N = lower_residual_N - upper_residual_N
+        if math.isfinite(denominator_N) and denominator_N > 0.0:
+            fraction = lower_residual_N / denominator_N
+        else:
+            fraction = 0.5
+        # A bracketed force interpolation is exact on each linear contact
+        # branch and much less wasteful than fixed midpoints.  Safeguarding
+        # prevents a discontinuous branch from pinning an endpoint.
+        if not 0.05 <= fraction <= 0.95:
+            fraction = 0.5
+        z_m = lower_z_m + fraction * (upper_z_m - lower_z_m)
         total_fz_N, _ = evaluate_spines(
             batch,
             previous_state,
@@ -503,7 +548,12 @@ def solve_station(
             _commit_state(previous_state, model_workspace)
             return STATION_OK, z_m, evaluation_count, residual_N
         if not math.isfinite(residual_N):
-            break
+            return (
+                STATION_NUMERICAL_FAILURE,
+                previous_z_m,
+                evaluation_count,
+                best_abs_residual_N,
+            )
         if residual_N > 0.0:
             lower_z_m = z_m
             lower_residual_N = residual_N
@@ -512,7 +562,7 @@ def solve_station(
             upper_residual_N = residual_N
 
     return (
-        STATION_SUPPORT_LOST,
+        STATION_RECONTACT_REQUIRED,
         previous_z_m,
         evaluation_count,
         best_abs_residual_N,
@@ -544,7 +594,7 @@ def simulate_path(
     *,
     trace: PathTrace | None = None,
 ) -> tuple[dict[str, Any], dict[str, Any]]:
-    """Run one fixed-step case and return its compact metrics and diagnostics."""
+    """Run a fixed-step case with load-controlled detach/re-seat recovery."""
 
     spine_count = batch.spine_count
     rows = np.asarray(track_rows, dtype=np.intp)
@@ -579,113 +629,209 @@ def simulate_path(
     resistance_N = np.empty(station_count, dtype=np.float64)
     neff = np.empty(station_count, dtype=np.float64)
     max_load_share = np.empty(station_count, dtype=np.float64)
-    root_evaluations = np.empty(station_count + 1, dtype=np.int16)
+    station_total_evaluations = np.zeros(
+        station_count + 1, dtype=np.int16
+    )
+    station_attempts = np.zeros(station_count + 1, dtype=np.int8)
+    landing_candidates_m = np.empty(
+        1 + 2 * settings.relanding_search_steps,
+        dtype=np.float64,
+    )
+    landing_candidates_m[0] = 0.0
+    for index in range(1, settings.relanding_search_steps + 1):
+        landing_candidates_m[2 * index - 1] = index * settings.dx_m
+        landing_candidates_m[2 * index] = -index * settings.dx_m
+
     total_contact_samples = 0
     total_slide_samples = 0
     total_hard_stop_samples = 0
-    completed_stations = 0
+    supported_stations = 0
+    unsupported_stations = 0
+    track_invalid_stations = 0
+    numerical_failure_stations = 0
+    preload_unreachable_stations = 0
+    recontact_count = 0
+    detach_count = 0
+    landing_change_count = 0
+    max_abs_landing_offset_m = 0.0
+    first_unsupported_position_m: float | None = None
+    maximum_attempt_evaluations = 0
+    previous_z_m = math.nan
+    landing_offset_m = 0.0
+    engaged = False
+    initial_status = STATION_RECONTACT_REQUIRED
 
-    # Establish initial preload at x0 without adding it to path statistics.
-    np.add(
-        batch.tip_x_offset_m,
-        settings.path_start_x_m,
-        out=query_x_m,
-    )
-    interpolate_tracks(
-        track_bank,
-        rows,
-        query_x_m,
-        out_height=height_m,
-        out_slope=slope_x,
-        out_arc_length=arc_m,
-        out_valid=valid,
-    )
-    delta_arc_m.fill(0.0)
-    initial_status, previous_z_m, evaluations, initial_residual_N = solve_station(
-        batch,
-        state,
-        model_workspace,
-        station_workspace,
-        previous_z_m=math.nan,
-        envelope_height_m=height_m,
-        envelope_slope_x=slope_x,
-        delta_arc_m=delta_arc_m,
-        valid_mask=valid,
-        preload_N=settings.preload_N,
-        backplate_travel_m=settings.backplate_travel_m,
-        contact_clearance_m=settings.contact_clearance_m,
-    )
-    root_evaluations[0] = evaluations
-    if trace is not None:
-        _record_trace_station(
-            trace,
-            0,
-            status=initial_status,
-            evaluations=evaluations,
-            residual_N=initial_residual_N,
-            backplate_z_m=previous_z_m,
-            batch=batch,
-            workspace=(
-                model_workspace if initial_status == STATION_OK else None
-            ),
-        )
-    if initial_status != STATION_OK:
-        status_name = (
-            "track_invalid"
-            if initial_status == STATION_TRACK_INVALID
-            else "support_lost"
-        )
-        metrics = _empty_metrics(status_name, settings.path_start_x_m)
-        diagnostics = {
-            "initial_station_status": initial_status,
-            "max_station_evaluations": int(evaluations),
-            "station_count_requested": station_count,
-            "station_count_completed": 0,
-        }
-        return metrics, diagnostics
-    np.copyto(previous_arc_m, arc_m)
-
-    failure_status = STATION_OK
-    support_loss_position_m: float | None = None
-    for station in range(1, station_count + 1):
+    for station in range(station_count + 1):
         path_x_m = settings.path_start_x_m + station * settings.dx_m
-        np.add(batch.tip_x_offset_m, path_x_m, out=query_x_m)
-        interpolate_tracks(
-            track_bank,
-            rows,
-            query_x_m,
-            out_height=height_m,
-            out_slope=slope_x,
-            out_arc_length=arc_m,
-            out_valid=valid,
-        )
-        np.subtract(arc_m, previous_arc_m, out=delta_arc_m)
-        (
-            station_status,
-            solved_z_m,
-            evaluations,
-            station_residual_N,
-        ) = solve_station(
-            batch,
-            state,
-            model_workspace,
-            station_workspace,
-            previous_z_m=previous_z_m,
-            envelope_height_m=height_m,
-            envelope_slope_x=slope_x,
-            delta_arc_m=delta_arc_m,
-            valid_mask=valid,
-            preload_N=settings.preload_N,
-            backplate_travel_m=settings.backplate_travel_m,
-            contact_clearance_m=settings.contact_clearance_m,
-        )
-        root_evaluations[station] = evaluations
+        was_engaged = engaged
+        recontacted = False
+        attempts = 0
+        total_evaluations = 0
+        station_status = STATION_RECONTACT_REQUIRED
+        solved_z_m = previous_z_m
+        station_residual_N = math.nan
+
+        if engaged:
+            np.add(
+                batch.tip_x_offset_m,
+                path_x_m + landing_offset_m,
+                out=query_x_m,
+            )
+            interpolate_tracks(
+                track_bank,
+                rows,
+                query_x_m,
+                out_height=height_m,
+                out_slope=slope_x,
+                out_arc_length=arc_m,
+                out_valid=valid,
+            )
+            np.subtract(arc_m, previous_arc_m, out=delta_arc_m)
+            (
+                station_status,
+                solved_z_m,
+                evaluations,
+                station_residual_N,
+            ) = solve_station(
+                batch,
+                state,
+                model_workspace,
+                station_workspace,
+                previous_z_m=previous_z_m,
+                envelope_height_m=height_m,
+                envelope_slope_x=slope_x,
+                delta_arc_m=delta_arc_m,
+                valid_mask=valid,
+                preload_N=settings.preload_N,
+                backplate_travel_m=settings.backplate_travel_m,
+                contact_clearance_m=settings.contact_clearance_m,
+            )
+            attempts = 1
+            total_evaluations = evaluations
+            maximum_attempt_evaluations = max(
+                maximum_attempt_evaluations, evaluations
+            )
+            if station_status != STATION_OK:
+                detach_count += 1
+
+        if station_status != STATION_OK:
+            attempted_statuses: set[int] = (
+                {station_status} if was_engaged else set()
+            )
+            for candidate_index in range(
+                -1, landing_candidates_m.size
+            ):
+                candidate_offset_m = (
+                    landing_offset_m
+                    if candidate_index == -1
+                    else float(landing_candidates_m[candidate_index])
+                )
+                if (
+                    candidate_index >= 0
+                    and math.isclose(
+                        candidate_offset_m,
+                        landing_offset_m,
+                        rel_tol=0.0,
+                        abs_tol=1e-15,
+                    )
+                ):
+                    continue
+                reset_contact_state(batch, state)
+                np.add(
+                    batch.tip_x_offset_m,
+                    path_x_m + candidate_offset_m,
+                    out=query_x_m,
+                )
+                interpolate_tracks(
+                    track_bank,
+                    rows,
+                    query_x_m,
+                    out_height=height_m,
+                    out_slope=slope_x,
+                    out_arc_length=arc_m,
+                    out_valid=valid,
+                )
+                delta_arc_m.fill(0.0)
+                (
+                    candidate_status,
+                    candidate_z_m,
+                    evaluations,
+                    candidate_residual_N,
+                ) = solve_station(
+                    batch,
+                    state,
+                    model_workspace,
+                    station_workspace,
+                    previous_z_m=math.nan,
+                    envelope_height_m=height_m,
+                    envelope_slope_x=slope_x,
+                    delta_arc_m=delta_arc_m,
+                    valid_mask=valid,
+                    preload_N=settings.preload_N,
+                    backplate_travel_m=settings.backplate_travel_m,
+                    contact_clearance_m=settings.contact_clearance_m,
+                )
+                attempts += 1
+                total_evaluations += evaluations
+                maximum_attempt_evaluations = max(
+                    maximum_attempt_evaluations, evaluations
+                )
+                attempted_statuses.add(candidate_status)
+                station_status = candidate_status
+                solved_z_m = candidate_z_m
+                station_residual_N = candidate_residual_N
+                if candidate_status != STATION_OK:
+                    continue
+                if not math.isclose(
+                    candidate_offset_m,
+                    landing_offset_m,
+                    rel_tol=0.0,
+                    abs_tol=1e-15,
+                ):
+                    landing_change_count += 1
+                landing_offset_m = candidate_offset_m
+                max_abs_landing_offset_m = max(
+                    max_abs_landing_offset_m,
+                    abs(landing_offset_m),
+                )
+                recontacted = station > 0
+                if recontacted:
+                    recontact_count += 1
+                break
+
+            if station_status != STATION_OK:
+                reset_contact_state(batch, state)
+                engaged = False
+                previous_z_m = math.nan
+                unsupported_stations += int(station > 0)
+                if first_unsupported_position_m is None:
+                    first_unsupported_position_m = path_x_m
+                if attempted_statuses == {STATION_TRACK_INVALID}:
+                    station_status = STATION_TRACK_INVALID
+                    track_invalid_stations += int(station > 0)
+                elif STATION_NUMERICAL_FAILURE in attempted_statuses:
+                    station_status = STATION_NUMERICAL_FAILURE
+                    numerical_failure_stations += int(station > 0)
+                elif STATION_PRELOAD_UNREACHABLE in attempted_statuses:
+                    station_status = STATION_PRELOAD_UNREACHABLE
+                    preload_unreachable_stations += int(station > 0)
+                else:
+                    station_status = STATION_RECONTACT_REQUIRED
+                    numerical_failure_stations += int(station > 0)
+
+        station_total_evaluations[station] = total_evaluations
+        station_attempts[station] = attempts
+        if station == 0:
+            initial_status = station_status
         if trace is not None:
             _record_trace_station(
                 trace,
                 station,
                 status=station_status,
-                evaluations=evaluations,
+                evaluations=total_evaluations,
+                attempts=attempts,
+                recontacted=recontacted,
+                landing_offset_m=landing_offset_m,
                 residual_N=station_residual_N,
                 backplate_z_m=solved_z_m,
                 batch=batch,
@@ -696,13 +842,15 @@ def simulate_path(
                 ),
             )
         if station_status != STATION_OK:
-            failure_status = station_status
-            support_loss_position_m = path_x_m
-            break
+            continue
 
+        engaged = True
         previous_z_m = solved_z_m
         np.copyto(previous_arc_m, arc_m)
-        sample_index = completed_stations
+        if station == 0:
+            continue
+
+        sample_index = supported_stations
         resistance_N[sample_index] = -float(
             np.sum(model_workspace.force_x_N)
         )
@@ -734,66 +882,87 @@ def simulate_path(
         total_contact_samples += contact_count
         total_slide_samples += slide_count
         total_hard_stop_samples += hard_stop_count
-        completed_stations += 1
+        supported_stations += 1
 
-    if completed_stations:
-        accepted_resistance = resistance_N[:completed_stations]
-        accepted_neff = neff[:completed_stations]
-        accepted_share = max_load_share[:completed_stations]
-        metrics: dict[str, Any] = {
-            "completion_ratio": completed_stations / station_count,
-            "Fx_q10": float(np.quantile(accepted_resistance, 0.10)),
-            "Fx_median": float(np.median(accepted_resistance)),
-            "Fx_peak_qs": float(np.max(accepted_resistance)),
-            "contact_ratio": total_contact_samples
-            / (completed_stations * spine_count),
-            "Neff_q10": float(np.quantile(accepted_neff, 0.10)),
-            "Neff_median": float(np.median(accepted_neff)),
-            "max_load_share_q90": float(
-                np.quantile(accepted_share, 0.90)
-            ),
-            "slide_ratio": (
-                total_slide_samples / total_contact_samples
-                if total_contact_samples
-                else 0.0
-            ),
-            "hard_stop_ratio": (
-                total_hard_stop_samples / total_contact_samples
-                if total_contact_samples
-                else 0.0
-            ),
-            "support_loss_position": support_loss_position_m,
-            "case_status": (
-                "complete"
-                if failure_status == STATION_OK
-                else (
-                    "track_invalid"
-                    if failure_status == STATION_TRACK_INVALID
-                    else "support_lost"
-                )
-            ),
-        }
+    if supported_stations:
+        accepted_resistance = resistance_N[:supported_stations]
+        accepted_neff = neff[:supported_stations]
+        accepted_share = max_load_share[:supported_stations]
+        fx_q10 = float(np.quantile(accepted_resistance, 0.10))
+        fx_median = float(np.median(accepted_resistance))
+        fx_peak = float(np.max(accepted_resistance))
+        neff_q10 = float(np.quantile(accepted_neff, 0.10))
+        neff_median = float(np.median(accepted_neff))
+        share_q90 = float(np.quantile(accepted_share, 0.90))
     else:
-        metrics = _empty_metrics(
-            (
-                "track_invalid"
-                if failure_status == STATION_TRACK_INVALID
-                else "support_lost"
-            ),
-            0.0 if support_loss_position_m is None else support_loss_position_m,
-        )
+        fx_q10 = math.nan
+        fx_median = math.nan
+        fx_peak = math.nan
+        neff_q10 = math.nan
+        neff_median = math.nan
+        share_q90 = math.nan
 
-    attempted_count = min(
-        completed_stations + 2,
-        station_count + 1,
-    )
+    metrics: dict[str, Any] = {
+        "completion_ratio": supported_stations / station_count,
+        "path_progress_ratio": 1.0,
+        "path_end_reached": True,
+        "initial_preload_established": initial_status == STATION_OK,
+        "Fx_q10": fx_q10,
+        "Fx_median": fx_median,
+        "Fx_peak_qs": fx_peak,
+        "contact_ratio": (
+            total_contact_samples / (supported_stations * spine_count)
+            if supported_stations
+            else 0.0
+        ),
+        "Neff_q10": neff_q10,
+        "Neff_median": neff_median,
+        "max_load_share_q90": share_q90,
+        "slide_ratio": (
+            total_slide_samples / total_contact_samples
+            if total_contact_samples
+            else 0.0
+        ),
+        "hard_stop_ratio": (
+            total_hard_stop_samples / total_contact_samples
+            if total_contact_samples
+            else 0.0
+        ),
+        "support_loss_position": first_unsupported_position_m,
+        "recontact_count": recontact_count,
+        "recontact_ratio": recontact_count / station_count,
+        "detach_count": detach_count,
+        "landing_change_count": landing_change_count,
+        "landing_change_ratio": landing_change_count / station_count,
+        "max_abs_landing_offset_m": max_abs_landing_offset_m,
+        "unsupported_station_count": unsupported_stations,
+        "unsupported_station_ratio": unsupported_stations / station_count,
+        "track_invalid_station_count": track_invalid_stations,
+        "numerical_failure_station_count": numerical_failure_stations,
+        "preload_unreachable_station_count": preload_unreachable_stations,
+        "case_status": (
+            "complete"
+            if (
+                unsupported_stations == 0
+                and initial_status == STATION_OK
+            )
+            else "completed_with_gaps"
+        ),
+    }
     diagnostics = {
         "initial_station_status": initial_status,
-        "max_station_evaluations": int(
-            np.max(root_evaluations[:attempted_count])
+        "max_station_evaluations": maximum_attempt_evaluations,
+        "max_station_total_evaluations": int(
+            np.max(station_total_evaluations)
         ),
+        "max_station_attempts": int(np.max(station_attempts)),
         "station_count_requested": station_count,
-        "station_count_completed": completed_stations,
+        "station_count_attempted": station_count,
+        "station_count_completed": supported_stations,
+        "recontact_count": recontact_count,
+        "landing_change_count": landing_change_count,
+        "unsupported_station_count": unsupported_stations,
+        "final_landing_offset_m": landing_offset_m,
         "final_backplate_z_m": (
             float(previous_z_m) if math.isfinite(previous_z_m) else None
         ),
@@ -806,8 +975,11 @@ __all__ = [
     "PathSettings",
     "PathTrace",
     "STATION_OK",
+    "STATION_RECONTACT_REQUIRED",
     "STATION_SUPPORT_LOST",
     "STATION_TRACK_INVALID",
+    "STATION_NUMERICAL_FAILURE",
+    "STATION_PRELOAD_UNREACHABLE",
     "StationWorkspace",
     "simulate_path",
     "solve_station",

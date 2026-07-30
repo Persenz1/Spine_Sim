@@ -508,6 +508,17 @@ def make_contact_state(batch: SpineBatch) -> ContactState:
     )
 
 
+def reset_contact_state(batch: SpineBatch, state: ContactState) -> None:
+    """Reset all spines before a load-controlled re-seating attempt."""
+
+    if state.size != batch.spine_count:
+        raise ValueError("batch and state sizes do not match")
+    state.mode.fill(FREE)
+    state.u_t_history_m.fill(0.0)
+    state.spring_branch.fill(LOWER_STOP)
+    state.spring_branch[batch.rigid_mask] = RIGID
+
+
 def _empty_float_vectors(count: int, number: int) -> list[_FLOAT]:
     # This helper is used only during case setup, never in a station trial.
     return [np.empty(count, dtype=np.float64) for _ in range(number)]
@@ -875,6 +886,10 @@ def evaluate_spines(
         delta_arc,
         out=workspace.tangent_trial_m,
     )
+    # A spine that was FREE has no contact anchor and therefore cannot
+    # accumulate wall arc length while detached.  Its first trial at a new
+    # landing point starts with zero tangential history.
+    workspace.tangent_trial_m[previous_state.mode == FREE] = 0.0
     geometric = valid & (workspace.normal_closure_m > 0.0)
 
     workspace.normal_axis_dot[:] = (
@@ -968,6 +983,7 @@ __all__ = [
     "build_spine_batch",
     "make_contact_state",
     "make_model_workspace",
+    "reset_contact_state",
     "commit_model_workspace",
     "evaluate_spines",
 ]

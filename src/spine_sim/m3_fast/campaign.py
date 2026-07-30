@@ -42,6 +42,9 @@ SUMMARY_FIELDS = (
     "preload",
     "path_length",
     "completion_ratio",
+    "path_progress_ratio",
+    "path_end_reached",
+    "initial_preload_established",
     "Fx_q10",
     "Fx_median",
     "Fx_peak_qs",
@@ -51,6 +54,17 @@ SUMMARY_FIELDS = (
     "max_load_share_q90",
     "slide_ratio",
     "hard_stop_ratio",
+    "recontact_count",
+    "recontact_ratio",
+    "detach_count",
+    "landing_change_count",
+    "landing_change_ratio",
+    "max_abs_landing_offset_m",
+    "unsupported_station_count",
+    "unsupported_station_ratio",
+    "track_invalid_station_count",
+    "numerical_failure_station_count",
+    "preload_unreachable_station_count",
     "support_loss_position",
     "case_status",
 )
@@ -64,6 +78,7 @@ DEFAULT_CATALOG = (
 DEFAULT_OUTPUT_ROOT = (
     Path(__file__).resolve().parents[3] / "results" / "m3_fast"
 )
+FULL_SCAN_SOLVER_SEMANTICS = "constant-preload-reseat-v2"
 
 
 @dataclass(frozen=True)
@@ -765,6 +780,11 @@ def _summary_schema() -> Any:
             pa.field("preload", pa.float64(), nullable=False),
             pa.field("path_length", pa.float64(), nullable=False),
             pa.field("completion_ratio", pa.float64(), nullable=False),
+            pa.field("path_progress_ratio", pa.float64(), nullable=False),
+            pa.field("path_end_reached", pa.bool_(), nullable=False),
+            pa.field(
+                "initial_preload_established", pa.bool_(), nullable=False
+            ),
             pa.field("Fx_q10", pa.float64(), nullable=False),
             pa.field("Fx_median", pa.float64(), nullable=False),
             pa.field("Fx_peak_qs", pa.float64(), nullable=False),
@@ -774,6 +794,33 @@ def _summary_schema() -> Any:
             pa.field("max_load_share_q90", pa.float64(), nullable=False),
             pa.field("slide_ratio", pa.float64(), nullable=False),
             pa.field("hard_stop_ratio", pa.float64(), nullable=False),
+            pa.field("recontact_count", pa.int64(), nullable=False),
+            pa.field("recontact_ratio", pa.float64(), nullable=False),
+            pa.field("detach_count", pa.int64(), nullable=False),
+            pa.field("landing_change_count", pa.int64(), nullable=False),
+            pa.field("landing_change_ratio", pa.float64(), nullable=False),
+            pa.field(
+                "max_abs_landing_offset_m", pa.float64(), nullable=False
+            ),
+            pa.field(
+                "unsupported_station_count", pa.int64(), nullable=False
+            ),
+            pa.field(
+                "unsupported_station_ratio", pa.float64(), nullable=False
+            ),
+            pa.field(
+                "track_invalid_station_count", pa.int64(), nullable=False
+            ),
+            pa.field(
+                "numerical_failure_station_count",
+                pa.int64(),
+                nullable=False,
+            ),
+            pa.field(
+                "preload_unreachable_station_count",
+                pa.int64(),
+                nullable=False,
+            ),
             pa.field("support_loss_position", pa.float64(), nullable=True),
             pa.field("case_status", pa.string(), nullable=False),
         ]
@@ -1228,6 +1275,12 @@ def _full_case_summary(
             "max_station_evaluations": diagnostics[
                 "max_station_evaluations"
             ],
+            "max_station_total_evaluations": diagnostics[
+                "max_station_total_evaluations"
+            ],
+            "max_station_attempts": diagnostics[
+                "max_station_attempts"
+            ],
             "station_count_completed": diagnostics[
                 "station_count_completed"
             ],
@@ -1254,6 +1307,7 @@ def _allocate_trace_shard(
         "stick_ratio",
         "slide_ratio",
         "hard_stop_ratio",
+        "landing_offset_m",
     )
     float_spines = (
         "spine_force_x_N",
@@ -1265,17 +1319,19 @@ def _allocate_trace_shard(
         "spine_spring_displacement_m",
     )
     values: dict[str, np.ndarray] = {
-        "schema_version": np.asarray("m3-full-path-v1"),
+        "schema_version": np.asarray("m3-full-path-v2"),
         "path_x_m": np.asarray(path_x_m, dtype=np.float64),
         "case_id": np.empty(case_count, dtype="<U40"),
         "design_id": np.empty(case_count, dtype="<U48"),
         "preload_N": np.empty(case_count, dtype=np.float64),
         "spine_count": np.empty(case_count, dtype=np.int16),
-        "case_status": np.empty(case_count, dtype="<U16"),
+        "case_status": np.empty(case_count, dtype="<U24"),
         "completion_ratio": np.empty(case_count, dtype=np.float32),
         "accepted": np.zeros(global_shape, dtype=np.bool_),
         "station_status": np.full(global_shape, -1, dtype=np.int8),
         "root_evaluations": np.zeros(global_shape, dtype=np.int16),
+        "solve_attempts": np.zeros(global_shape, dtype=np.int8),
+        "recontacted": np.zeros(global_shape, dtype=np.bool_),
         "contact_count": np.zeros(global_shape, dtype=np.int16),
         "spine_mode": np.full(spine_shape, -1, dtype=np.int8),
         "spine_spring_branch": np.full(
@@ -1310,6 +1366,9 @@ def _copy_trace_to_shard(
         "accepted",
         "station_status",
         "root_evaluations",
+        "solve_attempts",
+        "recontacted",
+        "landing_offset_m",
         "backplate_z_m",
         "force_x_N",
         "force_z_N",
@@ -1376,6 +1435,7 @@ def _full_payload_id(
             "path": asdict(path),
             "model": asdict(model),
             "capture_paths": capture_paths,
+            "solver_semantics": FULL_SCAN_SOLVER_SEMANTICS,
         },
     )
 
@@ -1600,6 +1660,8 @@ def _rank_full_designs(
         neff_fraction_floor = math.inf
         max_load_share_ceiling = 0.0
         hard_stop_ceiling = 0.0
+        recontact_ratio_ceiling = 0.0
+        landing_change_ratio_ceiling = 0.0
         group_count = 0
         for (preload_N, _), group_cases in grouped.items():
             group_count += 1
@@ -1667,6 +1729,28 @@ def _rank_full_designs(
                     math.inf,
                 ),
             )
+            recontact_ratio_ceiling = max(
+                recontact_ratio_ceiling,
+                _finite_quantile(
+                    (
+                        item["recontact_ratio"]
+                        for item in group_cases
+                    ),
+                    0.90,
+                    math.inf,
+                ),
+            )
+            landing_change_ratio_ceiling = max(
+                landing_change_ratio_ceiling,
+                _finite_quantile(
+                    (
+                        item["landing_change_ratio"]
+                        for item in group_cases
+                    ),
+                    0.90,
+                    math.inf,
+                ),
+            )
         if not grouped:
             completion_floor = 0.0
             support_loss_ceiling = 1.0
@@ -1674,6 +1758,8 @@ def _rank_full_designs(
             neff_fraction_floor = -math.inf
             max_load_share_ceiling = math.inf
             hard_stop_ceiling = math.inf
+            recontact_ratio_ceiling = math.inf
+            landing_change_ratio_ceiling = math.inf
         record = _full_design_record(design)
         record.update(
             {
@@ -1685,6 +1771,10 @@ def _rank_full_designs(
                 "Neff_fraction_floor": neff_fraction_floor,
                 "max_load_share_ceiling": max_load_share_ceiling,
                 "hard_stop_ceiling": hard_stop_ceiling,
+                "recontact_ratio_ceiling": recontact_ratio_ceiling,
+                "landing_change_ratio_ceiling": (
+                    landing_change_ratio_ceiling
+                ),
                 "eligible": bool(
                     completion_floor >= completion_gate
                     and support_loss_ceiling <= support_loss_gate
@@ -1702,6 +1792,8 @@ def _rank_full_designs(
             item["support_loss_ceiling"],
             -item["Fx_over_preload_floor"],
             -item["Neff_fraction_floor"],
+            item["recontact_ratio_ceiling"],
+            item["landing_change_ratio_ceiling"],
             item["max_load_share_ceiling"],
             item["hard_stop_ceiling"],
             item["design_id"],
@@ -1946,6 +2038,7 @@ def run_full_scan_stage(
         "path_settings": asdict(base_path),
         "model_settings": asdict(model),
         "capture_full_paths": capture_paths,
+        "solver_semantics": FULL_SCAN_SOLVER_SEMANTICS,
         "formal_catalog_ranking_eligible_upstream": bool(
             catalog_document.get("formal_ranking_eligible", False)
         ),
@@ -2002,8 +2095,8 @@ def run_full_scan_stage(
         ),
         "selection_rule": (
             "completion/support gate, worst preload/terrain-stratum "
-            "Fx/preload and Neff/N, load-share/hard-stop checks, then "
-            "working mechanism coverage"
+            "Fx/preload and Neff/N, recontact/alternate-landing frequency, "
+            "load-share/hard-stop checks, then working mechanism coverage"
         ),
     }
     _write_parquet(stage_dir / "ranking.parquet", ranking)
