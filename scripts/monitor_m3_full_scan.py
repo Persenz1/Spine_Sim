@@ -84,16 +84,24 @@ class ScanMonitor:
         return sum(1 for _ in directory.glob("*.json"))
 
     def _read_log_tail(self) -> str:
-        path = self.output_root / "run.log"
-        if not path.is_file():
+        paths = (
+            ("输出", self.output_root / "run.log"),
+            ("错误", self.output_root / "run.err.log"),
+        )
+        available = [(label, path) for label, path in paths if path.is_file()]
+        if not available:
             return "运行日志尚未创建。"
-        try:
-            lines = path.read_text(
-                encoding="utf-8", errors="replace"
-            ).splitlines()
-        except OSError:
-            return "暂时无法读取运行日志。"
-        return "\n".join(lines[-5:]) or "后台任务正在运行。"
+        tails: list[str] = []
+        for label, path in available:
+            try:
+                lines = path.read_text(
+                    encoding="utf-8", errors="replace"
+                ).splitlines()
+            except OSError:
+                continue
+            if lines:
+                tails.append(f"[{label}] " + "\n".join(lines[-4:]))
+        return "\n".join(tails) or "后台任务正在运行。"
 
     def refresh(self) -> None:
         total_expected = 0
