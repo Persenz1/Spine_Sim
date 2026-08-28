@@ -1,0 +1,64 @@
+{
+  "generated_at_utc": "2026-07-30T11:15:51.529466+00:00",
+  "source_full_scan": "D:\\Code\\Spine_Sim\\results\\m3_fast\\full_scan",
+  "archived_full_scan": "D:\\Pdrive\\Document\\论文\\爪刺啮合仿真数据及报告\\M3_独立阵列细筛_20260730_v1\\01_原始数据\\full_scan",
+  "source_terminal_scan": "D:\\Code\\Spine_Sim\\results\\m3_fast\\terminal_scan_12",
+  "archived_terminal_scan": "D:\\Pdrive\\Document\\论文\\爪刺啮合仿真数据及报告\\M3_独立阵列细筛_20260730_v1\\01_原始数据\\terminal_scan_12",
+  "raw_copy": {
+    "full_scan": {
+      "source": "D:\\Code\\Spine_Sim\\results\\m3_fast\\full_scan",
+      "archive": "D:\\Pdrive\\Document\\论文\\爪刺啮合仿真数据及报告\\M3_独立阵列细筛_20260730_v1\\01_原始数据\\full_scan",
+      "source_file_count": 554,
+      "archive_file_count": 554,
+      "source_bytes": 892597067,
+      "archive_bytes": 892597067,
+      "missing": [],
+      "extra": [],
+      "size_mismatches": [],
+      "hash_mismatches": [],
+      "all_match": true
+    },
+    "terminal_scan": {
+      "source": "D:\\Code\\Spine_Sim\\results\\m3_fast\\terminal_scan_12",
+      "archive": "D:\\Pdrive\\Document\\论文\\爪刺啮合仿真数据及报告\\M3_独立阵列细筛_20260730_v1\\01_原始数据\\terminal_scan_12",
+      "source_file_count": 910,
+      "archive_file_count": 910,
+      "source_bytes": 299347517,
+      "archive_bytes": 299347517,
+      "missing": [],
+      "extra": [],
+      "size_mismatches": [],
+      "hash_mismatches": [],
+      "all_match": true
+    },
+    "all_match": true
+  },
+  "analysis": {
+    "fine": {
+      "case_count": 43200,
+      "design_count": 96,
+      "expected_case_count": 43200,
+      "expected_design_count": 96,
+      "counts_match": true
+    },
+    "terminal": {
+      "case_count": 10800,
+      "design_count": 12,
+      "expected_case_count": 10800,
+      "expected_design_count": 12,
+      "counts_match": true
+    }
+  },
+  "deliverables": {
+    "markdown_report_exists": true,
+    "terminal_markdown_report_exists": true,
+    "workbook_exists": true,
+    "xlsx_inspect_sidecars": [],
+    "terrain_matrix_library_copied": false,
+    "terrain_metadata_only": [
+      "01_原始数据/M1_terrain_catalog.json",
+      "01_原始数据/M1_generation_report.json"
+    ]
+  },
+  "all_checks_pass": true
+}
