@@ -49,6 +49,12 @@ class MeasuredSurface:
     dx_m: float
     dy_m: float
     metadata: Mapping[str, Any]
+    measurement_probe: Mapping[str, Any] | None = None
+    measurement_tolerance_m: float | None = None
+    determinate_mask: NDArray[np.bool_] | None = None
+    geometry_uncertain_mask: NDArray[np.bool_] | None = None
+    geometry_lower_bound_m: NDArray[np.float32] | None = None
+    geometry_upper_bound_m: NDArray[np.float32] | None = None
 
     def __post_init__(self) -> None:
         height = np.asarray(self.height_m)
@@ -71,6 +77,42 @@ class MeasuredSurface:
             raise TerrainConfigurationError("dx_m must be positive and finite")
         if not math.isfinite(self.dy_m) or self.dy_m <= 0:
             raise TerrainConfigurationError("dy_m must be positive and finite")
+        if self.measurement_tolerance_m is not None and (
+            not math.isfinite(self.measurement_tolerance_m)
+            or self.measurement_tolerance_m < 0.0
+        ):
+            raise TerrainConfigurationError(
+                "measurement_tolerance_m must be finite and non-negative"
+            )
+        for name in ("determinate_mask", "geometry_uncertain_mask"):
+            value = getattr(self, name)
+            if value is not None:
+                array = np.asarray(value)
+                if array.shape != height.shape or array.dtype != np.bool_:
+                    raise TerrainConfigurationError(
+                        f"{name} must be boolean with the height shape"
+                    )
+        if (self.geometry_lower_bound_m is None) != (
+            self.geometry_upper_bound_m is None
+        ):
+            raise TerrainConfigurationError(
+                "measured geometry bounds must both be present or both be None"
+            )
+        if self.geometry_lower_bound_m is not None:
+            lower = np.asarray(self.geometry_lower_bound_m)
+            upper = np.asarray(self.geometry_upper_bound_m)
+            if (
+                lower.shape != height.shape
+                or upper.shape != height.shape
+                or lower.dtype != np.float32
+                or upper.dtype != np.float32
+                or not np.all(np.isfinite(lower))
+                or not np.all(np.isfinite(upper))
+                or np.any(lower[mask] > upper[mask])
+            ):
+                raise TerrainConfigurationError(
+                    "measured geometry bounds must be finite float32 arrays with lower<=upper"
+                )
 
     @property
     def shape(self) -> tuple[int, int]:
@@ -595,6 +637,15 @@ def load_measured_surface(
             ],
         },
         "preprocessing": preprocessing,
+        "measurement_semantics": {
+            "status": "unknown_probe",
+            "probe": None,
+            "measurement_tolerance_m": None,
+            "determinate_mask": None,
+            "bounds": None,
+        },
+        "surface_model": "single_valued_height_field_2_5d",
+        "general_mesh_scope": "OUT_OF_SCOPE",
     }
     return MeasuredSurface(
         height_m=finite_height,
@@ -602,6 +653,12 @@ def load_measured_surface(
         dx_m=dx_m,
         dy_m=dy_m,
         metadata=metadata,
+        measurement_probe=None,
+        measurement_tolerance_m=None,
+        determinate_mask=None,
+        geometry_uncertain_mask=np.asarray(valid, dtype=np.bool_).copy(),
+        geometry_lower_bound_m=None,
+        geometry_upper_bound_m=None,
     )
 
 

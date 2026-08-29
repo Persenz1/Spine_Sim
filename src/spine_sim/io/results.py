@@ -15,7 +15,7 @@ from typing import Any, Iterable, Mapping
 
 import numpy as np
 
-from spine_sim.core.identity import canonicalize, stable_hash
+from spine_sim.core.identity import canonical_json, canonicalize, stable_hash
 from spine_sim.core.states import Event
 
 
@@ -59,6 +59,111 @@ def atomic_write_npz(path: Path, arrays: Mapping[str, np.ndarray]) -> None:
     finally:
         if temp_path.exists():
             temp_path.unlink()
+
+
+def atomic_write_trace_table(
+    directory: Path, rows: Iterable[Mapping[str, Any]]
+) -> tuple[str | None, str | None, str | None]:
+    """Write canonical trace rows as Parquet, or JSONL when pyarrow is absent."""
+
+    normalized = [canonicalize(dict(row)) for row in rows]
+    for name in ("trace.parquet", "trace.jsonl"):
+        stale = directory / name
+        if stale.exists():
+            stale.unlink()
+    if not normalized:
+        return None, None, None
+    try:
+        import pyarrow as pa  # type: ignore
+        import pyarrow.parquet as pq  # type: ignore
+    except ImportError:
+        target = directory / "trace.jsonl"
+        payload = "".join(
+            json.dumps(row, ensure_ascii=False, sort_keys=True) + "\n"
+            for row in normalized
+        )
+        atomic_write_bytes(target, payload.encode("utf-8"))
+        return target.name, "jsonl_fallback", sha256_file(target)
+
+    columns = sorted({key for row in normalized for key in row})
+    json_columns = {
+        key
+        for key in columns
+        if any(isinstance(row.get(key), (dict, list)) for row in normalized)
+        or all(row.get(key) is None for row in normalized)
+    }
+    parquet_rows = [
+        {
+            key: (
+                canonical_json(row.get(key))
+                if key in json_columns
+                else row.get(key)
+            )
+            for key in columns
+        }
+        for row in normalized
+    ]
+    table = pa.Table.from_pylist(parquet_rows)
+    metadata = dict(table.schema.metadata or {})
+    metadata[b"spine_sim_trace_encoding"] = b"canonical-json-columns-v1"
+    metadata[b"spine_sim_json_columns"] = json.dumps(
+        sorted(json_columns), separators=(",", ":")
+    ).encode("utf-8")
+    table = table.replace_schema_metadata(metadata)
+    target = directory / "trace.parquet"
+    descriptor, temporary = tempfile.mkstemp(
+        prefix=".trace.", suffix=".tmp", dir=directory
+    )
+    os.close(descriptor)
+    temporary_path = Path(temporary)
+    try:
+        pq.write_table(table, str(temporary_path))
+        os.replace(temporary_path, target)
+    finally:
+        if temporary_path.exists():
+            try:
+                temporary_path.unlink()
+            except OSError:
+                # Preserve the original Parquet error on Windows if Arrow still
+                # owns a failed writer handle; a future atomic write uses a new
+                # unique temporary name.
+                pass
+    return target.name, "parquet", sha256_file(target)
+
+
+def read_trace_table(path: str | Path) -> list[dict[str, Any]]:
+    """Read a canonical trace and reverse its lossless Parquet encoding."""
+
+    source = Path(path)
+    if source.is_dir():
+        parquet = source / "trace.parquet"
+        jsonl = source / "trace.jsonl"
+        source = parquet if parquet.is_file() else jsonl
+    if source.suffix == ".jsonl":
+        return [
+            json.loads(line)
+            for line in source.read_text(encoding="utf-8").splitlines()
+            if line
+        ]
+    if source.suffix != ".parquet":
+        raise ValueError("trace path must be a case directory, .parquet, or .jsonl")
+    try:
+        import pyarrow.parquet as pq  # type: ignore
+    except ImportError as exc:
+        raise RuntimeError("pyarrow is required to read a Parquet trace") from exc
+    table = pq.read_table(source)
+    metadata = table.schema.metadata or {}
+    if metadata.get(b"spine_sim_trace_encoding") != b"canonical-json-columns-v1":
+        raise ValueError("unsupported or missing canonical trace encoding")
+    json_columns = set(
+        json.loads(metadata.get(b"spine_sim_json_columns", b"[]"))
+    )
+    rows = table.to_pylist()
+    for row in rows:
+        for key in json_columns:
+            if key in row:
+                row[key] = json.loads(row[key])
+    return rows
 
 
 def sha256_file(path: Path) -> str:
@@ -138,6 +243,20 @@ class ResultStore:
                 )
             if not path_valid:
                 return False
+            trace_file_name = document.get("trace_file")
+            trace_sha256 = document.get("trace_sha256")
+            if trace_file_name is None:
+                trace_valid = trace_sha256 is None
+            else:
+                trace_file = directory / str(trace_file_name)
+                trace_valid = (
+                    trace_file.name in {"trace.parquet", "trace.jsonl"}
+                    and trace_file.is_file()
+                    and trace_sha256 is not None
+                    and sha256_file(trace_file) == trace_sha256
+                )
+            if not trace_valid:
+                return False
             event_file = directory / "events.jsonl"
             if "events_sha256" not in document:
                 return True
@@ -162,6 +281,7 @@ class ResultStore:
         config: Mapping[str, Any],
         summary: Mapping[str, Any],
         arrays: Mapping[str, np.ndarray] | None = None,
+        trace_rows: Iterable[Mapping[str, Any]] = (),
         events: Iterable[Event | Mapping[str, Any]] = (),
         validation: Mapping[str, Any] | None = None,
         complete: bool,
@@ -180,6 +300,9 @@ class ResultStore:
             path_sha256 = None
             if path_file.exists():
                 path_file.unlink()
+        trace_file, trace_format, trace_sha256 = atomic_write_trace_table(
+            directory, trace_rows
+        )
         event_lines = []
         for event in events:
             value = event.as_dict() if isinstance(event, Event) else dict(event)
@@ -201,6 +324,9 @@ class ResultStore:
         document["case_id"] = case_id
         document["completed_at_utc"] = utc_now()
         document["events_sha256"] = events_sha256
+        document["trace_file"] = trace_file
+        document["trace_format"] = trace_format
+        document["trace_sha256"] = trace_sha256
         stable_summary = {
             key: value
             for key, value in document.items()
@@ -222,6 +348,9 @@ class ResultStore:
                 "events": event_lines,
                 "events_sha256": events_sha256,
                 "path_sha256": path_sha256,
+                "trace_file": trace_file,
+                "trace_format": trace_format,
+                "trace_sha256": trace_sha256,
             }
         )
         document["path_sha256"] = path_sha256
@@ -495,11 +624,16 @@ class CompactResultStore:
         config: Mapping[str, Any],
         summary: Mapping[str, Any],
         arrays: Mapping[str, np.ndarray] | None = None,
+        trace_rows: Iterable[Mapping[str, Any]] = (),
         events: Iterable[Event | Mapping[str, Any]] = (),
         validation: Mapping[str, Any] | None = None,
         complete: bool,
     ) -> CaseRecord:
         if arrays:
+            raise ValueError(
+                "compact formal storage only supports summary output"
+            )
+        if list(trace_rows):
             raise ValueError(
                 "compact formal storage only supports summary output"
             )
@@ -512,6 +646,9 @@ class CompactResultStore:
         document["case_id"] = case_id
         document["completed_at_utc"] = utc_now()
         document["events_sha256"] = None
+        document["trace_file"] = None
+        document["trace_format"] = None
+        document["trace_sha256"] = None
         stable_summary = {
             key: value
             for key, value in document.items()
@@ -533,6 +670,9 @@ class CompactResultStore:
                 "events": [],
                 "events_sha256": None,
                 "path_sha256": None,
+                "trace_file": None,
+                "trace_format": None,
+                "trace_sha256": None,
             }
         )
         document["path_sha256"] = None

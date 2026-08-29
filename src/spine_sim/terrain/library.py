@@ -13,12 +13,21 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal
 
 import numpy as np
+from numpy.typing import NDArray
 
 from spine_sim.io.results import atomic_write_bytes, atomic_write_json, atomic_write_npz, utc_now
+from spine_sim.core.identity import stable_hash
 
 from .envelope import compute_track_geometry
 from .errors import TerrainConfigurationError
-from .models import M1_MODULE_VERSION, RegionSpec, TerrainRecipe, TrackGeometry
+from .models import (
+    ENVELOPE_ALGORITHM_VERSION,
+    M1_MODULE_VERSION,
+    TRACK_SCHEMA_VERSION,
+    RegionSpec,
+    TerrainRecipe,
+    TrackGeometry,
+)
 from .random_field import generate_canonical_window, gaussian_kernel
 
 if TYPE_CHECKING:
@@ -31,6 +40,39 @@ def sha256_file(path: Path, *, chunk_bytes: int = 8 * 1024 * 1024) -> str:
         while block := handle.read(chunk_bytes):
             digest.update(block)
     return digest.hexdigest()
+
+
+def _close_memmap(array: np.ndarray | None) -> None:
+    if isinstance(array, np.memmap):
+        array._mmap.close()
+
+
+def _load_checked_npy(
+    path: Path,
+    *,
+    expected_sha256: str,
+    expected_shape: tuple[int, int],
+    expected_dtype: np.dtype[Any],
+) -> np.memmap:
+    if not path.is_file():
+        raise TerrainConfigurationError(
+            f"region geometry input is missing: {path.name}"
+        )
+    if sha256_file(path) != expected_sha256:
+        raise TerrainConfigurationError(
+            f"region geometry input hash verification failed: {path.name}"
+        )
+    array = np.load(path, mmap_mode="r", allow_pickle=False)
+    if not isinstance(array, np.memmap):
+        raise TerrainConfigurationError(
+            f"region geometry input did not open as a memory map: {path.name}"
+        )
+    if array.shape != expected_shape or array.dtype != expected_dtype:
+        array._mmap.close()
+        raise TerrainConfigurationError(
+            f"region geometry input shape/dtype mismatch: {path.name}"
+        )
+    return array
 
 
 def _safe_id(value: str, name: str) -> str:
@@ -400,6 +442,10 @@ class TerrainLibrary:
         directory.mkdir(parents=True, exist_ok=True)
         target = directory / "raw_height.npy"
         mask_target = directory / "valid_mask.npy"
+        uncertain_target = directory / "geometry_uncertain_mask.npy"
+        determinate_target = directory / "determinate_mask.npy"
+        lower_target = directory / "geometry_lower_bound.npy"
+        upper_target = directory / "geometry_upper_bound.npy"
         metadata_path = directory / "metadata.json"
         complete_path = directory / "COMPLETE"
         if complete_path.is_file() and not overwrite:
@@ -410,10 +456,26 @@ class TerrainLibrary:
         started = time.perf_counter()
         temporary_paths: list[Path] = []
         try:
-            for destination, array in (
+            geometry_arrays: list[tuple[Path, NDArray[Any]]] = [
                 (target, terrain.height),
                 (mask_target, terrain.valid_mask),
-            ):
+            ]
+            if terrain.geometry_uncertain_mask is not None:
+                geometry_arrays.append(
+                    (uncertain_target, terrain.geometry_uncertain_mask)
+                )
+            if terrain.determinate_mask is not None:
+                geometry_arrays.append(
+                    (determinate_target, terrain.determinate_mask)
+                )
+            if terrain.geometry_lower_bound_m is not None:
+                geometry_arrays.extend(
+                    (
+                        (lower_target, terrain.geometry_lower_bound_m),
+                        (upper_target, terrain.geometry_upper_bound_m),
+                    )
+                )
+            for destination, array in geometry_arrays:
                 descriptor, temporary_name = tempfile.mkstemp(
                     prefix=f".{destination.name}.",
                     suffix=".tmp",
@@ -428,6 +490,28 @@ class TerrainLibrary:
                 temporary_paths.remove(temporary)
             data_hash = sha256_file(target)
             mask_hash = sha256_file(mask_target)
+            measurement_semantics = {
+                "status": (
+                    "unknown_probe"
+                    if terrain.resolved_mode == "measured"
+                    and terrain.measurement_probe is None
+                    else (
+                        "known_probe"
+                        if terrain.resolved_mode == "measured"
+                        else "not_applicable"
+                    )
+                ),
+                "probe": (
+                    None
+                    if terrain.measurement_probe is None
+                    else dict(terrain.measurement_probe)
+                ),
+                "measurement_tolerance_m": terrain.measurement_tolerance_m,
+                "determinate_mask": terrain.determinate_mask is not None,
+                "bounds": terrain.geometry_lower_bound_m is not None,
+                "surface_model": "single_valued_height_field_2_5d",
+                "general_mesh_scope": "OUT_OF_SCOPE",
+            }
             metadata = {
                 "schema_version": "1",
                 "m1_module_version": M1_MODULE_VERSION,
@@ -449,12 +533,40 @@ class TerrainLibrary:
                 "valid_mask_file": mask_target.name,
                 "valid_mask_sha256": mask_hash,
                 "valid_fraction": float(np.mean(terrain.valid_mask)),
+                "measurement_semantics": measurement_semantics,
                 "material_metadata": dict(terrain.metadata),
                 "created_at_utc": utc_now(),
                 "generation_time_s": time.perf_counter() - started,
                 "data_sha256": data_hash,
                 "file_size_bytes": target.stat().st_size,
             }
+            if terrain.geometry_uncertain_mask is not None:
+                metadata.update(
+                    {
+                        "geometry_uncertain_mask_file": uncertain_target.name,
+                        "geometry_uncertain_mask_sha256": sha256_file(
+                            uncertain_target
+                        ),
+                    }
+                )
+            if terrain.determinate_mask is not None:
+                metadata.update(
+                    {
+                        "determinate_mask_file": determinate_target.name,
+                        "determinate_mask_sha256": sha256_file(
+                            determinate_target
+                        ),
+                    }
+                )
+            if terrain.geometry_lower_bound_m is not None:
+                metadata.update(
+                    {
+                        "geometry_lower_bound_file": lower_target.name,
+                        "geometry_lower_bound_sha256": sha256_file(lower_target),
+                        "geometry_upper_bound_file": upper_target.name,
+                        "geometry_upper_bound_sha256": sha256_file(upper_target),
+                    }
+                )
             atomic_write_json(metadata_path, metadata)
             atomic_write_json(
                 self.region_manifest_path(recipe.terrain_recipe_id, region.region_id),
@@ -499,6 +611,48 @@ class TerrainLibrary:
         if height.dtype != np.float32 or list(height.shape) != metadata["shape"]:
             raise TerrainConfigurationError("region array shape/dtype does not match metadata")
         return height
+
+    def open_region_valid_mask(
+        self,
+        terrain_recipe_id: str,
+        region_id: str,
+        *,
+        verify_hash: bool = True,
+    ) -> np.memmap | None:
+        """Open a material mask, or return None for defined all-valid geometry."""
+
+        directory = self.region_dir(terrain_recipe_id, region_id)
+        metadata_path = directory / "metadata.json"
+        if not metadata_path.is_file():
+            raise FileNotFoundError(f"terrain region is absent or incomplete: {region_id}")
+        metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+        mask_name = metadata.get("valid_mask_file")
+        if mask_name is None:
+            if "material_metadata" in metadata:
+                raise TerrainConfigurationError(
+                    "material region is missing its required valid-mask contract"
+                )
+            return None
+        expected_hash = str(metadata.get("valid_mask_sha256", ""))
+        if len(expected_hash) != 64:
+            raise TerrainConfigurationError(
+                "material region has an invalid valid-mask identity"
+            )
+        mask_path = directory / str(mask_name)
+        if not verify_hash:
+            mask = np.load(mask_path, mmap_mode="r", allow_pickle=False)
+            if not isinstance(mask, np.memmap):
+                raise TerrainConfigurationError("valid mask did not open as a memory map")
+            if mask.shape != tuple(metadata["shape"]) or mask.dtype != np.bool_:
+                mask._mmap.close()
+                raise TerrainConfigurationError("valid mask shape/dtype mismatch")
+            return mask
+        return _load_checked_npy(
+            mask_path,
+            expected_sha256=expected_hash,
+            expected_shape=tuple(metadata["shape"]),
+            expected_dtype=np.dtype(np.bool_),
+        )
 
     def load_region_spec(self, terrain_recipe_id: str, region_id: str) -> RegionSpec:
         manifest = json.loads(
@@ -604,23 +758,193 @@ class TerrainLibrary:
         near_tie_tolerance_m: float = 1e-10,
         overwrite: bool = False,
     ) -> TrackGeometry:
+        region.validate_against(recipe)
+        directory = self.region_dir(recipe.terrain_recipe_id, region.region_id)
+        metadata_path_region = directory / "metadata.json"
+        if not metadata_path_region.is_file():
+            raise FileNotFoundError(
+                f"terrain region is absent or incomplete: {region.region_id}"
+            )
+        region_metadata = json.loads(
+            metadata_path_region.read_text(encoding="utf-8")
+        )
+        height = self.open_region(
+            recipe.terrain_recipe_id,
+            region.region_id,
+            verify_hash=True,
+        )
+        mask_map = self.open_region_valid_mask(
+            recipe.terrain_recipe_id,
+            region.region_id,
+            verify_hash=True,
+        )
+        source_valid: NDArray[np.bool_]
+        if mask_map is None:
+            source_valid = np.ones(region.shape, dtype=np.bool_)
+            valid_mask_sha256 = stable_hash(
+                {
+                    "kind": "implicit_all_valid",
+                    "shape": list(region.shape),
+                    "region_id": region.region_id,
+                }
+            )
+        else:
+            source_valid = mask_map
+            valid_mask_sha256 = str(region_metadata["valid_mask_sha256"])
+
+        material_metadata = region_metadata.get("material_metadata")
+        resolved_mode = (
+            str(material_metadata.get("resolved_mode", ""))
+            if isinstance(material_metadata, dict)
+            else "defined_geometry"
+        )
+        measurement_semantics = region_metadata.get("measurement_semantics")
+        if not isinstance(measurement_semantics, dict):
+            measurement_semantics = (
+                {
+                    "status": "unknown_probe",
+                    "probe": None,
+                    "measurement_tolerance_m": None,
+                    "bounds": None,
+                }
+                if resolved_mode == "measured"
+                else {"status": "not_applicable", "bounds": None}
+            )
+        measurement_semantics_hash = stable_hash(
+            {
+                "semantics": measurement_semantics,
+                "geometry_uncertain_mask_sha256": region_metadata.get(
+                    "geometry_uncertain_mask_sha256"
+                ),
+                "determinate_mask_sha256": region_metadata.get(
+                    "determinate_mask_sha256"
+                ),
+                "geometry_lower_bound_sha256": region_metadata.get(
+                    "geometry_lower_bound_sha256"
+                ),
+                "geometry_upper_bound_sha256": region_metadata.get(
+                    "geometry_upper_bound_sha256"
+                ),
+            }
+        )
+
+        optional_maps: list[np.memmap] = []
+        uncertain_name = region_metadata.get("geometry_uncertain_mask_file")
+        if uncertain_name is not None:
+            uncertain_map = _load_checked_npy(
+                directory / str(uncertain_name),
+                expected_sha256=str(
+                    region_metadata["geometry_uncertain_mask_sha256"]
+                ),
+                expected_shape=region.shape,
+                expected_dtype=np.dtype(np.bool_),
+            )
+            optional_maps.append(uncertain_map)
+            source_uncertain: NDArray[np.bool_] = uncertain_map
+        elif measurement_semantics.get("status") == "unknown_probe":
+            source_uncertain = np.asarray(source_valid, dtype=np.bool_).copy()
+        else:
+            source_uncertain = np.zeros(region.shape, dtype=np.bool_)
+
+        lower_name = region_metadata.get("geometry_lower_bound_file")
+        upper_name = region_metadata.get("geometry_upper_bound_file")
+        if (lower_name is None) != (upper_name is None):
+            _close_memmap(height)
+            _close_memmap(mask_map)
+            for mapped in optional_maps:
+                _close_memmap(mapped)
+            raise TerrainConfigurationError(
+                "region geometry bounds are incomplete; rebuild the region"
+            )
+        lower_map: np.memmap | None = None
+        upper_map: np.memmap | None = None
+        if lower_name is not None:
+            lower_map = _load_checked_npy(
+                directory / str(lower_name),
+                expected_sha256=str(region_metadata["geometry_lower_bound_sha256"]),
+                expected_shape=region.shape,
+                expected_dtype=np.dtype(np.float32),
+            )
+            upper_map = _load_checked_npy(
+                directory / str(upper_name),
+                expected_sha256=str(region_metadata["geometry_upper_bound_sha256"]),
+                expected_shape=region.shape,
+                expected_dtype=np.dtype(np.float32),
+            )
+            optional_maps.extend((lower_map, upper_map))
+
+        source_data_sha256 = str(region_metadata.get("data_sha256", ""))
+        if len(source_data_sha256) != 64:
+            _close_memmap(height)
+            _close_memmap(mask_map)
+            for mapped in optional_maps:
+                _close_memmap(mapped)
+            raise TerrainConfigurationError("region has an invalid raw-height identity")
         track_id = TrackGeometry.make_id(
             terrain_recipe_id=recipe.terrain_recipe_id,
             region_id=region.region_id,
             radius_m=radius_m,
             y_global_m=y_global_m,
-            envelope_algorithm_version="finite-sphere-envelope-v1",
+            track_schema_version=TRACK_SCHEMA_VERSION,
+            envelope_algorithm_version=ENVELOPE_ALGORITHM_VERSION,
+            near_tie_tolerance_m=near_tie_tolerance_m,
             resolution_m=region.resolution_x_m,
+            source_data_sha256=source_data_sha256,
+            source_valid_mask_sha256=valid_mask_sha256,
+            measurement_semantics_hash=measurement_semantics_hash,
         )
         path = self.track_path(
             recipe.terrain_recipe_id, region.region_id, radius_m, track_id
         )
         metadata_path = path.with_suffix(".json")
         complete_path = path.with_suffix(".complete")
-        if complete_path.is_file() and not overwrite:
-            return self.load_track(
-                recipe.terrain_recipe_id, region.region_id, radius_m, track_id
+        for old_metadata_path in path.parent.glob("*.json"):
+            try:
+                old_metadata = json.loads(
+                    old_metadata_path.read_text(encoding="utf-8")
+                )
+            except (OSError, json.JSONDecodeError):
+                continue
+            same_track_request = (
+                old_metadata.get("terrain_recipe_id") == recipe.terrain_recipe_id
+                and old_metadata.get("region_id") == region.region_id
+                and math.isclose(
+                    float(old_metadata.get("radius_m", math.nan)),
+                    radius_m,
+                    rel_tol=0.0,
+                    abs_tol=max(1e-15, abs(radius_m) * 1e-12),
+                )
+                and math.isclose(
+                    float(old_metadata.get("y_global_m", math.nan)),
+                    y_global_m,
+                    rel_tol=0.0,
+                    abs_tol=max(1e-15, region.resolution_y_m * 1e-9),
+                )
             )
+            if (
+                same_track_request
+                and str(old_metadata.get("schema_version", ""))
+                != TRACK_SCHEMA_VERSION
+                and not complete_path.is_file()
+                and not overwrite
+            ):
+                _close_memmap(height)
+                _close_memmap(mask_map)
+                for mapped in optional_maps:
+                    _close_memmap(mapped)
+                raise TerrainConfigurationError(
+                    "track cache uses an obsolete schema; delete/rebuild track caches"
+                )
+        if complete_path.is_file() and not overwrite:
+            try:
+                return self.load_track(
+                    recipe.terrain_recipe_id, region.region_id, radius_m, track_id
+                )
+            finally:
+                _close_memmap(height)
+                _close_memmap(mask_map)
+                for mapped in optional_maps:
+                    _close_memmap(mapped)
         path.parent.mkdir(parents=True, exist_ok=True)
         lock_path = path.with_suffix(".lock")
         lock_started = time.monotonic()
@@ -633,12 +957,18 @@ class TerrainLibrary:
                 )
             except FileExistsError:
                 if complete_path.is_file() and not overwrite:
-                    return self.load_track(
-                        recipe.terrain_recipe_id,
-                        region.region_id,
-                        radius_m,
-                        track_id,
-                    )
+                    try:
+                        return self.load_track(
+                            recipe.terrain_recipe_id,
+                            region.region_id,
+                            radius_m,
+                            track_id,
+                        )
+                    finally:
+                        _close_memmap(height)
+                        _close_memmap(mask_map)
+                        for mapped in optional_maps:
+                            _close_memmap(mapped)
                 try:
                     lock_age_s = (
                         time.time() - lock_path.stat().st_mtime
@@ -652,6 +982,10 @@ class TerrainLibrary:
                         pass
                     continue
                 if time.monotonic() - lock_started > 300.0:
+                    _close_memmap(height)
+                    _close_memmap(mask_map)
+                    for mapped in optional_maps:
+                        _close_memmap(mapped)
                     raise TerrainConfigurationError(
                         "timed out waiting for the track-cache writer: "
                         f"{track_id}"
@@ -675,20 +1009,21 @@ class TerrainLibrary:
                     radius_m,
                     track_id,
                 )
-            height = self.open_region(
-                recipe.terrain_recipe_id, region.region_id
-            )
             started = time.perf_counter()
-            try:
-                track = compute_track_geometry(
-                    height,
-                    region,
-                    radius_m=radius_m,
-                    y_global_m=y_global_m,
-                    near_tie_tolerance_m=near_tie_tolerance_m,
-                )
-            finally:
-                height._mmap.close()
+            track = compute_track_geometry(
+                height,
+                region,
+                radius_m=radius_m,
+                y_global_m=y_global_m,
+                near_tie_tolerance_m=near_tie_tolerance_m,
+                source_valid_mask=source_valid,
+                source_uncertain_mask=source_uncertain,
+                height_lower_bound_m=lower_map,
+                height_upper_bound_m=upper_map,
+                source_data_sha256=source_data_sha256,
+                source_valid_mask_sha256=valid_mask_sha256,
+                measurement_semantics_hash=measurement_semantics_hash,
+            )
             if track.track_id != track_id:
                 raise TerrainConfigurationError(
                     "computed track ID differs from cache key"
@@ -697,14 +1032,27 @@ class TerrainLibrary:
                 "x_global_m": track.x_global_m,
                 "envelope_height_m": track.envelope_height_m,
                 "envelope_slope_x": track.envelope_slope_x,
+                "envelope_slope_y": track.envelope_slope_y,
                 "support_x_m": track.support_x_m,
                 "support_y_m": track.support_y_m,
+                "support_points_m": track.support_points_m,
+                "support_feature_indices_yx": track.support_feature_indices_yx,
+                "support_value_gap_m": track.support_value_gap_m,
+                "surface_normals": track.surface_normals,
+                "envelope_normals": track.envelope_normals,
+                "contact_normals": track.contact_normals,
+                "footprint_valid_mask": track.footprint_valid_mask,
                 "valid_mask": track.valid_mask,
                 "near_tie_flag": track.near_tie_flag,
+                "feature_switch_flag": track.feature_switch_flag,
+                "geometry_uncertain_mask": track.geometry_uncertain_mask,
             }
+            if track.envelope_height_lower_m is not None:
+                arrays["envelope_height_lower_m"] = track.envelope_height_lower_m
+                arrays["envelope_height_upper_m"] = track.envelope_height_upper_m
             atomic_write_npz(path, arrays)
             metadata = {
-                "schema_version": "1",
+                "schema_version": TRACK_SCHEMA_VERSION,
                 "m1_module_version": M1_MODULE_VERSION,
                 "terrain_recipe_id": track.terrain_recipe_id,
                 "region_id": track.region_id,
@@ -712,12 +1060,25 @@ class TerrainLibrary:
                 "radius_m": track.radius_m,
                 "y_global_m": track.y_global_m,
                 "resolution_m": track.resolution_m,
+                "near_tie_tolerance_m": track.near_tie_tolerance_m,
+                "source_data_sha256": track.source_data_sha256,
+                "source_valid_mask_sha256": track.source_valid_mask_sha256,
+                "measurement_semantics_hash": track.measurement_semantics_hash,
+                "has_envelope_height_bounds": (
+                    track.envelope_height_lower_m is not None
+                ),
                 "envelope_algorithm_version": (
                     track.envelope_algorithm_version
                 ),
                 "model_warning": list(track.model_warning),
                 "sample_count": int(track.x_global_m.size),
                 "valid_count": int(np.count_nonzero(track.valid_mask)),
+                "footprint_valid_count": int(
+                    np.count_nonzero(track.footprint_valid_mask)
+                ),
+                "geometry_uncertain_count": int(
+                    np.count_nonzero(track.geometry_uncertain_mask)
+                ),
                 "generation_time_s": time.perf_counter() - started,
                 "data_sha256": sha256_file(path),
                 "created_at_utc": utc_now(),
@@ -729,6 +1090,10 @@ class TerrainLibrary:
             )
             return track
         finally:
+            _close_memmap(height)
+            _close_memmap(mask_map)
+            for mapped in optional_maps:
+                _close_memmap(mapped)
             if owns_lock:
                 try:
                     lock_path.unlink()
@@ -750,6 +1115,14 @@ class TerrainLibrary:
         if not (path.is_file() and metadata_path.is_file() and complete_path.is_file()):
             raise FileNotFoundError(f"track is absent or incomplete: {track_id}")
         metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+        if str(metadata.get("schema_version", "")) != TRACK_SCHEMA_VERSION:
+            raise TerrainConfigurationError(
+                "track cache schema is obsolete; delete/rebuild track caches"
+            )
+        if metadata.get("envelope_algorithm_version") != ENVELOPE_ALGORITHM_VERSION:
+            raise TerrainConfigurationError(
+                "track envelope algorithm is obsolete; delete/rebuild track caches"
+            )
         marker_hash = complete_path.read_text(encoding="ascii").strip()
         if marker_hash != metadata["data_sha256"]:
             raise TerrainConfigurationError("track COMPLETE marker does not match metadata")
@@ -760,13 +1133,24 @@ class TerrainLibrary:
             region_id=metadata["region_id"],
             radius_m=float(metadata["radius_m"]),
             y_global_m=float(metadata["y_global_m"]),
+            track_schema_version=metadata["schema_version"],
             envelope_algorithm_version=metadata["envelope_algorithm_version"],
+            near_tie_tolerance_m=float(metadata["near_tie_tolerance_m"]),
             resolution_m=float(metadata["resolution_m"]),
+            source_data_sha256=metadata["source_data_sha256"],
+            source_valid_mask_sha256=metadata["source_valid_mask_sha256"],
+            measurement_semantics_hash=metadata["measurement_semantics_hash"],
         )
         if (
             metadata["terrain_recipe_id"] != terrain_recipe_id
             or metadata["region_id"] != region_id
             or metadata["track_id"] != track_id
+            or not math.isclose(
+                float(metadata["radius_m"]),
+                radius_m,
+                rel_tol=0.0,
+                abs_tol=max(1e-15, abs(radius_m) * 1e-12),
+            )
             or expected_id != track_id
         ):
             raise TerrainConfigurationError(
@@ -774,6 +1158,38 @@ class TerrainLibrary:
             )
         with np.load(path, allow_pickle=False) as arrays:
             copied = {name: arrays[name] for name in arrays.files}
+        required = {
+            "x_global_m",
+            "envelope_height_m",
+            "envelope_slope_x",
+            "envelope_slope_y",
+            "support_x_m",
+            "support_y_m",
+            "support_points_m",
+            "support_feature_indices_yx",
+            "support_value_gap_m",
+            "surface_normals",
+            "envelope_normals",
+            "contact_normals",
+            "footprint_valid_mask",
+            "valid_mask",
+            "near_tie_flag",
+            "feature_switch_flag",
+            "geometry_uncertain_mask",
+        }
+        missing = required - copied.keys()
+        if missing:
+            raise TerrainConfigurationError(
+                "track cache is incomplete for schema v2; delete/rebuild track caches"
+            )
+        has_bounds = bool(metadata.get("has_envelope_height_bounds"))
+        if has_bounds and not {
+            "envelope_height_lower_m",
+            "envelope_height_upper_m",
+        } <= copied.keys():
+            raise TerrainConfigurationError(
+                "track bound arrays are incomplete; delete/rebuild track caches"
+            )
         return TrackGeometry(
             terrain_recipe_id=metadata["terrain_recipe_id"],
             region_id=metadata["region_id"],
@@ -781,7 +1197,12 @@ class TerrainLibrary:
             radius_m=float(metadata["radius_m"]),
             y_global_m=float(metadata["y_global_m"]),
             resolution_m=float(metadata["resolution_m"]),
+            track_schema_version=metadata["schema_version"],
             envelope_algorithm_version=metadata["envelope_algorithm_version"],
+            near_tie_tolerance_m=float(metadata["near_tie_tolerance_m"]),
+            source_data_sha256=metadata["source_data_sha256"],
+            source_valid_mask_sha256=metadata["source_valid_mask_sha256"],
+            measurement_semantics_hash=metadata["measurement_semantics_hash"],
             x_global_m=np.asarray(copied["x_global_m"], dtype=np.float64),
             envelope_height_m=np.asarray(
                 copied["envelope_height_m"], dtype=np.float64
@@ -789,9 +1210,45 @@ class TerrainLibrary:
             envelope_slope_x=np.asarray(
                 copied["envelope_slope_x"], dtype=np.float64
             ),
+            envelope_slope_y=np.asarray(
+                copied["envelope_slope_y"], dtype=np.float64
+            ),
             support_x_m=np.asarray(copied["support_x_m"], dtype=np.float64),
             support_y_m=np.asarray(copied["support_y_m"], dtype=np.float64),
+            support_points_m=np.asarray(
+                copied["support_points_m"], dtype=np.float64
+            ),
+            support_feature_indices_yx=np.asarray(
+                copied["support_feature_indices_yx"], dtype=np.int64
+            ),
+            support_value_gap_m=np.asarray(
+                copied["support_value_gap_m"], dtype=np.float64
+            ),
+            surface_normals=np.asarray(copied["surface_normals"], dtype=np.float64),
+            envelope_normals=np.asarray(
+                copied["envelope_normals"], dtype=np.float64
+            ),
+            contact_normals=np.asarray(copied["contact_normals"], dtype=np.float64),
+            footprint_valid_mask=np.asarray(
+                copied["footprint_valid_mask"], dtype=np.bool_
+            ),
             valid_mask=np.asarray(copied["valid_mask"], dtype=np.bool_),
             near_tie_flag=np.asarray(copied["near_tie_flag"], dtype=np.bool_),
+            feature_switch_flag=np.asarray(
+                copied["feature_switch_flag"], dtype=np.bool_
+            ),
+            geometry_uncertain_mask=np.asarray(
+                copied["geometry_uncertain_mask"], dtype=np.bool_
+            ),
+            envelope_height_lower_m=(
+                np.asarray(copied["envelope_height_lower_m"], dtype=np.float64)
+                if has_bounds
+                else None
+            ),
+            envelope_height_upper_m=(
+                np.asarray(copied["envelope_height_upper_m"], dtype=np.float64)
+                if has_bounds
+                else None
+            ),
             model_warning=tuple(metadata.get("model_warning", ())),
         )

@@ -42,6 +42,12 @@ class Terrain:
     subtype: str
     seed: int
     metadata: Mapping[str, Any]
+    measurement_probe: Mapping[str, Any] | None = None
+    measurement_tolerance_m: float | None = None
+    determinate_mask: NDArray[np.bool_] | None = None
+    geometry_uncertain_mask: NDArray[np.bool_] | None = None
+    geometry_lower_bound_m: NDArray[np.float32] | None = None
+    geometry_upper_bound_m: NDArray[np.float32] | None = None
 
     def __post_init__(self) -> None:
         height = np.asarray(self.height)
@@ -64,6 +70,42 @@ class Terrain:
             raise TerrainConfigurationError("terrain material/subtype cannot be empty")
         if self.seed < 0:
             raise TerrainConfigurationError("terrain seed must be non-negative")
+        if self.measurement_tolerance_m is not None and (
+            not math.isfinite(self.measurement_tolerance_m)
+            or self.measurement_tolerance_m < 0.0
+        ):
+            raise TerrainConfigurationError(
+                "measurement_tolerance_m must be finite and non-negative"
+            )
+        for name in ("determinate_mask", "geometry_uncertain_mask"):
+            value = getattr(self, name)
+            if value is not None:
+                array = np.asarray(value)
+                if array.shape != height.shape or array.dtype != np.bool_:
+                    raise TerrainConfigurationError(
+                        f"terrain.{name} must be bool with the height shape"
+                    )
+        if (self.geometry_lower_bound_m is None) != (
+            self.geometry_upper_bound_m is None
+        ):
+            raise TerrainConfigurationError(
+                "terrain geometry bounds must both be present or both be None"
+            )
+        if self.geometry_lower_bound_m is not None:
+            lower = np.asarray(self.geometry_lower_bound_m)
+            upper = np.asarray(self.geometry_upper_bound_m)
+            if (
+                lower.shape != height.shape
+                or upper.shape != height.shape
+                or lower.dtype != np.float32
+                or upper.dtype != np.float32
+                or not np.all(np.isfinite(lower))
+                or not np.all(np.isfinite(upper))
+                or np.any(lower[mask] > upper[mask])
+            ):
+                raise TerrainConfigurationError(
+                    "terrain geometry bounds must be finite float32 arrays with lower<=upper"
+                )
 
     @property
     def size_x_m(self) -> float:
@@ -167,6 +209,9 @@ def _measured(
         "method": "random_measured_crop",
         "source": surface.metadata["source"],
         "source_preprocessing": surface.metadata["preprocessing"],
+        "measurement_semantics": surface.metadata["measurement_semantics"],
+        "surface_model": surface.metadata["surface_model"],
+        "general_mesh_scope": surface.metadata["general_mesh_scope"],
         "crop": crop_record,
     }
 
@@ -334,6 +379,29 @@ def generate_terrain(
         )
     if not np.all(np.isfinite(height)):
         raise TerrainConfigurationError("generator produced NaN or Inf")
+    if resolved_mode == "measured":
+        measurement_semantics = dict(
+            generation_record.get(
+                "measurement_semantics",
+                {
+                    "status": "unknown_probe",
+                    "probe": None,
+                    "measurement_tolerance_m": None,
+                    "determinate_mask": None,
+                    "bounds": None,
+                },
+            )
+        )
+        geometry_uncertain_mask = mask.copy()
+    else:
+        measurement_semantics = {
+            "status": "not_applicable",
+            "probe": None,
+            "measurement_tolerance_m": None,
+            "determinate_mask": None,
+            "bounds": None,
+        }
+        geometry_uncertain_mask = np.zeros(shape, dtype=np.bool_)
     metadata: dict[str, Any] = {
         "schema_version": "material-terrain-output-v1",
         "generator_version": MATERIAL_TERRAIN_VERSION,
@@ -362,6 +430,9 @@ def generate_terrain(
             "dtype": "float32",
         },
         "generation": generation_record,
+        "measurement_semantics": measurement_semantics,
+        "surface_model": "single_valued_height_field_2_5d",
+        "general_mesh_scope": "OUT_OF_SCOPE",
     }
     if fallback_reason is not None:
         metadata["auto_fallback_reason"] = fallback_reason
@@ -374,6 +445,12 @@ def generate_terrain(
         subtype=str(profile["subtype"]),
         seed=int(seed),
         metadata=metadata,
+        measurement_probe=None,
+        measurement_tolerance_m=None,
+        determinate_mask=None,
+        geometry_uncertain_mask=geometry_uncertain_mask,
+        geometry_lower_bound_m=None,
+        geometry_upper_bound_m=None,
     )
 
 
@@ -388,6 +465,19 @@ def refine_material_terrain_same_realization(
     ``coarse`` at all stride-2 nodes, so 10/5 um comparisons cannot drift onto
     a different large-scale realization.
     """
+
+    if any(
+        value is not None
+        for value in (
+            coarse.geometry_lower_bound_m,
+            coarse.geometry_upper_bound_m,
+            fine_detail.geometry_lower_bound_m,
+            fine_detail.geometry_upper_bound_m,
+        )
+    ):
+        raise TerrainConfigurationError(
+            "same-realization refinement of measurement geometry bounds is not supported"
+        )
 
     if (
         coarse.material != fine_detail.material
@@ -488,6 +578,30 @@ def refine_material_terrain_same_realization(
         & coarse_mask[:-1, 1:]
         & coarse_mask[1:, 1:]
     )
+    coarse_uncertain = (
+        np.zeros_like(coarse_mask)
+        if coarse.geometry_uncertain_mask is None
+        else np.asarray(coarse.geometry_uncertain_mask, dtype=np.bool_)
+    )
+    detail_uncertain = (
+        np.zeros_like(fine_detail.valid_mask)
+        if fine_detail.geometry_uncertain_mask is None
+        else np.asarray(fine_detail.geometry_uncertain_mask, dtype=np.bool_)
+    )
+    refined_uncertain = detail_uncertain.copy()
+    refined_uncertain[::2, ::2] |= coarse_uncertain
+    refined_uncertain[1::2, ::2] |= (
+        coarse_uncertain[:-1, :] | coarse_uncertain[1:, :]
+    )
+    refined_uncertain[::2, 1::2] |= (
+        coarse_uncertain[:, :-1] | coarse_uncertain[:, 1:]
+    )
+    refined_uncertain[1::2, 1::2] |= (
+        coarse_uncertain[:-1, :-1]
+        | coarse_uncertain[1:, :-1]
+        | coarse_uncertain[:-1, 1:]
+        | coarse_uncertain[1:, 1:]
+    )
 
     metadata = dict(fine_detail.metadata)
     metadata["same_realization_refinement"] = {
@@ -515,6 +629,12 @@ def refine_material_terrain_same_realization(
         subtype=coarse.subtype,
         seed=coarse.seed,
         metadata=metadata,
+        measurement_probe=fine_detail.measurement_probe,
+        measurement_tolerance_m=fine_detail.measurement_tolerance_m,
+        determinate_mask=None,
+        geometry_uncertain_mask=refined_uncertain,
+        geometry_lower_bound_m=None,
+        geometry_upper_bound_m=None,
     )
 
 
@@ -529,15 +649,43 @@ def save_terrain(path: str | Path, terrain: Terrain) -> Path:
     os.close(descriptor)
     temporary = Path(temporary_name)
     try:
+        metadata = dict(terrain.metadata)
+        metadata["measurement_semantics"] = {
+            "status": (
+                "unknown_probe"
+                if terrain.resolved_mode == "measured"
+                and terrain.measurement_probe is None
+                else (
+                    "known_probe"
+                    if terrain.resolved_mode == "measured"
+                    else "not_applicable"
+                )
+            ),
+            "probe": (
+                None
+                if terrain.measurement_probe is None
+                else dict(terrain.measurement_probe)
+            ),
+            "measurement_tolerance_m": terrain.measurement_tolerance_m,
+            "determinate_mask": terrain.determinate_mask is not None,
+            "bounds": terrain.geometry_lower_bound_m is not None,
+        }
+        arrays: dict[str, NDArray[Any]] = {
+            "height": terrain.height,
+            "valid_mask": terrain.valid_mask,
+            "metadata_json": np.asarray(
+                json.dumps(metadata, sort_keys=True, ensure_ascii=False)
+            ),
+        }
+        if terrain.determinate_mask is not None:
+            arrays["determinate_mask"] = terrain.determinate_mask
+        if terrain.geometry_uncertain_mask is not None:
+            arrays["geometry_uncertain_mask"] = terrain.geometry_uncertain_mask
+        if terrain.geometry_lower_bound_m is not None:
+            arrays["geometry_lower_bound_m"] = terrain.geometry_lower_bound_m
+            arrays["geometry_upper_bound_m"] = terrain.geometry_upper_bound_m
         with temporary.open("wb") as stream:
-            np.savez_compressed(
-                stream,
-                height=terrain.height,
-                valid_mask=terrain.valid_mask,
-                metadata_json=np.asarray(
-                    json.dumps(terrain.metadata, sort_keys=True, ensure_ascii=False)
-                ),
-            )
+            np.savez_compressed(stream, **arrays)
         os.replace(temporary, target)
     finally:
         if temporary.exists():
@@ -552,7 +700,28 @@ def load_terrain(path: str | Path) -> Terrain:
         height = np.asarray(archive["height"], dtype=np.float32)
         valid_mask = np.asarray(archive["valid_mask"], dtype=np.bool_)
         metadata = json.loads(str(archive["metadata_json"].item()))
+        determinate_mask = (
+            np.asarray(archive["determinate_mask"], dtype=np.bool_)
+            if "determinate_mask" in archive.files
+            else None
+        )
+        geometry_uncertain_mask = (
+            np.asarray(archive["geometry_uncertain_mask"], dtype=np.bool_)
+            if "geometry_uncertain_mask" in archive.files
+            else None
+        )
+        geometry_lower_bound_m = (
+            np.asarray(archive["geometry_lower_bound_m"], dtype=np.float32)
+            if "geometry_lower_bound_m" in archive.files
+            else None
+        )
+        geometry_upper_bound_m = (
+            np.asarray(archive["geometry_upper_bound_m"], dtype=np.float32)
+            if "geometry_upper_bound_m" in archive.files
+            else None
+        )
     grid = metadata["grid"]
+    measurement = metadata.get("measurement_semantics", {})
     return Terrain(
         height=height,
         dx=float(grid["spacing_x_m"]),
@@ -562,6 +731,12 @@ def load_terrain(path: str | Path) -> Terrain:
         subtype=str(metadata["subtype"]),
         seed=int(metadata["seed"]),
         metadata=metadata,
+        measurement_probe=measurement.get("probe"),
+        measurement_tolerance_m=measurement.get("measurement_tolerance_m"),
+        determinate_mask=determinate_mask,
+        geometry_uncertain_mask=geometry_uncertain_mask,
+        geometry_lower_bound_m=geometry_lower_bound_m,
+        geometry_upper_bound_m=geometry_upper_bound_m,
     )
 
 

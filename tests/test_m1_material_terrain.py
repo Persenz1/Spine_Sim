@@ -9,6 +9,7 @@ from pathlib import Path
 import numpy as np
 
 from spine_sim.terrain import (
+    Terrain,
     TerrainLibrary,
     available_profiles,
     generate_terrain,
@@ -303,6 +304,92 @@ class MaterialGenerationTests(unittest.TestCase):
             self.assertEqual(manifest["material"], "red_brick")
             self.assertEqual(metadata["valid_fraction"], 1.0)
 
+    def test_cache_track_uses_material_mask_and_mask_hash_identity(self) -> None:
+        terrain = self._generate("red_brick", "fired_brick_standard")
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            recipe, region, _ = register_terrain(root, terrain)
+            library = TerrainLibrary(root)
+            first = library.cache_track(
+                recipe, region, radius_m=50e-6, y_global_m=0.2e-3
+            )
+            changed_mask = terrain.valid_mask.copy()
+            row = changed_mask.shape[0] // 2
+            column = changed_mask.shape[1] // 2
+            changed_mask[row, column + 4] = False
+            changed = Terrain(
+                height=terrain.height,
+                dx=terrain.dx,
+                dy=terrain.dy,
+                valid_mask=changed_mask,
+                material=terrain.material,
+                subtype=terrain.subtype,
+                seed=terrain.seed,
+                metadata=terrain.metadata,
+                geometry_uncertain_mask=terrain.geometry_uncertain_mask,
+            )
+            register_terrain(root, changed, overwrite=True)
+            second = library.cache_track(
+                recipe, region, radius_m=50e-6, y_global_m=0.2e-3
+            )
+            self.assertNotEqual(first.track_id, second.track_id)
+            self.assertFalse(second.footprint_valid_mask[column])
+            self.assertFalse(second.valid_mask[column])
+
+    def test_registered_geometry_bounds_round_trip_into_track(self) -> None:
+        terrain = self._generate("sandpaper", "P200")
+        bounded = Terrain(
+            height=terrain.height,
+            dx=terrain.dx,
+            dy=terrain.dy,
+            valid_mask=terrain.valid_mask,
+            material=terrain.material,
+            subtype=terrain.subtype,
+            seed=terrain.seed,
+            metadata=terrain.metadata,
+            geometry_uncertain_mask=np.ones_like(
+                terrain.valid_mask, dtype=np.bool_
+            ),
+            geometry_lower_bound_m=np.asarray(
+                terrain.height - 1e-6, dtype=np.float32
+            ),
+            geometry_upper_bound_m=np.asarray(
+                terrain.height + 2e-6, dtype=np.float32
+            ),
+        )
+        with tempfile.TemporaryDirectory() as temporary:
+            recipe, region, _ = register_terrain(temporary, bounded)
+            track = TerrainLibrary(temporary).cache_track(
+                recipe, region, radius_m=50e-6, y_global_m=0.2e-3
+            )
+            index = region.shape[1] // 2
+            self.assertIsNotNone(track.envelope_height_lower_m)
+            self.assertIsNotNone(track.envelope_height_upper_m)
+            self.assertTrue(track.geometry_uncertain_mask[index])
+            self.assertGreater(
+                track.envelope_height_upper_m[index]
+                - track.envelope_height_lower_m[index],
+                0.0,
+            )
+
+    def test_cache_track_rejects_missing_material_mask(self) -> None:
+        terrain = self._generate("concrete", "rough_wall")
+        with tempfile.TemporaryDirectory() as temporary:
+            recipe, region, metadata = register_terrain(temporary, terrain)
+            mask_path = (
+                TerrainLibrary(temporary).region_dir(
+                    recipe.terrain_recipe_id, region.region_id
+                )
+                / metadata["valid_mask_file"]
+            )
+            mask_path.unlink()
+            with self.assertRaisesRegex(
+                TerrainConfigurationError, "geometry input is missing"
+            ):
+                TerrainLibrary(temporary).cache_track(
+                    recipe, region, radius_m=50e-6, y_global_m=0.2e-3
+                )
+
 class MeasuredPreprocessingTests(unittest.TestCase):
     def test_zero_is_valid_by_default_and_nonfinite_mask_is_preserved(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -330,6 +417,18 @@ class MeasuredPreprocessingTests(unittest.TestCase):
             self.assertEqual(
                 surface.metadata["preprocessing"]["invalid_policy"]["zero"],
                 "zero_is_valid",
+            )
+            self.assertIsNone(surface.measurement_probe)
+            self.assertIsNone(surface.measurement_tolerance_m)
+            self.assertIsNone(surface.geometry_lower_bound_m)
+            self.assertIsNone(surface.geometry_upper_bound_m)
+            self.assertTrue(surface.geometry_uncertain_mask[0, 0])
+            self.assertEqual(
+                surface.metadata["measurement_semantics"]["status"],
+                "unknown_probe",
+            )
+            self.assertEqual(
+                surface.metadata["general_mesh_scope"], "OUT_OF_SCOPE"
             )
 
     def test_measured_resampling_rejects_fake_resolution(self) -> None:

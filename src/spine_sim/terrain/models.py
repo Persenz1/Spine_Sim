@@ -21,7 +21,8 @@ from .errors import TerrainConfigurationError
 M1_MODULE_VERSION = "m1.0.0"
 DEFINED_GEOMETRY_VERSION = "defined-geometry-v1-canonical5um-stride2-nodal"
 MATERIAL_TERRAIN_VERSION = "material-terrain-v2"
-ENVELOPE_ALGORITHM_VERSION = "finite-sphere-envelope-v1"
+TRACK_SCHEMA_VERSION = "2"
+ENVELOPE_ALGORITHM_VERSION = "finite-sphere-envelope-v2-footprint-support2"
 CANONICAL_SPACING_M = 5e-6
 PRODUCTION_SPACING_M = 10e-6
 _ALIGNMENT_ATOL = 1e-9
@@ -416,14 +417,31 @@ class TrackGeometry:
     radius_m: float
     y_global_m: float
     resolution_m: float
+    track_schema_version: str
     envelope_algorithm_version: str
+    near_tie_tolerance_m: float
+    source_data_sha256: str
+    source_valid_mask_sha256: str
+    measurement_semantics_hash: str
     x_global_m: NDArray[np.float64]
     envelope_height_m: NDArray[np.float64]
     envelope_slope_x: NDArray[np.float64]
+    envelope_slope_y: NDArray[np.float64]
     support_x_m: NDArray[np.float64]
     support_y_m: NDArray[np.float64]
+    support_points_m: NDArray[np.float64]
+    support_feature_indices_yx: NDArray[np.int64]
+    support_value_gap_m: NDArray[np.float64]
+    surface_normals: NDArray[np.float64]
+    envelope_normals: NDArray[np.float64]
+    contact_normals: NDArray[np.float64]
+    footprint_valid_mask: NDArray[np.bool_]
     valid_mask: NDArray[np.bool_]
     near_tie_flag: NDArray[np.bool_]
+    feature_switch_flag: NDArray[np.bool_]
+    geometry_uncertain_mask: NDArray[np.bool_]
+    envelope_height_lower_m: NDArray[np.float64] | None = None
+    envelope_height_upper_m: NDArray[np.float64] | None = None
     model_warning: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
@@ -431,24 +449,92 @@ class TrackGeometry:
             raise TerrainConfigurationError("track IDs cannot be empty")
         _require_positive("radius_m", self.radius_m)
         _require_positive("resolution_m", self.resolution_m)
+        if self.track_schema_version != TRACK_SCHEMA_VERSION:
+            raise TerrainConfigurationError(
+                f"TrackGeometry requires track schema {TRACK_SCHEMA_VERSION!r}"
+            )
+        if self.envelope_algorithm_version != ENVELOPE_ALGORITHM_VERSION:
+            raise TerrainConfigurationError(
+                "TrackGeometry envelope algorithm version is unsupported"
+            )
+        if self.near_tie_tolerance_m < 0 or not math.isfinite(
+            self.near_tie_tolerance_m
+        ):
+            raise TerrainConfigurationError(
+                "near_tie_tolerance_m must be finite and non-negative"
+            )
+        for name, value in (
+            ("source_data_sha256", self.source_data_sha256),
+            ("source_valid_mask_sha256", self.source_valid_mask_sha256),
+            ("measurement_semantics_hash", self.measurement_semantics_hash),
+        ):
+            if len(value) != 64:
+                raise TerrainConfigurationError(f"{name} must be a SHA-256 digest")
         arrays = (
             self.x_global_m,
             self.envelope_height_m,
             self.envelope_slope_x,
+            self.envelope_slope_y,
             self.support_x_m,
             self.support_y_m,
+            self.support_value_gap_m,
+            self.footprint_valid_mask,
             self.valid_mask,
             self.near_tie_flag,
+            self.feature_switch_flag,
+            self.geometry_uncertain_mask,
         )
         shapes = {np.asarray(array).shape for array in arrays}
         if len(shapes) != 1 or len(next(iter(shapes))) != 1:
             raise TerrainConfigurationError(
                 "all TrackGeometry arrays must have the same one-dimensional shape"
             )
-        if np.asarray(self.valid_mask).dtype != np.bool_:
-            raise TerrainConfigurationError("valid_mask must be boolean")
-        if np.asarray(self.near_tie_flag).dtype != np.bool_:
-            raise TerrainConfigurationError("near_tie_flag must be boolean")
+        sample_shape = np.asarray(self.x_global_m).shape
+        expected_vector_shapes = {
+            "support_points_m": sample_shape + (2, 3),
+            "support_feature_indices_yx": sample_shape + (2, 2),
+            "surface_normals": sample_shape + (2, 3),
+            "envelope_normals": sample_shape + (3,),
+            "contact_normals": sample_shape + (2, 3),
+        }
+        for name, expected_shape in expected_vector_shapes.items():
+            if np.asarray(getattr(self, name)).shape != expected_shape:
+                raise TerrainConfigurationError(
+                    f"{name} must have shape {expected_shape}"
+                )
+        if not np.issubdtype(
+            np.asarray(self.support_feature_indices_yx).dtype, np.integer
+        ):
+            raise TerrainConfigurationError(
+                "support_feature_indices_yx must contain integers"
+            )
+        for name in (
+            "footprint_valid_mask",
+            "valid_mask",
+            "near_tie_flag",
+            "feature_switch_flag",
+            "geometry_uncertain_mask",
+        ):
+            if np.asarray(getattr(self, name)).dtype != np.bool_:
+                raise TerrainConfigurationError(f"{name} must be boolean")
+        if (self.envelope_height_lower_m is None) != (
+            self.envelope_height_upper_m is None
+        ):
+            raise TerrainConfigurationError(
+                "envelope lower and upper bounds must both be present or both be None"
+            )
+        if self.envelope_height_lower_m is not None:
+            lower = np.asarray(self.envelope_height_lower_m)
+            upper = np.asarray(self.envelope_height_upper_m)
+            if lower.shape != sample_shape or upper.shape != sample_shape:
+                raise TerrainConfigurationError(
+                    "envelope bounds must match the public track shape"
+                )
+            comparable = np.isfinite(lower) & np.isfinite(upper)
+            if np.any(lower[comparable] > upper[comparable]):
+                raise TerrainConfigurationError(
+                    "envelope lower bound cannot exceed upper bound"
+                )
 
     @staticmethod
     def make_id(
@@ -457,8 +543,13 @@ class TrackGeometry:
         region_id: str,
         radius_m: float,
         y_global_m: float,
+        track_schema_version: str,
         envelope_algorithm_version: str,
+        near_tie_tolerance_m: float,
         resolution_m: float,
+        source_data_sha256: str,
+        source_valid_mask_sha256: str,
+        measurement_semantics_hash: str,
     ) -> str:
         return make_track_id(
             {
@@ -466,8 +557,15 @@ class TrackGeometry:
                 "region_id": region_id,
                 "radius_m": _identity_float(radius_m),
                 "y_global_m": _identity_float(y_global_m),
+                "track_schema_version": track_schema_version,
                 "envelope_algorithm_version": envelope_algorithm_version,
+                "near_tie_tolerance_m": _identity_float(
+                    near_tie_tolerance_m
+                ),
                 "resolution_m": _identity_float(resolution_m),
+                "source_data_sha256": source_data_sha256,
+                "source_valid_mask_sha256": source_valid_mask_sha256,
+                "measurement_semantics_hash": measurement_semantics_hash,
             },
             module_version=M1_MODULE_VERSION,
         )

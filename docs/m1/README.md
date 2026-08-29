@@ -6,7 +6,7 @@ M1 负责地形生成、存储、有限针尖包络和向下游提供稳定的�
 - [`M1_TERRAIN_LIBRARY.md`](M1_TERRAIN_LIBRARY.md)：本地库与命令入口。
 - [`M1_DATA_DICTIONARY.md`](M1_DATA_DICTIONARY.md)：recipe、region、track 和哈希字段。
 - [`M1_10UM_5UM_RULE.md`](M1_10UM_5UM_RULE.md)：同 realization 的 10/5 μm 规则。
-- [`M1_to_M2_handoff.md`](M1_to_M2_handoff.md)：历史下游消费接口，仅供重构参考。
+- [`M1_to_M2_handoff.md`](M1_to_M2_handoff.md)：当前 M1→canonical geometry/single/array 消费合同。
 - [`M1_OPEN_ISSUES.md`](M1_OPEN_ISSUES.md)：剩余问题。
 - [`M1_TEST_REPORT.md`](M1_TEST_REPORT.md)、[`M1_BENCHMARK_REPORT.md`](M1_BENCHMARK_REPORT.md)、
   [`M1_GPU_TERRAIN_SUITE_REPORT.md`](M1_GPU_TERRAIN_SUITE_REPORT.md)：2026-07-27

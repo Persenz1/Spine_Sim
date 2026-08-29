@@ -19,6 +19,12 @@ import numpy as np
 from spine_sim.core.config import BaseCaseSpec, CampaignSpec
 from spine_sim.core.errors import classify_exception
 from spine_sim.core.identity import stable_hash
+from spine_sim.core.versions import (
+    MODEL_SCHEMA_VERSION,
+    PROJECT_SCHEMA_VERSION,
+    RESULT_SCHEMA_VERSION,
+    SOLVER_SEMANTICS_VERSION,
+)
 from spine_sim.io.results import (
     CaseRecord,
     CompactResultStore,
@@ -32,6 +38,7 @@ from spine_sim.runtime.backend import BackendCapabilities
 class CaseOutput:
     summary: dict[str, Any] = field(default_factory=dict)
     arrays: dict[str, np.ndarray] = field(default_factory=dict)
+    trace_rows: list[dict[str, Any]] = field(default_factory=list)
     events: list[dict[str, Any]] = field(default_factory=list)
     validation: dict[str, Any] = field(default_factory=dict)
     stage_times_s: dict[str, float] = field(default_factory=dict)
@@ -41,6 +48,13 @@ class CaseOutput:
 class RunContext:
     case_id: str
     backend: Mapping[str, Any]
+    normalized_input_hash: str
+    project_schema_version: str
+    model_schema_version: str
+    result_schema_version: str
+    solver_semantics_version: str
+    terrain_version: str
+    geometry_version: str
 
 
 def _load_callable(reference: str) -> Callable[..., CaseOutput]:
@@ -109,7 +123,17 @@ def _execute(
         tracemalloc.start()
     try:
         function = _load_callable(reference)
-        context = RunContext(case_id=case.case_id, backend=backend)
+        context = RunContext(
+            case_id=case.case_id,
+            backend=backend,
+            normalized_input_hash=case.normalized_input_hash,
+            project_schema_version=case.project_schema_version,
+            model_schema_version=case.model_schema_version,
+            result_schema_version=case.result_schema_version,
+            solver_semantics_version=case.solver_semantics_version,
+            terrain_version=case.terrain_version,
+            geometry_version=case.geometry_version,
+        )
         parameters = inspect.signature(function).parameters
         output = (
             function(case.parameters, context)
@@ -173,7 +197,10 @@ class CampaignRunner:
         }
         self.store.initialize(
             manifest={
-                "schema_version": "1",
+                "schema_version": PROJECT_SCHEMA_VERSION,
+                "model_schema_version": MODEL_SCHEMA_VERSION,
+                "result_schema_version": RESULT_SCHEMA_VERSION,
+                "solver_semantics_version": SOLVER_SEMANTICS_VERSION,
                 "campaign_id": self.campaign.campaign_id,
                 "created_at_utc": utc_now(),
                 "backend": self.backend.as_dict(),
@@ -189,6 +216,13 @@ class CampaignRunner:
                         "module_version": case.module_version,
                         "config_hash": case.config_hash,
                         "upstream_hash": case.upstream_hash,
+                        "project_schema_version": case.project_schema_version,
+                        "model_schema_version": case.model_schema_version,
+                        "result_schema_version": case.result_schema_version,
+                        "solver_semantics_version": case.solver_semantics_version,
+                        "terrain_version": case.terrain_version,
+                        "geometry_version": case.geometry_version,
+                        "normalized_input_hash": case.normalized_input_hash,
                     }
                     for case in self.campaign.cases
                 },
@@ -240,6 +274,7 @@ class CampaignRunner:
                     config=asdict(case),
                     summary=summary,
                     arrays=output.arrays,
+                    trace_rows=output.trace_rows,
                     events=output.events,
                     validation=output.validation,
                     complete=True,

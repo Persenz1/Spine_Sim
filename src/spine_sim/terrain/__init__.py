@@ -14,6 +14,7 @@ from .envelope import (
     RodClearanceResult,
     SphereEnvelope2D,
     check_rod_clearance,
+    check_segmented_tip_rod_clearance,
     compute_sphere_envelope_2d,
     compute_track_geometry,
     forward_cap_gate,
@@ -26,8 +27,10 @@ from .heightmap import (
 from .formal import generate_formal_terrain_batch
 from .library import TerrainLibrary
 from .models import (
+    ENVELOPE_ALGORITHM_VERSION,
     M1_MODULE_VERSION,
     MATERIAL_TERRAIN_VERSION,
+    TRACK_SCHEMA_VERSION,
     CampaignDesignSpace,
     CampaignRegionReport,
     RegionSpec,
@@ -56,6 +59,8 @@ from .validation import (
 __all__ = [
     "M1_MODULE_VERSION",
     "MATERIAL_TERRAIN_VERSION",
+    "ENVELOPE_ALGORITHM_VERSION",
+    "TRACK_SCHEMA_VERSION",
     "CampaignDesignSpace",
     "CampaignRegionReport",
     "FileHeightMapSource",
@@ -70,6 +75,7 @@ __all__ = [
     "TerrainRecipe",
     "TrackGeometry",
     "check_rod_clearance",
+    "check_segmented_tip_rod_clearance",
     "compute_campaign_region",
     "compute_descriptors",
     "compute_sphere_envelope_2d",

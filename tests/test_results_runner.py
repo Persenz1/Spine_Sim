@@ -14,6 +14,7 @@ from spine_sim.io.results import (
     ResultStore,
     atomic_write_json,
     open_result_store,
+    read_trace_table,
 )
 from spine_sim.runtime.backend import BackendConfig, discover_backend
 from spine_sim.runtime.runner import CampaignRunner
@@ -52,12 +53,28 @@ class ResultTests(unittest.TestCase):
                 config={"x": 1},
                 summary={"run_state": "complete"},
                 arrays={"x": np.array([1.0])},
+                trace_rows=(
+                    {
+                        "path_position_m": 0.0,
+                        "accepted": True,
+                        "nested": {"parameter_sources": {}},
+                    },
+                ),
                 complete=True,
             )
             before = (store.case_dir("case_x") / "summary.json").stat().st_mtime_ns
             self.assertEqual(store.load_case_summary("case_x")["case_id"], "case_x")
             after = (store.case_dir("case_x") / "summary.json").stat().st_mtime_ns
             self.assertEqual(before, after)
+            summary = store.load_case_summary("case_x")
+            self.assertIn(summary["trace_format"], {"parquet", "jsonl_fallback"})
+            self.assertTrue(
+                (store.case_dir("case_x") / summary["trace_file"]).is_file()
+            )
+            self.assertEqual(
+                read_trace_table(store.case_dir("case_x"))[0]["nested"],
+                {"parameter_sources": {}},
+            )
 
     def test_complete_hash_and_empty_event_cleanup(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:

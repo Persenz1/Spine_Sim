@@ -19,6 +19,8 @@ from spine_sim.terrain.heightmap import (
 )
 from spine_sim.terrain.library import TerrainLibrary
 from spine_sim.terrain.models import (
+    ENVELOPE_ALGORITHM_VERSION,
+    TRACK_SCHEMA_VERSION,
     CampaignDesignSpace,
     RegionSpec,
     TerrainRecipe,
@@ -132,13 +134,98 @@ class TerrainLibraryTests(unittest.TestCase):
             "terrain_recipe_id": self.recipe.terrain_recipe_id,
             "region_id": self.region.region_id,
             "y_global_m": 0.0,
-            "envelope_algorithm_version": "finite-sphere-envelope-v1",
+            "track_schema_version": TRACK_SCHEMA_VERSION,
+            "envelope_algorithm_version": ENVELOPE_ALGORITHM_VERSION,
+            "near_tie_tolerance_m": 1e-10,
             "resolution_m": 10e-6,
+            "source_data_sha256": "1" * 64,
+            "source_valid_mask_sha256": "2" * 64,
+            "measurement_semantics_hash": "3" * 64,
         }
         self.assertEqual(
             TrackGeometry.make_id(radius_m=100e-6, **common),
             TrackGeometry.make_id(radius_m=100.0 * 1e-6, **common),
         )
+
+    def test_track_identity_changes_with_geometry_semantics(self) -> None:
+        common = {
+            "terrain_recipe_id": self.recipe.terrain_recipe_id,
+            "region_id": self.region.region_id,
+            "radius_m": 50e-6,
+            "y_global_m": 0.0,
+            "track_schema_version": TRACK_SCHEMA_VERSION,
+            "envelope_algorithm_version": ENVELOPE_ALGORITHM_VERSION,
+            "resolution_m": 10e-6,
+            "source_data_sha256": "1" * 64,
+            "source_valid_mask_sha256": "2" * 64,
+            "measurement_semantics_hash": "3" * 64,
+        }
+        baseline = TrackGeometry.make_id(
+            near_tie_tolerance_m=1e-10, **common
+        )
+        self.assertNotEqual(
+            baseline,
+            TrackGeometry.make_id(near_tie_tolerance_m=2e-10, **common),
+        )
+        self.assertNotEqual(
+            baseline,
+            TrackGeometry.make_id(
+                near_tie_tolerance_m=1e-10,
+                **{**common, "source_valid_mask_sha256": "4" * 64},
+            ),
+        )
+        self.assertNotEqual(
+            baseline,
+            TrackGeometry.make_id(
+                near_tie_tolerance_m=1e-10,
+                **{**common, "source_data_sha256": "5" * 64},
+            ),
+        )
+        self.assertNotEqual(
+            baseline,
+            TrackGeometry.make_id(
+                near_tie_tolerance_m=1e-10,
+                **{**common, "measurement_semantics_hash": "6" * 64},
+            ),
+        )
+
+    def test_obsolete_track_schema_requires_explicit_rebuild(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            library = TerrainLibrary(temporary)
+            library.generate_region(self.recipe, self.region)
+            track = library.cache_track(
+                self.recipe,
+                self.region,
+                radius_m=50e-6,
+                y_global_m=0.0,
+            )
+            sidecar = library.track_path(
+                self.recipe.terrain_recipe_id,
+                self.region.region_id,
+                50e-6,
+                track.track_id,
+            ).with_suffix(".json")
+            metadata = json.loads(sidecar.read_text(encoding="utf-8"))
+            metadata["schema_version"] = "1"
+            sidecar.write_text(json.dumps(metadata), encoding="utf-8")
+            with self.assertRaisesRegex(
+                TerrainConfigurationError, "obsolete.*rebuild"
+            ):
+                library.load_track(
+                    self.recipe.terrain_recipe_id,
+                    self.region.region_id,
+                    50e-6,
+                    track.track_id,
+                )
+            with self.assertRaisesRegex(
+                TerrainConfigurationError, "obsolete.*rebuild"
+            ):
+                library.cache_track(
+                    self.recipe,
+                    self.region,
+                    radius_m=50e-6,
+                    y_global_m=0.0,
+                )
 
     @unittest.skipUnless(importlib.util.find_spec("cupy"), "CuPy/GPU is unavailable")
     def test_cuda_library_region_matches_cpu_and_records_backend(self) -> None:

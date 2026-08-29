@@ -72,27 +72,49 @@ recipe 的始终是已经解析后的 `measured` 或 `synthetic`。
 区域文件不保存 X/Y meshgrid。坐标由原点、步距和 shape 恢复。10 μm 区域原点
 必须落在 5 μm 规范网格的偶数索引。
 
-## TrackGeometry
+## TrackGeometry v2
+
+`track_schema_version="2"`，包络算法为
+`finite-sphere-envelope-v2-footprint-support2`。旧 v1 cache 不双读，加载时明确要求
+`rebuild-required`。
 
 | 字段 | 类型/单位 | 含义 |
 |---|---|---|
-| `terrain_recipe_id` | string | 地形 realization |
-| `region_id` | string | 原始二维区域 |
-| `track_id` | string | recipe/region/radius/y/算法版本/分辨率联合 ID |
-| `radius_m` | m | 有限球代理半径 |
-| `y_global_m` | m | 固定横向轨道，必须落在网格行 |
-| `resolution_m` | m | x 采样间距 |
-| `envelope_algorithm_version` | string | `finite-sphere-envelope-v1` |
-| `x_global_m` | float64[N], m | 全局 x 节点 |
-| `envelope_height_m` | float64[N], m | 球心刚好接触时的竖直高度 \(H_R\) |
-| `envelope_slope_x` | float64[N] | 中心差分 \(\partial_x H_R\) |
-| `support_x_m/y_m` | float64[N], m | 主最大值支撑节点 |
-| `valid_mask` | bool[N] | 完整球邻域和导数均在源域内 |
-| `near_tie_flag` | bool[N] | 最优和次优支撑的高度差小于声明容差 |
-| `model_warning` | string tuple | 完整球代理需要球冠门控、杆体参数未闭合等 |
+| `terrain_recipe_id/region_id/track_id` | string | realization、二维区域与内容寻址 track identity |
+| `radius_m/y_global_m/resolution_m` | m | 有限球半径、固定轨道 y 与采样间距 |
+| `track_schema_version/envelope_algorithm_version` | string | v2 schema 与算法语义 |
+| `near_tie_tolerance_m` | m | top-1/top-2 支撑并列容差，进入 identity |
+| `source_data_sha256/source_valid_mask_sha256` | SHA-256 | 原始高度与有效 mask 内容哈希 |
+| `measurement_semantics_hash` | SHA-256 | 探针、容差、上下界/不确定性语义哈希 |
+| `x_global_m/envelope_height_m` | float64[N], m | 精确轨道节点与有限球球心包络高度 |
+| `envelope_slope_x/envelope_slope_y` | float64[N] | 二维包络梯度；不再丢失 y 向几何 |
+| `support_x_m/support_y_m` | float64[N], m | 主支撑的兼容视图 |
+| `support_points_m` | float64[N,2,3], m | top-2 支撑点；唯一支撑时第二项为 NaN |
+| `support_feature_indices_yx` | int64[N,2,2] | top-2 原始节点身份；禁止 support switch 插值 |
+| `support_value_gap_m` | float64[N], m | top-1 与 top-2 包络值差 |
+| `surface_normals` | float64[N,2,3] | 各支撑处真实/测量表面法向 |
+| `envelope_normals` | float64[N,3] | 可微唯一分支的包络法向 |
+| `contact_normals` | float64[N,2,3] | 球心到各支撑的接触法向 |
+| `footprint_valid_mask` | bool[N] | 完整球 footprint 内所有参与源点均有效 |
+| `valid_mask` | bool[N] | footprint、导数和边界联合有效性 |
+| `near_tie_flag/feature_switch_flag` | bool[N] | 并列支撑与离散特征切换；不得强选唯一法向 |
+| `geometry_uncertain_mask` | bool[N] | mask/测量界/并列等导致的几何不确定性 |
+| `envelope_height_lower_m/upper_m` | float64[N] 或 null, m | 实测表面传播后的包络上下界；无数据时显式 null |
+| `model_warning` | string tuple | 未闭合测量/杆体/模型边界 |
 
-轨迹缓存的 NPZ 只保存一维数组，JSON 侧车保存身份、算法、生成耗时、警告和
-SHA-256；`.complete` 最后写入。
+轨迹 NPZ/JSON/`.complete` 原子缓存同时校验所有 identity 字段和内容哈希。完整
+footprint 中即使非 winner 节点无效，也必须使该站 footprint invalid。
+
+## ContactCandidate geometry contract
+
+`spine_sim.geometry` 将 v2 track 转成统一 `ContactCandidate`。候选保存 terrain/track/
+geometry lineage、candidate index、path position、feature ID、sphere center、全部 support、
+signed gap、三类法向、tangent basis、valid/near-tie/uncertainty、上下界、forward-cap gate、
+完整姿态 rod clearance 和不可变 `search_cursor`。
+
+`query_next_candidate(...)` 返回 `(candidate, candidate.search_cursor)`；拒绝后以该 cursor
+继续下一离散 feature，不线性插值支撑、不全局 reset，也不影响其他刺的 fresh cursor。
+near-tie 的 `selected_normal` 为 null，必须由更高层显式消歧或返回模型未闭合。
 
 ## FileHeightMapSource
 

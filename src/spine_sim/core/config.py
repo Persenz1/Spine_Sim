@@ -10,6 +10,13 @@ from typing import Any, Mapping
 from .errors import ConfigurationError
 from .identity import identity, stable_hash
 from .units import require_range, to_si
+from .versions import (
+    GEOMETRY_SCHEMA_VERSION,
+    MODEL_SCHEMA_VERSION,
+    PROJECT_SCHEMA_VERSION,
+    RESULT_SCHEMA_VERSION,
+    SOLVER_SEMANTICS_VERSION,
+)
 
 
 def _unknown(data: Mapping[str, Any], allowed: set[str], name: str) -> None:
@@ -101,12 +108,31 @@ class BaseCaseSpec:
     parameters: Mapping[str, Any]
     upstream_hash: str = ""
     tags: tuple[str, ...] = ()
+    project_schema_version: str = PROJECT_SCHEMA_VERSION
+    model_schema_version: str = MODEL_SCHEMA_VERSION
+    result_schema_version: str = RESULT_SCHEMA_VERSION
+    solver_semantics_version: str = SOLVER_SEMANTICS_VERSION
+    terrain_version: str = ""
+    geometry_version: str = GEOMETRY_SCHEMA_VERSION
 
     def __post_init__(self) -> None:
         if not self.module:
             raise ConfigurationError("module cannot be empty")
         if not self.module_version:
             raise ConfigurationError("module_version cannot be empty")
+        for name in (
+            "project_schema_version",
+            "model_schema_version",
+            "result_schema_version",
+            "solver_semantics_version",
+            "geometry_version",
+        ):
+            if not getattr(self, name):
+                raise ConfigurationError(f"{name} cannot be empty")
+
+    @property
+    def normalized_input_hash(self) -> str:
+        return stable_hash(self.parameters)
 
     @property
     def case_id(self) -> str:
@@ -114,7 +140,13 @@ class BaseCaseSpec:
             "case",
             {
                 "module": self.module,
-                "parameters": self.parameters,
+                "project_schema_version": self.project_schema_version,
+                "model_schema_version": self.model_schema_version,
+                "result_schema_version": self.result_schema_version,
+                "solver_semantics_version": self.solver_semantics_version,
+                "terrain_version": self.terrain_version,
+                "geometry_version": self.geometry_version,
+                "normalized_input_hash": self.normalized_input_hash,
                 "upstream_hash": self.upstream_hash,
             },
             module_version=self.module_version,
@@ -126,7 +158,19 @@ class BaseCaseSpec:
 
     @classmethod
     def from_mapping(cls, data: Mapping[str, Any]) -> "BaseCaseSpec":
-        allowed = {"module", "module_version", "parameters", "upstream_hash", "tags"}
+        allowed = {
+            "module",
+            "module_version",
+            "parameters",
+            "upstream_hash",
+            "tags",
+            "project_schema_version",
+            "model_schema_version",
+            "result_schema_version",
+            "solver_semantics_version",
+            "terrain_version",
+            "geometry_version",
+        }
         _unknown(data, allowed, "case")
         normalized = dict(data)
         normalized["tags"] = tuple(normalized.get("tags", ()))
@@ -193,8 +237,10 @@ class ProjectConfig:
     relative_tolerance: float = 1e-7
 
     def __post_init__(self) -> None:
-        if self.schema_version != "1":
-            raise ConfigurationError("only ProjectConfig schema_version '1' is supported")
+        if self.schema_version != PROJECT_SCHEMA_VERSION:
+            raise ConfigurationError(
+                f"only ProjectConfig schema_version {PROJECT_SCHEMA_VERSION!r} is supported"
+            )
         if not self.module_version:
             raise ConfigurationError("module_version cannot be empty")
         require_range(self.absolute_tolerance, name="absolute_tolerance", minimum=0, inclusive_min=False)
