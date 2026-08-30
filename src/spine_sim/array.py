@@ -15,6 +15,7 @@ from .core.frames import Wrench
 from .core.states import (
     ContinuationAction,
     Event,
+    EventType,
     ModelState,
     NumericalState,
     PhysicalState,
@@ -31,7 +32,6 @@ from .single_spine import (
     SpineGeometry,
     SpineMaterial,
     SuspensionParameters,
-    commit_single_spine_trial,
     solve_single_spine,
 )
 
@@ -99,8 +99,8 @@ def _tuple_matrix(value: ArrayLike) -> tuple[tuple[float, ...], ...]:
     )
 
 
-def _skew(value: ArrayLike) -> NDArray[np.float64]:
-    x, y, z = _vector(value, 3, "skew vector")
+def _skew(value: NDArray[np.float64]) -> NDArray[np.float64]:
+    x, y, z = value
     return np.array(
         [[0.0, -z, y], [z, 0.0, -x], [-y, x, 0.0]],
         dtype=np.float64,
@@ -226,10 +226,7 @@ class SpineInstance:
             if item is not None
         )
         ids = [item.candidate_id for item in candidates]
-        indices = [
-            int(getattr(item, "candidate_index", index))
-            for index, item in enumerate(candidates)
-        ]
+        indices = [item.candidate_index for item in candidates]
         if len(ids) != len(set(ids)) or indices != sorted(set(indices)):
             raise ConfigurationError(
                 "candidate continuation must have unique IDs and increasing indices"
@@ -246,6 +243,27 @@ class ArrayAcceptedState:
     spine_states: tuple[SpineAcceptedState, ...]
     load_parameter: float
     revision: int = 0
+
+    def __post_init__(self) -> None:
+        q_C = _vector(self.q_C, 6, "q_C")
+        if not self.spine_states:
+            raise ConfigurationError("array state must contain at least one spine")
+        state_ids = [state.spine_id for state in self.spine_states]
+        if len(state_ids) != len(set(state_ids)):
+            raise ConfigurationError("array state spine IDs must be unique")
+        load_parameter = float(self.load_parameter)
+        if not math.isfinite(load_parameter):
+            raise ConfigurationError("load_parameter must be finite")
+        if (
+            isinstance(self.revision, bool)
+            or not isinstance(self.revision, (int, np.integer))
+            or self.revision < 0
+        ):
+            raise ConfigurationError("revision must be a non-negative integer")
+        object.__setattr__(self, "q_C", _tuple_vector(q_C))
+        object.__setattr__(self, "spine_states", tuple(self.spine_states))
+        object.__setattr__(self, "load_parameter", load_parameter)
+        object.__setattr__(self, "revision", int(self.revision))
 
     @classmethod
     def initial(
@@ -338,15 +356,14 @@ def _candidate_for_state(
         for item in (spine.candidate, *spine.continuation_candidates)
         if item is not None
     )
-    if not candidates or accepted.physical_state is PhysicalState.FAILED:
+    if accepted.physical_state is PhysicalState.FAILED:
         return None
     if accepted.physical_state in {
-        PhysicalState.CONTACT,
         PhysicalState.STICK,
         PhysicalState.SLIP,
         PhysicalState.HARDSTOP,
     }:
-        return next(
+        candidate = next(
             (
                 item
                 for item in candidates
@@ -354,56 +371,49 @@ def _candidate_for_state(
             ),
             None,
         )
+        if candidate is None:
+            raise ConfigurationError(
+                "active spine candidate_id is missing from its candidate sequence"
+            )
+        return candidate
     if accepted.physical_state in {
         PhysicalState.DETACH,
         PhysicalState.REBOUND,
     }:
         return None
+    if not candidates:
+        return None
     cursor = accepted.search_cursor
     if cursor is None:
         return candidates[0]
-    if bool(getattr(cursor, "exhausted", False)):
+    if cursor.exhausted:
         return None
-    cursor_index = getattr(cursor, "candidate_index", cursor)
-    if isinstance(cursor_index, int):
-        return next(
-            (
-                item
-                for index, item in enumerate(candidates)
-                if int(getattr(item, "candidate_index", index))
-                >= cursor_index
-            ),
-            None,
-        )
     return next(
-        (item for item in candidates if item.candidate_id == cursor_index),
+        (
+            item
+            for item in candidates
+            if item.candidate_index >= cursor.candidate_index
+        ),
         None,
     )
 
 
 def _control_vectors(
     control: MixedControl,
-    accepted: ArrayAcceptedState,
-) -> tuple[Vector6, Vector6, NDArray[np.int64], NDArray[np.int64]]:
-    q = _vector(
-        accepted.q_C if accepted.revision > 0 else control.initial_q_C,
-        6,
-        "accepted/initial q_C",
-    ).copy()
+    initial_q_C: Vector6,
+) -> tuple[Vector6, Vector6, NDArray[np.int64]]:
+    q = initial_q_C.copy()
     required = np.zeros(6, dtype=np.float64)
-    prescribed: list[int] = []
     free: list[int] = []
     for index, mode in enumerate(control.modes):
         if mode is ControlMode.PRESCRIBED_POSE:
             q[index] = float(control.prescribed_q_C[index])
-            prescribed.append(index)
         else:
             required[index] = float(control.required_wrench[index])
             free.append(index)
     return (
         q,
         required,
-        np.asarray(prescribed, dtype=np.int64),
         np.asarray(free, dtype=np.int64),
     )
 
@@ -412,7 +422,8 @@ def _scaled_rank_range(
     matrix: Matrix6,
     residual: Vector6,
     basis: NDArray[np.float64],
-    control: MixedControl,
+    row_scale: Vector6,
+    coordinate_scale: Vector6,
     tolerances: ArrayTolerances,
 ) -> tuple[RankStatus, RangeStatus, int, NDArray[np.float64], float, NDArray[np.float64]]:
     mode_count = basis.shape[1]
@@ -425,11 +436,6 @@ def _scaled_rank_range(
             0.0,
             np.empty((0, 0)),
         )
-    row_scale = np.array(
-        [1.0 / control.F_ref_N] * 3
-        + [1.0 / (control.F_ref_N * control.L_ref_m)] * 3
-    )
-    coordinate_scale = np.array([control.L_ref_m] * 3 + [1.0] * 3)
     scaled_full = (
         row_scale[:, None]
         * matrix
@@ -467,8 +473,8 @@ def _metric_input(
     resistance_direction: NDArray[np.float64],
     force_tolerance_N: float,
 ) -> SpineMetricInput:
-    geometric = bool(candidate is not None and candidate.valid)
-    signed_gap = None if candidate is None else float(candidate.signed_gap_m)
+    geometric = candidate is not None and candidate.valid
+    signed_gap = None if candidate is None else candidate.signed_gap_m
     if result.physical_state in {
         PhysicalState.SEARCH,
         PhysicalState.DETACH,
@@ -514,6 +520,9 @@ def _assemble(
     states: Sequence[SpineAcceptedState],
     q_C: Vector6,
     control: MixedControl,
+    reference_position: NDArray[np.float64],
+    q_rate: Vector6,
+    resistance_direction: NDArray[np.float64],
     *,
     load_parameter: float,
 ) -> _Assembly:
@@ -523,30 +532,25 @@ def _assemble(
     per_spine: list[PerSpineArrayResult] = []
     metrics: list[SpineMetricInput] = []
     released: list[Mapping[str, Any]] = []
-    reference_position = _vector(
-        control.reference_position_m, 3, "reference_position_m"
-    )
-    q_rate = _vector(control.q_rate_C, 6, "q_rate_C")
-    direction = _vector(
-        control.resistance_direction, 3, "resistance_direction"
-    )
-    direction /= np.linalg.norm(direction)
     for spine, accepted in zip(spines, states, strict=True):
         candidate = _candidate_for_state(spine, accepted)
         terrain_signed_gap: float | None = None
         closure_threshold: float | None = None
         loading_displacement: float | None = None
         if candidate is None or candidate.selected_normal is None:
-            point = _vector(spine.geometry.root_position_m, 3, "root_position_m")
+            point = np.asarray(
+                spine.geometry.root_position_m, dtype=np.float64
+            )
             B = np.hstack((np.eye(3), -_skew(point - reference_position)))
             dynamic_candidate = candidate
             relative = B @ q_C
             signed_gap = None if candidate is None else candidate.signed_gap_m
         else:
-            normal = _vector(candidate.selected_normal, 3, "selected_normal")
-            normal /= np.linalg.norm(normal)
+            normal = candidate.selected_normal / np.linalg.norm(
+                candidate.selected_normal
+            )
             point = (
-                _vector(candidate.sphere_center_m, 3, "sphere_center_m")
+                candidate.sphere_center_m
                 - spine.geometry.tip_radius_m * normal
             )
             B = np.hstack((np.eye(3), -_skew(point - reference_position)))
@@ -608,34 +612,39 @@ def _assemble(
                 single,
                 dynamic_candidate,
                 spine.stable_engagement,
-                direction,
+                resistance_direction,
                 spine.tolerances.force_N,
             )
         )
-        for event in single.events:
-            failure = event.details.get("failure")
-            force_before = event.details.get("force_before_N")
-            if (
-                event.event_type.value == "material_failure"
-                and isinstance(failure, Mapping)
-                and failure.get("continuation_action")
-                in {
-                    ContinuationAction.PERMANENT_REMOVE,
-                    ContinuationAction.PERMANENT_REMOVE.value,
-                }
-                and force_before is not None
-            ):
-                released_force = _vector(force_before, 3, "released force")
-                released.append(
-                    {
-                        "spine_id": spine.spine_id,
-                        "force_N": _tuple_vector(released_force),
-                        "moment_Nm": _tuple_vector(
-                            np.cross(point - reference_position, released_force)
-                        ),
-                        "reference_point": control.reference_point,
-                    }
+        failure = single.failure
+        if (
+            failure is not None
+            and failure.continuation_action
+            is ContinuationAction.PERMANENT_REMOVE
+        ):
+            force_before = next(
+                (
+                    event.details.get("force_before_N")
+                    for event in single.events
+                    if event.event_type is EventType.MATERIAL_FAILURE
+                ),
+                None,
+            )
+            if force_before is None:
+                raise ConfigurationError(
+                    "permanent failure event is missing force_before_N"
                 )
+            released_force = _vector(force_before, 3, "released force")
+            released.append(
+                {
+                    "spine_id": spine.spine_id,
+                    "force_N": _tuple_vector(released_force),
+                    "moment_Nm": _tuple_vector(
+                        np.cross(point - reference_position, released_force)
+                    ),
+                    "reference_point": control.reference_point,
+                }
+            )
     counts = compute_array_counts(metrics, gap_tolerance_m=min(
         spine.tolerances.gap_m for spine in spines
     ))
@@ -654,7 +663,9 @@ def _predict_contact_seed(
     states: Sequence[SpineAcceptedState],
     q_C: Vector6,
     admissible_basis: NDArray[np.float64],
-    control: MixedControl,
+    reference_position: NDArray[np.float64],
+    row_scale: Vector6,
+    coordinate_scale: Vector6,
     residual: Vector6,
     attempted: set[tuple[int, str]],
 ) -> tuple[Vector6, tuple[int, str]] | None:
@@ -662,14 +673,6 @@ def _predict_contact_seed(
 
     if admissible_basis.shape[1] == 0:
         return None
-    reference_position = _vector(
-        control.reference_position_m, 3, "reference_position_m"
-    )
-    row_scale = np.array(
-        [1.0 / control.F_ref_N] * 3
-        + [1.0 / (control.F_ref_N * control.L_ref_m)] * 3
-    )
-    coordinate_scale = np.array([control.L_ref_m] * 3 + [1.0] * 3)
     displacement_basis = coordinate_scale[:, None] * admissible_basis
     desired_mode = -admissible_basis.T @ (row_scale * residual)
     best_score = 0.0
@@ -691,10 +694,11 @@ def _predict_contact_seed(
         key = (index, candidate.candidate_id)
         if key in attempted:
             continue
-        normal = _vector(candidate.selected_normal, 3, "selected_normal")
-        normal /= np.linalg.norm(normal)
+        normal = candidate.selected_normal / np.linalg.norm(
+            candidate.selected_normal
+        )
         point = (
-            _vector(candidate.sphere_center_m, 3, "sphere_center_m")
+            candidate.sphere_center_m
             - spine.geometry.tip_radius_m * normal
         )
         B = np.hstack((np.eye(3), -_skew(point - reference_position)))
@@ -772,7 +776,7 @@ def _trial_event_location(trial: SingleSpineTrial) -> tuple[float, float]:
 
 def _stops_at_model_limit(trial: SingleSpineTrial) -> bool:
     failure = trial.result.failure
-    return bool(
+    return (
         failure is not None
         and failure.continuation_action
         is ContinuationAction.STOP_MODEL_LIMIT
@@ -856,7 +860,10 @@ def _select_earliest_event_indices(
 
 
 def _nullspace_basis(
-    free: NDArray[np.int64], control: MixedControl, tolerances: ArrayTolerances
+    free: NDArray[np.int64],
+    control: MixedControl,
+    tolerances: ArrayTolerances,
+    coordinate_scale: Vector6,
 ) -> NDArray[np.float64]:
     if free.size == 0:
         return np.empty((6, 0), dtype=np.float64)
@@ -864,8 +871,7 @@ def _nullspace_basis(
     if not control.equality_matrix:
         return selector
     equality = np.asarray(control.equality_matrix, dtype=np.float64)
-    coordinate_scale = np.diag([control.L_ref_m] * 3 + [1.0] * 3)
-    scaled = equality @ coordinate_scale @ selector
+    scaled = equality @ np.diag(coordinate_scale) @ selector
     _u, singular, vt = np.linalg.svd(scaled, full_matrices=True)
     leading = float(singular[0]) if singular.size else 0.0
     threshold = tolerances.rank_absolute + tolerances.rank_relative * leading
@@ -878,6 +884,7 @@ def _enforce_equality_constraints(
     free: NDArray[np.int64],
     control: MixedControl,
     tolerances: ArrayTolerances,
+    coordinate_scale: Vector6,
 ) -> Vector6:
     """Project the initial free coordinates onto homogeneous equalities."""
 
@@ -897,13 +904,13 @@ def _enforce_equality_constraints(
             "prescribed pose is incompatible with equality_matrix"
         )
     selector = np.eye(6, dtype=np.float64)[:, free]
-    coordinate_scale = np.diag([control.L_ref_m] * 3 + [1.0] * 3)
-    operator = equality @ coordinate_scale @ selector
+    D_q = np.diag(coordinate_scale)
+    operator = equality @ D_q @ selector
     operator = operator[nonzero] / row_norm[nonzero, None]
     correction, _residuals, _rank, _singular = np.linalg.lstsq(
         operator, -normalized_residual, rcond=None
     )
-    projected = q_C + coordinate_scale @ selector @ correction
+    projected = q_C + D_q @ selector @ correction
     final = equality @ projected
     final_normalized = final[nonzero] / row_norm[nonzero]
     if float(np.linalg.norm(final_normalized)) > tolerances.range_residual:
@@ -913,13 +920,42 @@ def _enforce_equality_constraints(
     return projected
 
 
+def _conservative_stability(
+    tangent: Matrix6,
+    admissible_basis: NDArray[np.float64],
+    control: MixedControl,
+    tolerances: ArrayTolerances,
+    coordinate_scale: Vector6,
+) -> tuple[QuasistaticStability, float | None, float | None]:
+    if admissible_basis.shape[1] == 0:
+        return QuasistaticStability.NO_FREE_MODE, None, None
+    D_q = np.diag(coordinate_scale)
+    K_hat = D_q.T @ tangent @ D_q / (
+        control.F_ref_N * control.L_ref_m
+    )
+    reduced = admissible_basis.T @ (0.5 * (K_hat + K_hat.T)) @ admissible_basis
+    eigenvalues = np.linalg.eigvalsh(reduced)
+    minimum = float(eigenvalues.min())
+    threshold = tolerances.stability_absolute + tolerances.stability_relative * float(
+        np.linalg.norm(reduced, ord=2)
+    )
+    if minimum > threshold:
+        status = QuasistaticStability.STABLE_CONSERVATIVE
+    elif minimum < -threshold:
+        status = QuasistaticStability.UNSTABLE_CONSERVATIVE
+    else:
+        status = QuasistaticStability.MARGINAL_CONSERVATIVE
+    return status, minimum, threshold
+
+
 def _stability(
     tangent: Matrix6,
     assembly: _Assembly,
     spines: Sequence[SpineInstance],
-    free: NDArray[np.int64],
+    admissible_basis: NDArray[np.float64],
     control: MixedControl,
     tolerances: ArrayTolerances,
+    coordinate_scale: Vector6,
     *,
     equilibrium_solved: bool,
 ) -> tuple[QuasistaticStability, float | None, float | None]:
@@ -935,31 +971,9 @@ def _stability(
     ) or not np.allclose(tangent, tangent.T, atol=1e-10, rtol=1e-8)
     if slip_or_nonconservative:
         admissible = True
-        for item, trial, spine in zip(
-            assembly.per_spine, assembly.trials, spines, strict=True
-        ):
+        for item, spine in zip(assembly.per_spine, spines, strict=True):
             single = item.single_result
-            residuals = single.complementarity_residuals
             local_tolerance = spine.tolerances
-            admissible &= (
-                trial.committable
-                and single.numerical_state is NumericalState.CONVERGED
-                and single.normal_force_N >= -local_tolerance.force_N
-                and residuals.get("penetration_m", 0.0)
-                <= local_tolerance.gap_m
-                and residuals.get("negative_normal_N", 0.0)
-                <= local_tolerance.force_N
-                and residuals.get("gap_force_Nm", 0.0)
-                <= local_tolerance.gap_m * local_tolerance.force_N
-                and residuals.get("static_friction_cone_N", 0.0)
-                <= local_tolerance.friction_N
-                and residuals.get("kinetic_slip_cone_N", 0.0)
-                <= local_tolerance.friction_N
-                and residuals.get("spring", 0.0)
-                <= local_tolerance.spring_N
-                and residuals.get("balance_m", 0.0)
-                <= local_tolerance.gap_m
-            )
             if single.physical_state is PhysicalState.SLIP or (
                 single.physical_state is PhysicalState.HARDSTOP
                 and single.contact_submode is PhysicalState.SLIP
@@ -982,8 +996,12 @@ def _stability(
             None,
             None,
         )
-    return evaluate_conservative_stability(
-        tangent, free, control, tolerances
+    return _conservative_stability(
+        tangent,
+        admissible_basis,
+        control,
+        tolerances,
+        coordinate_scale,
     )
 
 
@@ -1001,26 +1019,17 @@ def evaluate_conservative_stability(
         raise ConfigurationError("free_dofs must be a 1-D subset of 0..5")
     if np.unique(free).size != free.size:
         raise ConfigurationError("free_dofs cannot contain duplicates")
-    basis = _nullspace_basis(free, control, tolerances)
-    if basis.shape[1] == 0:
-        return QuasistaticStability.NO_FREE_MODE, None, None
-    D_q = np.diag([control.L_ref_m] * 3 + [1.0] * 3)
-    K_hat = D_q.T @ tangent_matrix @ D_q / (
-        control.F_ref_N * control.L_ref_m
+    coordinate_scale = np.array([control.L_ref_m] * 3 + [1.0] * 3)
+    basis = _nullspace_basis(
+        free, control, tolerances, coordinate_scale
     )
-    reduced = basis.T @ (0.5 * (K_hat + K_hat.T)) @ basis
-    eigenvalues = np.linalg.eigvalsh(reduced)
-    minimum = float(eigenvalues.min())
-    threshold = tolerances.stability_absolute + tolerances.stability_relative * float(
-        np.linalg.norm(reduced, ord=2)
+    return _conservative_stability(
+        tangent_matrix,
+        basis,
+        control,
+        tolerances,
+        coordinate_scale,
     )
-    if minimum > threshold:
-        status = QuasistaticStability.STABLE_CONSERVATIVE
-    elif minimum < -threshold:
-        status = QuasistaticStability.UNSTABLE_CONSERVATIVE
-    else:
-        status = QuasistaticStability.MARGINAL_CONSERVATIVE
-    return status, minimum, threshold
 
 
 def solve_array_equilibrium(
@@ -1041,20 +1050,36 @@ def solve_array_equilibrium(
     state_ids = [state.spine_id for state in accepted.spine_states]
     if ids != state_ids or len(ids) != len(set(ids)):
         raise ConfigurationError("array spine IDs/order must be unique and stable")
-    step_start_q = _vector(
+    load_parameter = float(load_parameter)
+    if not math.isfinite(load_parameter):
+        raise ConfigurationError("load_parameter must be finite")
+    loader = np.asarray(control.loader_stiffness, dtype=np.float64)
+    reference_position = np.asarray(
+        control.reference_position_m, dtype=np.float64
+    )
+    q_rate = np.asarray(control.q_rate_C, dtype=np.float64)
+    resistance_direction = np.asarray(
+        control.resistance_direction, dtype=np.float64
+    )
+    resistance_direction /= np.linalg.norm(resistance_direction)
+    step_start_q = np.asarray(
         accepted.q_C if accepted.revision > 0 else control.initial_q_C,
-        6,
-        "accepted/initial q_C",
+        dtype=np.float64,
     ).copy()
-    q_C, required, _prescribed, free = _control_vectors(control, accepted)
-    q_C = _enforce_equality_constraints(q_C, free, control, tolerances)
-    admissible_basis = _nullspace_basis(free, control, tolerances)
-    loader = _matrix(control.loader_stiffness, 6, "loader_stiffness")
+    q_C, required, free = _control_vectors(
+        control, step_start_q
+    )
     row_scale = np.array(
         [1.0 / control.F_ref_N] * 3
         + [1.0 / (control.F_ref_N * control.L_ref_m)] * 3
     )
     coordinate_scale = np.array([control.L_ref_m] * 3 + [1.0] * 3)
+    q_C = _enforce_equality_constraints(
+        q_C, free, control, tolerances, coordinate_scale
+    )
+    admissible_basis = _nullspace_basis(
+        free, control, tolerances, coordinate_scale
+    )
     rank_status = RankStatus.FULL_RANK
     range_status = RangeStatus.COMPATIBLE
     equilibrium_status = EquilibriumStatus.NONCONVERGED
@@ -1111,7 +1136,11 @@ def solve_array_equilibrium(
             target_q_C - start_q_C
         )
         boundary_q_C = _enforce_equality_constraints(
-            boundary_q_C, free, control, tolerances
+            boundary_q_C,
+            free,
+            control,
+            tolerances,
+            coordinate_scale,
         )
         boundary_load = float(
             terminal_trial.result.evaluated_motion.load_parameter
@@ -1121,6 +1150,9 @@ def solve_array_equilibrium(
             working_states,
             boundary_q_C,
             control,
+            reference_position,
+            q_rate,
+            resistance_direction,
             load_parameter=boundary_load,
         )
         return boundary_q_C, boundary, events
@@ -1132,6 +1164,9 @@ def solve_array_equilibrium(
             working_states,
             q_C,
             control,
+            reference_position,
+            q_rate,
+            resistance_direction,
             load_parameter=load_parameter,
         )
         if pending_release is not None:
@@ -1147,7 +1182,8 @@ def solve_array_equilibrium(
                 postfailure_tangent,
                 -pending_release,
                 admissible_basis,
-                control,
+                row_scale,
+                coordinate_scale,
                 tolerances,
             )
             predicted_delta: Vector6 | None = None
@@ -1240,17 +1276,13 @@ def solve_array_equilibrium(
             releases = tuple(
                 item
                 for item in assembly.released_wrenches
-                if item.get("spine_id") in new_ids
+                if item["spine_id"] in new_ids
             )
             cascade_released.extend(releases)
             pending_release = np.zeros(6, dtype=np.float64)
             for item in releases:
-                pending_release[:3] += _vector(
-                    item["force_N"], 3, "released force"
-                )
-                pending_release[3:] += _vector(
-                    item["moment_Nm"], 3, "released moment"
-                )
+                pending_release[:3] += item["force_N"]
+                pending_release[3:] += item["moment_Nm"]
             pending_spine_ids = new_ids
         if eventful_indices:
             continue
@@ -1276,7 +1308,8 @@ def solve_array_equilibrium(
             total_tangent,
             residual,
             admissible_basis,
-            control,
+            row_scale,
+            coordinate_scale,
             tolerances,
         )
         if admissible_basis.shape[1] == 0:
@@ -1290,7 +1323,9 @@ def solve_array_equilibrium(
                 working_states,
                 q_C,
                 admissible_basis,
-                control,
+                reference_position,
+                row_scale,
+                coordinate_scale,
                 residual,
                 attempted,
             )
@@ -1298,7 +1333,11 @@ def solve_array_equilibrium(
                 seeded, key = prediction
                 attempted.add(key)
                 q_C = _enforce_equality_constraints(
-                    seeded, free, control, tolerances
+                    seeded,
+                    free,
+                    control,
+                    tolerances,
+                    coordinate_scale,
                 )
                 continue
         if range_status is RangeStatus.INCOMPATIBLE:
@@ -1326,6 +1365,9 @@ def solve_array_equilibrium(
             working_states,
             q_C,
             control,
+            reference_position,
+            q_rate,
+            resistance_direction,
             load_parameter=load_parameter,
         )
         final_selected_indices = _select_earliest_event_indices(
@@ -1346,10 +1388,7 @@ def solve_array_equilibrium(
                 )
             )
             equilibrium_status = EquilibriumStatus.MODEL_LIMIT
-        elif any(
-            trial.result.events or trial.result.failure is not None
-            for trial in final_assembly.trials
-        ):
+        elif any(trial.result.events for trial in final_assembly.trials):
             q_C = last_evaluated_q_C
         else:
             assembly = final_assembly
@@ -1375,7 +1414,8 @@ def solve_array_equilibrium(
         assembly.tangent + loader,
         residual,
         admissible_basis,
-        control,
+        row_scale,
+        coordinate_scale,
         tolerances,
     )
     total_tangent = assembly.tangent + loader
@@ -1392,19 +1432,26 @@ def solve_array_equilibrium(
         for index, item in enumerate(assembly.per_spine)
     )
     equilibrium_solved = equilibrium_status is EquilibriumStatus.SOLVED
+    local_numerical_states = tuple(
+        trial.result.numerical_state for trial in assembly.trials
+    )
     local_trials_solved = all(
         trial.committable
-        and trial.result.numerical_state is NumericalState.CONVERGED
-        for trial in assembly.trials
+        and numerical_state is NumericalState.CONVERGED
+        for trial, numerical_state in zip(
+            assembly.trials, local_numerical_states, strict=True
+        )
     )
+    solution_accepted = equilibrium_solved and local_trials_solved
     stability, minimum_eigenvalue, stability_threshold = _stability(
         total_tangent,
         assembly,
         spines,
-        free,
+        admissible_basis,
         control,
         tolerances,
-        equilibrium_solved=equilibrium_solved and local_trials_solved,
+        coordinate_scale,
+        equilibrium_solved=solution_accepted,
     )
     model_state = ModelState.CLOSED
     if equilibrium_status is EquilibriumStatus.MODEL_LIMIT:
@@ -1414,17 +1461,7 @@ def solve_array_equilibrium(
         for trial in assembly.trials
     ):
         model_state = ModelState.PARAMETER_UNCLOSED
-    local_numerical_states = tuple(
-        trial.result.numerical_state for trial in assembly.trials
-    )
-    if (
-        equilibrium_solved
-        and all(trial.committable for trial in assembly.trials)
-        and all(
-            state is NumericalState.CONVERGED
-            for state in local_numerical_states
-        )
-    ):
+    if solution_accepted:
         numerical_state = NumericalState.CONVERGED
     elif NumericalState.INVALID_RESIDUAL in local_numerical_states:
         numerical_state = NumericalState.INVALID_RESIDUAL
@@ -1502,18 +1539,10 @@ def solve_array_equilibrium(
         QuasistaticStability.NO_FREE_MODE,
         QuasistaticStability.DIRECTIONALLY_ADMISSIBLE_QUASISTATIC,
     }
-    committable = (
-        equilibrium_solved
-        and acceptable_stability
-        and all(trial.committable for trial in assembly.trials)
-        and equilibrium_status is not EquilibriumStatus.MODEL_LIMIT
-    )
+    committable = solution_accepted and acceptable_stability
     if committable:
         proposed_states = tuple(
-            commit_single_spine_trial(state, trial)
-            for state, trial in zip(
-                working_states, assembly.trials, strict=True
-            )
+            trial.proposed_state for trial in assembly.trials
         )
         proposed = ArrayAcceptedState(
             q_C=_tuple_vector(q_C),

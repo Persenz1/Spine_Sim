@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass, replace
+from dataclasses import replace
 import math
 
 import numpy as np
@@ -11,11 +11,11 @@ from spine_sim.core.states import (
     ContinuationAction,
     EventType,
     ModelState,
-    NumericalEventType,
     PhysicalState,
     SpringBranch,
     validate_physical_transition,
 )
+from spine_sim.geometry import CandidateCursor, ContactCandidate, GEOMETRY_VERSION
 from spine_sim.single_spine import (
     BaseMotion,
     FrictionParameters,
@@ -29,33 +29,60 @@ from spine_sim.single_spine import (
     solve_unilateral_spring,
     solve_wedge_2d,
 )
+from spine_sim.terrain.envelope import RodClearanceResult
 
 
-@dataclass(frozen=True)
-class Clearance:
-    collision: bool | None = False
-
-
-@dataclass(frozen=True)
-class Candidate:
-    candidate_id: str = "candidate-1"
-    selected_normal: tuple[float, float, float] = (0.0, 0.0, 1.0)
-    signed_gap_m: float = 0.0
-    valid: bool = True
-    near_tie: bool = False
-    sphere_center_m: tuple[float, float, float] = (0.0, 0.0, -0.004)
-    support_points_m: tuple[tuple[float, float, float], ...] = (
-        (0.0, 0.0, -0.00405),
+def candidate(**changes: object) -> ContactCandidate:
+    changes = dict(changes)
+    near_tie = bool(changes.pop("near_tie", False))
+    normal = np.array([0.0, 0.0, 1.0], dtype=np.float64)
+    feature_id = "feature-1"
+    support_points = np.array(
+        [
+            [0.0, 0.0, -0.00405],
+            [1e-6, 0.0, -0.00405],
+        ][: 2 if near_tie else 1],
+        dtype=np.float64,
     )
-    tangent_basis: tuple[tuple[float, float, float], ...] = (
-        (1.0, 0.0, 0.0),
-        (0.0, 1.0, 0.0),
+    support_normals = (
+        np.stack((normal, normal)) if near_tie else normal
     )
-    forward_cap_valid: bool | None = True
-    rod_clearance: Clearance | None = Clearance()
-    effective_radius_m: float | None = 40e-6
-    curvature_radius_m: float | None = None
-    search_cursor: int = 1
+    base = ContactCandidate(
+        candidate_id="candidate-1",
+        lineage="test-lineage",
+        terrain_version="test-terrain",
+        track_id="test-track",
+        geometry_version=GEOMETRY_VERSION,
+        candidate_index=0,
+        path_position_m=0.0,
+        feature_id=feature_id,
+        sphere_center_m=np.array([0.0, 0.0, -0.004]),
+        support_points_m=support_points,
+        signed_gap_m=0.0,
+        curvature_radius_m=200e-6,
+        surface_normal=support_normals,
+        envelope_normal=None if near_tie else normal,
+        contact_normal=support_normals,
+        normal_model="contact",
+        tangent_basis=(
+            None
+            if near_tie
+            else np.array([[1.0, 0.0, 0.0], [0.0, 1.0, 0.0]])
+        ),
+        valid=True,
+        near_tie=near_tie,
+        geometry_uncertain=near_tie,
+        gap_lower_m=0.0,
+        gap_upper_m=0.0,
+        forward_cap_valid=True,
+        rod_clearance=RodClearanceResult(False, 1e-3, 1, ()),
+        search_cursor=CandidateCursor(
+            next_path_index=1,
+            candidate_index=1,
+            last_feature_id=feature_id,
+        ),
+    )
+    return replace(base, **changes)
 
 
 def geometry() -> SpineGeometry:
@@ -141,7 +168,7 @@ def motion(
 def solve(
     accepted: SpineAcceptedState,
     base_motion: BaseMotion,
-    candidate: Candidate | None = Candidate(),
+    selected_candidate: ContactCandidate | None = candidate(),
     *,
     selected_material: SpineMaterial | None = None,
     selected_friction: FrictionParameters | None = None,
@@ -154,7 +181,7 @@ def solve(
         suspension or rigid_suspension(),
         accepted,
         base_motion,
-        candidate,
+        selected_candidate,
         tolerances=tolerances(),
     )
 
@@ -184,7 +211,6 @@ def test_frozen_eight_states_event_names_and_transition_validation() -> None:
         "HARDSTOP_RELEASE",
         "MATERIAL_FAILURE",
     }
-    assert "NEWTON_RETRY" in NumericalEventType.__members__
     assert "NEWTON_RETRY" not in EventType.__members__
     validate_physical_transition(
         EventType.RESTICK, PhysicalState.SLIP, PhysicalState.STICK
@@ -209,6 +235,11 @@ def test_chapter_2_wedge_closed_form_and_bidirectional_signs() -> None:
     assert reverse.slip_direction_sign == -1
     flat_zero_mu = solve_wedge_2d(1.0, 1.0, 0.0, 0.0)
     assert flat_zero_mu.physical_state is PhysicalState.SLIP
+
+
+def test_accepted_state_rejects_legacy_cursor_types() -> None:
+    with pytest.raises(ConfigurationError, match="CandidateCursor"):
+        replace(SpineAcceptedState.initial("spine-1"), search_cursor=1)
 
 
 def test_chapter_2_self_lock_and_peel_are_not_absolute_value_shortcuts() -> None:
@@ -347,7 +378,7 @@ def test_contact_reject_does_not_commit_contact_or_reengagement_history() -> Non
     rejected = solve(
         accepted,
         motion(),
-        replace(Candidate(), forward_cap_valid=False),
+        replace(candidate(), forward_cap_valid=False),
     )
     assert rejected.result.physical_state is PhysicalState.SEARCH
     assert [event.event_type for event in rejected.result.events] == [
@@ -355,7 +386,7 @@ def test_contact_reject_does_not_commit_contact_or_reengagement_history() -> Non
     ]
     committed = commit_single_spine_trial(accepted, rejected)
     assert committed.candidate_id is None
-    assert committed.search_cursor == 1
+    assert committed.search_cursor == candidate().search_cursor
     assert committed.reengagement_count == 0
     assert committed.completed_detach_cycles == 0
 
@@ -364,10 +395,13 @@ def test_contact_reject_does_not_commit_contact_or_reengagement_history() -> Non
     ("candidate", "reason"),
     [
         (
-            replace(Candidate(), valid=False, near_tie=True, selected_normal=None),
+            candidate(near_tie=True, valid=False),
             "near_tie_requires_resolved_normal_model",
         ),
-        (replace(Candidate(), selected_normal=None), "contact_normal_unclosed"),
+        (
+            replace(candidate(), contact_normal=None, tangent_basis=None),
+            "contact_normal_unclosed",
+        ),
     ],
 )
 def test_unresolved_contact_normal_is_parameter_unclosed(
@@ -608,7 +642,7 @@ def test_detach_rebound_search_then_reengage_updates_only_on_commit() -> None:
     assert searched.physical_state is PhysicalState.SEARCH
     assert searched.completed_detach_cycles == 1
     reengage_trial = solve(
-        searched, motion(load_parameter=5.0), Candidate(candidate_id="candidate-2")
+        searched, motion(load_parameter=5.0), candidate(candidate_id="candidate-2")
     )
     assert EventType.REENGAGE in {
         event.event_type for event in reengage_trial.result.events

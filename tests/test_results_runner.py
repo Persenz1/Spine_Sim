@@ -1,22 +1,28 @@
 from __future__ import annotations
 
 import json
-import os
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 import numpy as np
 
+from spine_sim.cli import build_parser
 from spine_sim.core.config import BaseCaseSpec, CampaignSpec
+from spine_sim.io.files import atomic_write_json
 from spine_sim.io.results import (
     CompactResultStore,
     ResultStore,
-    atomic_write_json,
     open_result_store,
     read_trace_table,
 )
-from spine_sim.runtime.backend import BackendConfig, discover_backend
+from spine_sim.core.errors import ConfigurationError
+from spine_sim.runtime.backend import (
+    BackendConfig,
+    discover_backend,
+    validate_environment,
+)
 from spine_sim.runtime.runner import CampaignRunner
 
 
@@ -32,6 +38,15 @@ def make_campaign(*, include_failure: bool = False, workers: int = 1) -> Campaig
     )
 
 
+def complete_summary() -> dict[str, object]:
+    return {
+        "run_state": "complete",
+        "wall_time_s": 0.0,
+        "peak_ram_bytes": 0,
+        "peak_python_bytes": 0,
+    }
+
+
 class ResultTests(unittest.TestCase):
     def test_atomic_write_and_interrupted_case_detection(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -43,7 +58,47 @@ class ResultTests(unittest.TestCase):
             store = ResultStore(root / "campaign")
             store.case_dir("case_interrupted").mkdir(parents=True)
             (store.case_dir("case_interrupted") / "summary.json").write_text("{", encoding="utf-8")
-            self.assertTrue(store.is_incomplete("case_interrupted"))
+            self.assertFalse(store.is_complete("case_interrupted"))
+
+    def test_case_records_require_runtime_fields_and_complete_errors(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            store = ResultStore(temporary)
+            with self.assertRaises(KeyError):
+                store.write_case(
+                    case_id="missing_metrics",
+                    config={},
+                    summary={"run_state": "complete"},
+                )
+            with self.assertRaises(KeyError):
+                store.write_case(
+                    case_id="partial_error",
+                    config={},
+                    summary={
+                        **complete_summary(),
+                        "run_state": "execution_error",
+                        "error": {"category": "execution"},
+                    },
+                )
+
+    def test_open_compact_store_requires_declared_database(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            atomic_write_json(
+                root / "manifest.json",
+                {"result_storage": "sqlite_transactional_summary_v1"},
+            )
+            with self.assertRaisesRegex(ValueError, "SQLite database"):
+                open_result_store(root)
+
+    def test_open_store_rejects_unknown_declared_format(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            atomic_write_json(
+                root / "manifest.json",
+                {"result_storage": "legacy_directory_guess_v0"},
+            )
+            with self.assertRaisesRegex(ValueError, "unsupported result storage"):
+                open_result_store(root)
 
     def test_read_only_load(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -51,7 +106,7 @@ class ResultTests(unittest.TestCase):
             store.write_case(
                 case_id="case_x",
                 config={"x": 1},
-                summary={"run_state": "complete"},
+                summary=complete_summary(),
                 arrays={"x": np.array([1.0])},
                 trace_rows=(
                     {
@@ -60,7 +115,6 @@ class ResultTests(unittest.TestCase):
                         "nested": {"parameter_sources": {}},
                     },
                 ),
-                complete=True,
             )
             before = (store.case_dir("case_x") / "summary.json").stat().st_mtime_ns
             self.assertEqual(store.load_case_summary("case_x")["case_id"], "case_x")
@@ -82,9 +136,8 @@ class ResultTests(unittest.TestCase):
             store.write_case(
                 case_id="case_hash",
                 config={"x": 1},
-                summary={"run_state": "complete"},
+                summary=complete_summary(),
                 events=({"label": "diagnostic"},),
-                complete=True,
             )
             event_file = store.case_dir("case_hash") / "events.jsonl"
             self.assertTrue(event_file.is_file())
@@ -95,9 +148,8 @@ class ResultTests(unittest.TestCase):
             store.write_case(
                 case_id="case_hash",
                 config={"x": 1},
-                summary={"run_state": "complete"},
+                summary=complete_summary(),
                 events=({"label": "diagnostic"},),
-                complete=True,
             )
             summary = json.loads(summary_file.read_text(encoding="utf-8"))
             summary["numerical_state"] = "tampered"
@@ -106,28 +158,25 @@ class ResultTests(unittest.TestCase):
             store.write_case(
                 case_id="case_hash",
                 config={"x": 1},
-                summary={"run_state": "complete"},
+                summary=complete_summary(),
                 events=({"label": "diagnostic"},),
-                complete=True,
             )
             atomic_write_json(store.case_dir("case_hash") / "config.json", {"x": 2})
             self.assertFalse(store.is_complete("case_hash"))
             store.write_case(
                 case_id="case_hash",
                 config={"x": 1},
-                summary={"run_state": "complete"},
+                summary=complete_summary(),
                 events=({"label": "diagnostic"},),
-                complete=True,
             )
             event_file.write_text("tampered\n", encoding="utf-8")
             self.assertFalse(store.is_complete("case_hash"))
             store.write_case(
                 case_id="case_hash",
                 config={"x": 1},
-                summary={"run_state": "complete"},
+                summary=complete_summary(),
                 events=(),
                 validation={"status": "passed"},
-                complete=True,
             )
             self.assertFalse(event_file.exists())
             self.assertTrue(store.is_complete("case_hash"))
@@ -139,20 +188,18 @@ class ResultTests(unittest.TestCase):
             store.write_case(
                 case_id="case_hash",
                 config={"x": 1},
-                summary={"run_state": "complete"},
+                summary=complete_summary(),
                 events=(),
                 validation={"status": "passed"},
-                complete=True,
             )
             (store.case_dir("case_hash") / "validation.json").unlink()
             self.assertFalse(store.is_complete("case_hash"))
             store.write_case(
                 case_id="case_hash",
                 config={"x": 1},
-                summary={"run_state": "complete"},
+                summary=complete_summary(),
                 events=(),
                 validation={"status": "passed"},
-                complete=True,
             )
             marker = store.case_dir("case_hash") / "COMPLETE"
             marker.write_text("tampered\n", encoding="ascii")
@@ -204,22 +251,66 @@ class RunnerTests(unittest.TestCase):
                 },
             )
 
-    def test_cpu_only_backend_and_forced_gpu_recording(self) -> None:
+    def test_cpu_fallback_and_cupy_gpu_recording(self) -> None:
         cpu = discover_backend(BackendConfig(preference="cpu"))
         self.assertTrue(cpu.cpu_available)
         self.assertEqual(cpu.selected, "cpu")
-        previous = os.environ.get("SPINE_SIM_FORCE_CUDA")
-        os.environ["SPINE_SIM_FORCE_CUDA"] = "1"
-        try:
+
+        with patch(
+            "spine_sim.runtime.backend._detect_cuda",
+            return_value=(True, "cupy", ["cupy_device_count=1"]),
+        ):
             cuda = discover_backend(BackendConfig(preference="auto"))
             self.assertTrue(cuda.cuda_available)
             self.assertEqual(cuda.selected, "cuda")
-            self.assertEqual(cuda.cuda_provider, "environment_override")
-        finally:
-            if previous is None:
-                os.environ.pop("SPINE_SIM_FORCE_CUDA", None)
-            else:
-                os.environ["SPINE_SIM_FORCE_CUDA"] = previous
+            self.assertEqual(cuda.cuda_provider, "cupy")
+
+        with patch(
+            "spine_sim.runtime.backend.importlib.util.find_spec",
+            return_value=None,
+        ) as find_spec:
+            fallback = discover_backend(BackendConfig(preference="auto"))
+        find_spec.assert_called_once_with("cupy")
+        self.assertFalse(fallback.cuda_available)
+        self.assertEqual(fallback.selected, "cpu")
+
+        with patch(
+            "spine_sim.runtime.backend._detect_cuda",
+            return_value=(False, None, ["cupy_probe_failed:RuntimeError"]),
+        ):
+            with self.assertRaises(ConfigurationError):
+                discover_backend(BackendConfig(preference="cuda"))
+
+    def test_environment_report_keeps_capability_without_empty_cpu_check(
+        self,
+    ) -> None:
+        with patch(
+            "spine_sim.runtime.backend._detect_cuda",
+            return_value=(False, None, []),
+        ):
+            report = validate_environment(BackendConfig(preference="cpu"))
+        self.assertTrue(report["backend"]["cpu_available"])
+        self.assertNotIn(
+            "cpu_available",
+            {check["name"] for check in report["checks"]},
+        )
+
+    def test_run_case_does_not_accept_ignored_workers_option(self) -> None:
+        with self.assertRaises(SystemExit):
+            build_parser().parse_args(
+                ["run-case", "campaign.json", "--workers", "2"]
+            )
+
+    def test_worker_override_must_be_positive(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            runner = CampaignRunner(
+                make_campaign(),
+                temporary,
+                discover_backend(BackendConfig(preference="cpu")),
+            )
+            runner.initialize({"test": True})
+            with self.assertRaisesRegex(ConfigurationError, "at least one"):
+                runner.run(workers=0)
 
     def test_formal_summary_campaign_uses_compact_transactional_store(
         self,
@@ -240,7 +331,7 @@ class RunnerTests(unittest.TestCase):
             campaign = CampaignSpec(
                 "formal-summary-test",
                 "m0-test",
-                "spine_sim.examples.fake_module:run_summary_case",
+                "spine_sim.examples.fake_module:run_case",
                 cases,
                 workers=1,
                 mode="formal",

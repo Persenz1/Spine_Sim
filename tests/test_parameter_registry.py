@@ -19,10 +19,8 @@ from spine_sim.parameters import (
 ROOT = Path(__file__).resolve().parents[1]
 TERMINAL_INPUT = (
     ROOT
-    / "docs"
-    / "archive"
-    / "legacy_simulation_evidence"
-    / "manifests"
+    / "provenance"
+    / "legacy_simulation"
     / "terminal_input_selected_designs.json"
 )
 
@@ -183,7 +181,7 @@ def test_terminal_twelve_round_trip_against_archived_manifest() -> None:
             assert getattr(imported.design, field_name) == getattr(
                 generated, field_name
             )
-        assert set(registry.protocol("legacy_terminal_archive").source) < set(
+        assert registry.protocol("legacy_terminal_archive").source == (
             imported.design.source
         )
         assert any(

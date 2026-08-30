@@ -109,7 +109,3 @@ def load_material_profile(
         )
     resolved["profile_hash"] = stable_hash(resolved)
     return resolved
-
-
-def profile_directory() -> Path:
-    return _PROFILE_DIRECTORY

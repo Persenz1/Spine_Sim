@@ -45,6 +45,13 @@ def test_zero_contact_average_is_undefined_and_unknown_force_propagates() -> Non
     assert unknown.P_sum_N is None
     assert unknown.P_avg_N is None
 
+    underflow = compute_array_counts(
+        (SpineMetricInput(True, 0.0, True, True, 1e-200, 1e-200),),
+        gap_tolerance_m=0.0,
+    )
+    assert underflow.n_share_normal is None
+    assert underflow.n_share_tangent_positive is None
+
 
 def test_path_integral_does_not_bridge_invalid_gap_or_fill_it_with_zero() -> None:
     x = np.arange(5, dtype=float)

@@ -4,24 +4,18 @@ from __future__ import annotations
 
 import argparse
 import json
-from dataclasses import asdict
 from pathlib import Path
 from typing import Sequence
 
 from spine_sim.core.config import CampaignSpec
 from spine_sim.io.results import open_result_store
-from spine_sim.runtime.backend import discover_backend
+from spine_sim.runtime.backend import discover_backend, validate_environment
 from spine_sim.runtime.runner import CampaignRunner
-from spine_sim.validation.environment import validate_environment
-
-
-def _load_campaign(path: Path) -> tuple[dict, CampaignSpec]:
-    raw = json.loads(path.read_text(encoding="utf-8"))
-    return raw, CampaignSpec.from_mapping(raw)
 
 
 def _runner(args: argparse.Namespace) -> CampaignRunner:
-    raw, campaign = _load_campaign(args.config)
+    raw = json.loads(args.config.read_text(encoding="utf-8"))
+    campaign = CampaignSpec.from_mapping(raw)
     if args.command == "run-case":
         if args.case_id:
             cases = tuple(case for case in campaign.cases if case.case_id == args.case_id)
@@ -55,9 +49,10 @@ def build_parser() -> argparse.ArgumentParser:
         command = sub.add_parser(name)
         command.add_argument("config", type=Path)
         command.add_argument("--output", type=Path, default=Path("results"))
-        command.add_argument("--workers", type=int)
         if name == "run-case":
             command.add_argument("--case-id")
+        else:
+            command.add_argument("--workers", type=int)
 
     summary = sub.add_parser("summarize")
     summary.add_argument("campaign_dir", type=Path)

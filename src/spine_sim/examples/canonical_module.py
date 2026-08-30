@@ -330,7 +330,6 @@ def run_case(parameters: Mapping[str, Any], context: RunContext) -> CaseOutput:
         ],
         "numerical_state": result.numerical_state.value,
         "model_state": result.model_state.value,
-        "run_state": "complete",
         "residuals": {
             "scaled_equilibrium_norm": result.diagnostics.scaled_residual_norm,
             "range_norm": result.diagnostics.range_residual_norm,

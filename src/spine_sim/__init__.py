@@ -13,12 +13,8 @@ from .array import (
 )
 
 from .core.config import (
-    BackendConfig,
     BaseCaseSpec,
     CampaignSpec,
-    ProjectConfig,
-    TerrainRecipeRef,
-    TerrainRegionSpec,
 )
 from .core.frames import FrameMetadata, Wrench
 from .core.identity import identity, stable_hash
@@ -29,7 +25,6 @@ from .core.states import (
     NumericalState,
     PhysicalState,
     RunState,
-    StateBundle,
 )
 from .geometry import (
     CandidateCursor,
@@ -37,7 +32,6 @@ from .geometry import (
     SpinePath,
     SpinePose,
     SurfaceState,
-    drive_candidate_path,
     query_next_candidate,
 )
 from .single_spine import (
@@ -51,6 +45,7 @@ from .single_spine import (
     commit_single_spine_trial,
     solve_single_spine,
 )
+from .runtime.backend import BackendConfig
 from .terrain.models import RegionSpec, TerrainRecipe, TrackGeometry
 
 __all__ = [
@@ -73,7 +68,6 @@ __all__ = [
     "ModelState",
     "NumericalState",
     "PhysicalState",
-    "ProjectConfig",
     "RegionSpec",
     "RunState",
     "SingleSpineTolerances",
@@ -83,17 +77,13 @@ __all__ = [
     "SpineMaterial",
     "SpinePath",
     "SpinePose",
-    "StateBundle",
     "SurfaceState",
     "SuspensionParameters",
     "TerrainRecipe",
-    "TerrainRecipeRef",
-    "TerrainRegionSpec",
     "TrackGeometry",
     "Wrench",
     "commit_array_trial",
     "commit_single_spine_trial",
-    "drive_candidate_path",
     "identity",
     "query_next_candidate",
     "solve_array_equilibrium",

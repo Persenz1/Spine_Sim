@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
 from math import isfinite, pi
 from typing import Any
 
@@ -27,13 +26,6 @@ _UNITS: dict[str, tuple[str, float]] = {
     "m/s": ("velocity", 1.0),
     "mm/s": ("velocity", 1e-3),
 }
-
-
-@dataclass(frozen=True)
-class Quantity:
-    value_si: float
-    dimension: str
-    input_unit: str
 
 
 def to_si(value: Any, dimension: str, *, name: str = "value") -> float:

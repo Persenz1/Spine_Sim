@@ -78,7 +78,6 @@ _COMMON_REQUIRED = {
     "physical_state",
     "numerical_state",
     "model_state",
-    "run_state",
     "residuals",
     "tolerances",
     "per_spine",

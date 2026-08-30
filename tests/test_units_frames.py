@@ -54,6 +54,14 @@ class FrameTests(unittest.TestCase):
                 rotation_to_parent=((2, 0, 0), (0, 1, 0), (0, 0, 1)),
             )
 
+    def test_wrench_operations_reject_invalid_external_geometry(self) -> None:
+        with self.assertRaises(ConfigurationError):
+            self.wrench.rotate(np.eye(2), new_frame="global")
+        with self.assertRaises(ConfigurationError):
+            self.wrench.move_reference(
+                (0.0, math.nan, 0.0), new_reference_point="P"
+            )
+
 
 if __name__ == "__main__":
     unittest.main()

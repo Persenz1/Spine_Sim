@@ -71,7 +71,7 @@ class Wrench:
 
     @property
     def vector(self) -> NDArray[np.float64]:
-        return np.concatenate((_vector3(self.force_N, "force_N"), _vector3(self.moment_Nm, "moment_Nm")))
+        return np.asarray((*self.force_N, *self.moment_Nm), dtype=np.float64)
 
     @property
     def interaction_label(self) -> str:
@@ -79,8 +79,8 @@ class Wrench:
 
     def rotate(self, rotation_new_from_old: ArrayLike, *, new_frame: str) -> "Wrench":
         rotation = _rotation(rotation_new_from_old)
-        force = rotation @ _vector3(self.force_N, "force_N")
-        moment = rotation @ _vector3(self.moment_Nm, "moment_Nm")
+        force = rotation @ np.asarray(self.force_N, dtype=np.float64)
+        moment = rotation @ np.asarray(self.moment_Nm, dtype=np.float64)
         return Wrench(
             tuple(force),
             tuple(moment),
@@ -99,8 +99,8 @@ class Wrench:
     ) -> "Wrench":
         """Move from O to P using vector P→O, so M_P = M_O + r_PO × F."""
         offset = _vector3(old_reference_from_new_m, "old_reference_from_new_m")
-        force = _vector3(self.force_N, "force_N")
-        moment = _vector3(self.moment_Nm, "moment_Nm") + np.cross(offset, force)
+        force = np.asarray(self.force_N, dtype=np.float64)
+        moment = np.asarray(self.moment_Nm, dtype=np.float64) + np.cross(offset, force)
         return Wrench(
             self.force_N,
             tuple(moment),

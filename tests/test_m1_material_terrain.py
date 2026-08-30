@@ -304,6 +304,38 @@ class MaterialGenerationTests(unittest.TestCase):
             self.assertEqual(manifest["material"], "red_brick")
             self.assertEqual(metadata["valid_fraction"], 1.0)
 
+    def test_load_rejects_noncanonical_height_dtype(self) -> None:
+        terrain = self._generate("red_brick", "fired_brick_standard")
+        with tempfile.TemporaryDirectory() as temporary:
+            artifact = save_terrain(Path(temporary) / "brick.npz", terrain)
+            with np.load(artifact, allow_pickle=False) as archive:
+                payload = {name: archive[name] for name in archive.files}
+            payload["height"] = payload["height"].astype(np.float64)
+            with artifact.open("wb") as stream:
+                np.savez_compressed(stream, **payload)
+
+            with self.assertRaisesRegex(TerrainConfigurationError, "float32"):
+                load_terrain(artifact)
+
+    def test_load_requires_canonical_measurement_semantics(self) -> None:
+        terrain = self._generate("red_brick", "fired_brick_standard")
+        with tempfile.TemporaryDirectory() as temporary:
+            artifact = save_terrain(Path(temporary) / "brick.npz", terrain)
+            with np.load(artifact, allow_pickle=False) as archive:
+                payload = {name: archive[name] for name in archive.files}
+            metadata = json.loads(str(payload["metadata_json"].item()))
+            del metadata["measurement_semantics"]
+            payload["metadata_json"] = np.asarray(
+                json.dumps(metadata, sort_keys=True, ensure_ascii=False)
+            )
+            with artifact.open("wb") as stream:
+                np.savez_compressed(stream, **payload)
+
+            with self.assertRaisesRegex(
+                TerrainConfigurationError, "measurement_semantics"
+            ):
+                load_terrain(artifact)
+
     def test_cache_track_uses_material_mask_and_mask_hash_identity(self) -> None:
         terrain = self._generate("red_brick", "fired_brick_standard")
         with tempfile.TemporaryDirectory() as temporary:

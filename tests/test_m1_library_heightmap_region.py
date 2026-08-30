@@ -13,7 +13,7 @@ import numpy as np
 from spine_sim.geometry import SurfaceState
 from spine_sim.terrain.errors import GeometryOutOfDomainError
 from spine_sim.terrain.errors import TerrainConfigurationError
-from spine_sim.terrain.heightmap import (
+from spine_sim.terrain.measured import (
     FileHeightMapSource,
     register_heightmap_source,
     sample_file_heightmap,
@@ -59,6 +59,10 @@ class TerrainLibraryTests(unittest.TestCase):
             library = TerrainLibrary(temporary)
             generated = library.generate_region(
                 self.recipe, self.region, tile_rows=7
+            )
+            self.assertEqual(
+                generated["measurement_semantics"]["status"],
+                "not_applicable",
             )
             mapped = library.open_region(
                 self.recipe.terrain_recipe_id,
@@ -143,6 +147,32 @@ class TerrainLibraryTests(unittest.TestCase):
             with self.assertRaises(FileNotFoundError):
                 library.open_region(
                     self.recipe.terrain_recipe_id, self.region.region_id
+                )
+
+    def test_track_cache_requires_canonical_measurement_semantics(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            library = TerrainLibrary(temporary)
+            library.generate_region(self.recipe, self.region)
+            metadata_path = (
+                library.region_dir(
+                    self.recipe.terrain_recipe_id,
+                    self.region.region_id,
+                )
+                / "metadata.json"
+            )
+            metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+            del metadata["measurement_semantics"]
+            metadata_path.write_text(json.dumps(metadata), encoding="utf-8")
+
+            with self.assertRaisesRegex(
+                TerrainConfigurationError,
+                "measurement_semantics.*rebuild",
+            ):
+                library.cache_track(
+                    self.recipe,
+                    self.region,
+                    radius_m=50e-6,
+                    y_global_m=0.0,
                 )
 
     def test_track_identity_ignores_binary_unit_arithmetic_noise(self) -> None:
@@ -344,6 +374,11 @@ class CampaignRegionTests(unittest.TestCase):
         design = CampaignDesignSpace()
         report = compute_campaign_region(recipe, design)
         region = report.region
+        self.assertEqual(
+            recipe.terrain_recipe_id,
+            "terrain_recipe_cfc48e797b16d2de07a6",
+        )
+        self.assertEqual(region.region_id, "region_623dc96822e5324f17e9")
         self.assertGreater(region.size_x_m, 0.140)
         self.assertLess(region.size_x_m, 0.151)
         self.assertGreater(region.size_y_m, 0.039)

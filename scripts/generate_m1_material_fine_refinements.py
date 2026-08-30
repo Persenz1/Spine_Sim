@@ -11,7 +11,7 @@ from typing import Any, Sequence
 import numpy as np
 
 from spine_sim.core.identity import stable_hash
-from spine_sim.io.results import atomic_write_json, utc_now
+from spine_sim.io.files import atomic_write_json, utc_now
 from spine_sim.terrain import (
     M1_MODULE_VERSION,
     Terrain,

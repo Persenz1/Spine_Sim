@@ -17,12 +17,13 @@ from typing import Any, Literal, Mapping
 import numpy as np
 from numpy.typing import NDArray
 
+from spine_sim.io.files import sha256_file
+
 from .errors import TerrainConfigurationError
 from .measured import (
     MeasuredSurface,
     load_measured_surface,
     resample_measured_patch,
-    sha256_file,
 )
 
 MaterialBackend = Literal["cpu", "cuda"]

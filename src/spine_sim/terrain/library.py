@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import hashlib
 import json
 import math
 import os
@@ -15,8 +14,14 @@ from typing import TYPE_CHECKING, Any, Literal
 import numpy as np
 from numpy.typing import NDArray
 
-from spine_sim.io.results import atomic_write_bytes, atomic_write_json, atomic_write_npz, utc_now
 from spine_sim.core.identity import stable_hash
+from spine_sim.io.files import (
+    atomic_write_bytes,
+    atomic_write_json,
+    atomic_write_npz,
+    sha256_file,
+    utc_now,
+)
 
 from .envelope import array_sha256, compute_track_geometry
 from .errors import TerrainConfigurationError
@@ -32,14 +37,6 @@ from .random_field import generate_canonical_window, gaussian_kernel
 
 if TYPE_CHECKING:
     from .api import Terrain
-
-
-def sha256_file(path: Path, *, chunk_bytes: int = 8 * 1024 * 1024) -> str:
-    digest = hashlib.sha256()
-    with path.open("rb") as handle:
-        while block := handle.read(chunk_bytes):
-            digest.update(block)
-    return digest.hexdigest()
 
 
 def _close_memmap(array: np.ndarray | None) -> None:
@@ -389,6 +386,15 @@ class TerrainLibrary:
             "coordinate_storage": "origin_spacing_shape_only_no_meshgrid",
             "generation_backend": backend,
             "production_sampling": "canonical_even_indices_stride2_nodal",
+            "measurement_semantics": {
+                "status": "not_applicable",
+                "probe": None,
+                "measurement_tolerance_m": None,
+                "determinate_mask": False,
+                "bounds": False,
+                "surface_model": "single_valued_height_field_2_5d",
+                "general_mesh_scope": "OUT_OF_SCOPE",
+            },
             "created_at_utc": utc_now(),
             **metrics,
         }
@@ -430,12 +436,6 @@ class TerrainLibrary:
         if terrain.height.shape != region.shape:
             raise TerrainConfigurationError(
                 "material terrain shape does not match region"
-            )
-        if terrain.height.dtype != np.float32 or not np.all(
-            np.isfinite(terrain.height)
-        ):
-            raise TerrainConfigurationError(
-                "material terrain must be finite float32"
             )
         self.save_recipe(recipe)
         directory = self.region_dir(recipe.terrain_recipe_id, region.region_id)
@@ -768,6 +768,27 @@ class TerrainLibrary:
         region_metadata = json.loads(
             metadata_path_region.read_text(encoding="utf-8")
         )
+        measurement_semantics = region_metadata.get("measurement_semantics")
+        required_measurement_fields = {
+            "status",
+            "probe",
+            "measurement_tolerance_m",
+            "determinate_mask",
+            "bounds",
+            "surface_model",
+            "general_mesh_scope",
+        }
+        if (
+            not isinstance(measurement_semantics, dict)
+            or not required_measurement_fields <= measurement_semantics.keys()
+            or measurement_semantics.get("status")
+            not in {"not_applicable", "known_probe", "unknown_probe"}
+        ):
+            raise TerrainConfigurationError(
+                "region metadata is missing canonical measurement_semantics; "
+                "rebuild the region"
+            )
+        measurement_status = measurement_semantics["status"]
         height = self.open_region(
             recipe.terrain_recipe_id,
             region.region_id,
@@ -792,24 +813,6 @@ class TerrainLibrary:
             source_valid = mask_map
             valid_mask_sha256 = array_sha256(source_valid)
 
-        material_metadata = region_metadata.get("material_metadata")
-        resolved_mode = (
-            str(material_metadata.get("resolved_mode", ""))
-            if isinstance(material_metadata, dict)
-            else "defined_geometry"
-        )
-        measurement_semantics = region_metadata.get("measurement_semantics")
-        if not isinstance(measurement_semantics, dict):
-            measurement_semantics = (
-                {
-                    "status": "unknown_probe",
-                    "probe": None,
-                    "measurement_tolerance_m": None,
-                    "bounds": None,
-                }
-                if resolved_mode == "measured"
-                else {"status": "not_applicable", "bounds": None}
-            )
         measurement_semantics_hash = stable_hash(
             {
                 "semantics": measurement_semantics,
@@ -841,8 +844,8 @@ class TerrainLibrary:
             )
             optional_maps.append(uncertain_map)
             source_uncertain: NDArray[np.bool_] = uncertain_map
-        elif measurement_semantics.get("status") == "unknown_probe":
-            source_uncertain = np.asarray(source_valid, dtype=np.bool_).copy()
+        elif measurement_status == "unknown_probe":
+            source_uncertain = source_valid.copy()
         else:
             source_uncertain = np.zeros(region.shape, dtype=np.bool_)
 
@@ -892,43 +895,6 @@ class TerrainLibrary:
         )
         metadata_path = path.with_suffix(".json")
         complete_path = path.with_suffix(".complete")
-        for old_metadata_path in path.parent.glob("*.json"):
-            try:
-                old_metadata = json.loads(
-                    old_metadata_path.read_text(encoding="utf-8")
-                )
-            except (OSError, json.JSONDecodeError):
-                continue
-            same_track_request = (
-                old_metadata.get("terrain_recipe_id") == recipe.terrain_recipe_id
-                and old_metadata.get("region_id") == region.region_id
-                and math.isclose(
-                    float(old_metadata.get("radius_m", math.nan)),
-                    radius_m,
-                    rel_tol=0.0,
-                    abs_tol=max(1e-15, abs(radius_m) * 1e-12),
-                )
-                and math.isclose(
-                    float(old_metadata.get("y_global_m", math.nan)),
-                    y_global_m,
-                    rel_tol=0.0,
-                    abs_tol=max(1e-15, region.resolution_y_m * 1e-9),
-                )
-            )
-            if (
-                same_track_request
-                and str(old_metadata.get("schema_version", ""))
-                != TRACK_SCHEMA_VERSION
-                and not complete_path.is_file()
-                and not overwrite
-            ):
-                _close_memmap(height)
-                _close_memmap(mask_map)
-                for mapped in optional_maps:
-                    _close_memmap(mapped)
-                raise TerrainConfigurationError(
-                    "track cache uses an obsolete schema; delete/rebuild track caches"
-                )
         if complete_path.is_file() and not overwrite:
             try:
                 return self.load_track(

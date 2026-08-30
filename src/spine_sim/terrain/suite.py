@@ -9,9 +9,8 @@ from typing import Any, Mapping
 
 import numpy as np
 
-from spine_sim.core.config import BackendConfig
-from spine_sim.io.results import atomic_write_json, utc_now
-from spine_sim.runtime.backend import discover_backend
+from spine_sim.io.files import atomic_write_json, utc_now
+from spine_sim.runtime.backend import BackendConfig, discover_backend
 
 from .errors import TerrainConfigurationError
 from .library import TerrainLibrary

@@ -9,11 +9,7 @@ from typing import Any, Mapping
 import numpy as np
 from numpy.typing import NDArray
 
-from spine_sim.core.identity import (
-    stable_hash,
-    track_id as make_track_id,
-)
-from spine_sim.core.config import TerrainRecipeRef, TerrainRegionSpec
+from spine_sim.core.identity import identity, stable_hash
 
 from .errors import TerrainConfigurationError
 
@@ -188,24 +184,23 @@ class TerrainRecipe:
                 normalized.pop(name)
         return _normalize_float_fields(normalized)
 
-    def to_m0_ref(self) -> TerrainRecipeRef:
-        """Represent this full recipe through M0's frozen recipe-reference schema."""
-
+    @property
+    def terrain_recipe_id(self) -> str:
         parameters = self.normalized()
         parameters.pop("generator_name")
         parameters.pop("generator_version")
         parameters.pop("seed")
         parameters["production_sampling"] = self.production_sampling
-        return TerrainRecipeRef(
-            recipe_name=self.generator_name,
-            recipe_version=self.generator_version,
-            seed=self.seed,
-            parameters=parameters,
+        return identity(
+            "terrain_recipe",
+            {
+                "recipe_name": self.generator_name,
+                "recipe_version": self.generator_version,
+                "seed": self.seed,
+                "parameters": parameters,
+            },
+            module_version=self.generator_version,
         )
-
-    @property
-    def terrain_recipe_id(self) -> str:
-        return self.to_m0_ref().terrain_recipe_id
 
     @property
     def recipe_hash(self) -> str:
@@ -297,20 +292,14 @@ class RegionSpec:
             abs_tol=1e-15,
         ):
             raise TerrainConfigurationError(
-                "M0 TerrainRegionSpec supports one isotropic resolution"
+                "RegionSpec requires one isotropic resolution"
             )
 
     @property
     def shape(self) -> tuple[int, int]:
         return (
-            _grid_intervals(
-                self.size_y_m, self.resolution_y_m, name="size_y_m"
-            )
-            + 1,
-            _grid_intervals(
-                self.size_x_m, self.resolution_x_m, name="size_x_m"
-            )
-            + 1,
+            int(round(self.size_y_m / self.resolution_y_m)) + 1,
+            int(round(self.size_x_m / self.resolution_x_m)) + 1,
         )
 
     @property
@@ -324,24 +313,22 @@ class RegionSpec:
     def normalized(self) -> dict[str, Any]:
         return _normalize_float_fields(asdict(self))
 
-    def to_m0_spec(self) -> TerrainRegionSpec:
-        """Return the frozen M0 region record used to define the region ID."""
-
-        # Grid arithmetic can produce values such as -0.021980000000000003.
-        # Quantize well below the 5 um grid before passing values to M0's exact
-        # canonical hash so equivalent JSON and computed regions share one ID.
-        return TerrainRegionSpec(
-            terrain_recipe_id=self.terrain_recipe_id,
-            origin_x_m=_identity_float(self.origin_x_m),
-            origin_y_m=_identity_float(self.origin_y_m),
-            size_x_m=_identity_float(self.size_x_m),
-            size_y_m=_identity_float(self.size_y_m),
-            resolution_m=_identity_float(self.resolution_x_m),
-        )
-
     @property
     def region_id(self) -> str:
-        return self.to_m0_spec().region_id
+        # Grid arithmetic can produce values such as -0.021980000000000003.
+        # Quantize well below the 5 um grid so equivalent JSON and computed
+        # regions share one ID.
+        return identity(
+            "region",
+            {
+                "terrain_recipe_id": self.terrain_recipe_id,
+                "origin_x_m": _identity_float(self.origin_x_m),
+                "origin_y_m": _identity_float(self.origin_y_m),
+                "size_x_m": _identity_float(self.size_x_m),
+                "size_y_m": _identity_float(self.size_y_m),
+                "resolution_m": _identity_float(self.resolution_x_m),
+            },
+        )
 
     @property
     def expected_npy_payload_bytes(self) -> int:
@@ -553,7 +540,8 @@ class TrackGeometry:
         source_valid_mask_sha256: str,
         measurement_semantics_hash: str,
     ) -> str:
-        return make_track_id(
+        return identity(
+            "track",
             {
                 "terrain_recipe_id": terrain_recipe_id,
                 "region_id": region_id,

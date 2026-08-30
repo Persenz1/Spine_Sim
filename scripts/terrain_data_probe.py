@@ -25,6 +25,8 @@ from urllib.request import Request, urlopen
 import numpy as np
 from numpy.typing import NDArray
 
+from spine_sim.io.files import atomic_write_json, sha256_file
+
 
 LOGGER = logging.getLogger("terrain_data_probe")
 DATASET_ID = "hcgcnm269w"
@@ -105,14 +107,6 @@ class HiroxHeader:
 
 class EvidenceError(RuntimeError):
     """Raised when evidence cannot be downloaded, verified, or parsed."""
-
-
-def sha256_file(path: Path) -> str:
-    digest = hashlib.sha256()
-    with path.open("rb") as stream:
-        for chunk in iter(lambda: stream.read(CHUNK_BYTES), b""):
-            digest.update(chunk)
-    return digest.hexdigest()
 
 
 def _open_url(url: str, *, byte_range: str | None = None) -> BinaryIO:
@@ -332,16 +326,6 @@ def write_preview(
     plt.close(figure)
 
 
-def _atomic_write_json(path: Path, value: dict[str, Any]) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    temporary = path.with_suffix(path.suffix + ".part")
-    temporary.write_text(
-        json.dumps(value, indent=2, sort_keys=True, ensure_ascii=False) + "\n",
-        encoding="utf-8",
-    )
-    os.replace(temporary, path)
-
-
 def _record_download_metadata(
     target_dir: Path,
     filename: str,
@@ -376,7 +360,7 @@ def _record_download_metadata(
         **asdict(expected),
         "download_url": expected.download_url,
     }
-    _atomic_write_json(metadata_path, metadata)
+    atomic_write_json(metadata_path, metadata)
 
 
 def probe_sandpaper(output: Path | None) -> dict[str, Any]:
@@ -436,7 +420,7 @@ def probe_sandpaper(output: Path | None) -> dict[str, Any]:
         "files": probes,
     }
     if output is not None:
-        _atomic_write_json(output, result)
+        atomic_write_json(output, result)
     return result
 
 
@@ -511,7 +495,7 @@ def _parse_command(args: argparse.Namespace) -> dict[str, Any]:
         np.save(npy_output, heights * 1e-6, allow_pickle=False)
         summary["normalized_height_npy_m"] = str(npy_output)
     if args.summary is not None:
-        _atomic_write_json(Path(args.summary).resolve(), summary)
+        atomic_write_json(Path(args.summary).resolve(), summary)
     return summary
 
 

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import asdict, dataclass, field, replace
 import math
-from typing import Any, Mapping, Protocol
+from typing import Any, Mapping
 
 import numpy as np
 from numpy.typing import ArrayLike, NDArray
@@ -20,23 +20,11 @@ from .core.states import (
     PhysicalState,
     SpringBranch,
 )
+from .geometry import CandidateCursor, ContactCandidate
 
 
 Vector3 = NDArray[np.float64]
 Matrix3 = NDArray[np.float64]
-
-
-class ContactCandidateLike(Protocol):
-    candidate_id: str
-    selected_normal: ArrayLike
-    signed_gap_m: float
-    valid: bool
-    near_tie: bool
-    sphere_center_m: ArrayLike
-    support_points_m: Any
-    tangent_basis: Any
-    forward_cap_valid: bool | None
-    rod_clearance: Any
 
 
 def _vector3(value: ArrayLike, name: str) -> Vector3:
@@ -267,7 +255,7 @@ class SpineAcceptedState:
     relative_displacement_m: tuple[float, float, float]
     elastic_displacement_m: tuple[float, float, float]
     slip_displacement_m: tuple[float, float, float]
-    search_cursor: str | int | None
+    search_cursor: CandidateCursor | None
     completed_detach_cycles: int
     reengagement_count: int
     rebound_distance_m: float
@@ -319,6 +307,12 @@ class SpineAcceptedState:
             _vector3(self.contact_point_m, "contact_point_m")
         if self.contact_normal is not None:
             _unit3(self.contact_normal, "contact_normal")
+        if self.search_cursor is not None and not isinstance(
+            self.search_cursor, CandidateCursor
+        ):
+            raise ConfigurationError(
+                "search_cursor must be a CandidateCursor or None"
+            )
         for name in (
             "completed_detach_cycles",
             "reengagement_count",
@@ -340,8 +334,6 @@ class SpineAcceptedState:
     def initial(
         cls, spine_id: str, *, load_parameter: float = 0.0
     ) -> "SpineAcceptedState":
-        if not spine_id:
-            raise ConfigurationError("spine_id cannot be empty")
         return cls(
             spine_id=spine_id,
             physical_state=PhysicalState.SEARCH,
@@ -547,14 +539,14 @@ class SingleSpineTrial:
 
 @dataclass(frozen=True)
 class _MechanicalResponse:
-    force_N: tuple[float, float, float]
-    tangent_N_per_m: tuple[tuple[float, float, float], ...]
+    force_N: Vector3
+    tangent_N_per_m: Matrix3
     normal_force_N: float
-    tangential_force_N: tuple[float, float, float]
+    tangential_force_N: Vector3
     static_required_margin_N: float
     current_friction_margin_N: float
-    elastic_displacement_m: tuple[float, float, float]
-    slip_displacement_m: tuple[float, float, float]
+    elastic_displacement_m: Vector3
+    slip_displacement_m: Vector3
     contact_mode: PhysicalState
     spring: SpringSolution
     balance_residual_m: float
@@ -564,8 +556,8 @@ def _beam_compliance(
     geometry: SpineGeometry,
     material: SpineMaterial,
     suspension: SuspensionParameters,
+    axis: Vector3,
 ) -> Matrix3:
-    axis = _unit3(geometry.axis_root_to_tip, "axis_root_to_tip")
     diameter = float(geometry.diameter_m)
     length = float(geometry.length_m)
     area = math.pi * diameter**2 / 4.0
@@ -582,9 +574,8 @@ def _beam_compliance(
     projector = np.outer(axis, axis)
     compliance = axial * projector + transverse * (np.eye(3) - projector)
     if suspension.additional_compliance_m_per_N is not None:
-        compliance = compliance + _matrix3(
-            suspension.additional_compliance_m_per_N,
-            "additional_compliance_m_per_N",
+        compliance = compliance + np.asarray(
+            suspension.additional_compliance_m_per_N, dtype=np.float64
         )
     if float(np.linalg.eigvalsh(compliance).min()) <= 0.0:
         raise ConfigurationError("combined beam/suspension compliance must be positive definite")
@@ -743,21 +734,18 @@ def _spring_consistent(
 
 
 def _mechanical_response(
-    geometry: SpineGeometry,
-    material: SpineMaterial,
+    displacement: Vector3,
+    velocity: Vector3,
+    normal: Vector3,
+    base_compliance: Matrix3,
+    compression_direction: Vector3,
     friction: FrictionParameters,
     suspension: SuspensionParameters,
     accepted: SpineAcceptedState,
-    motion: BaseMotion,
-    normal: Vector3,
     tolerances: SingleSpineTolerances,
     *,
     force_slip: bool = False,
 ) -> _MechanicalResponse | None:
-    base_compliance = _beam_compliance(geometry, material, suspension)
-    compression_direction = -_unit3(
-        geometry.axis_root_to_tip, "axis_root_to_tip"
-    )
     if suspension.axial_spring_stiffness_N_per_m is None:
         branches = (SpringBranch.RIGID,)
     else:
@@ -777,13 +765,6 @@ def _mechanical_response(
         accepted.contact_submode
         if accepted.physical_state is PhysicalState.HARDSTOP
         else accepted.physical_state
-    )
-    displacement = _vector3(
-        motion.relative_displacement_m, "relative_displacement_m"
-    )
-    velocity = _vector3(
-        motion.relative_tangential_velocity_m_per_s,
-        "relative_tangential_velocity_m_per_s",
     )
     for branch in branches:
         compliance, offset = _branch_compliance(
@@ -823,14 +804,14 @@ def _mechanical_response(
             np.linalg.norm(compliance @ force + offset + slip - displacement)
         )
         return _MechanicalResponse(
-            force_N=_tuple3(force),
-            tangent_N_per_m=_tuple_matrix3(tangent_matrix),
+            force_N=force,
+            tangent_N_per_m=tangent_matrix,
             normal_force_N=normal_force,
-            tangential_force_N=_tuple3(tangential_force),
+            tangential_force_N=tangential_force,
             static_required_margin_N=required_margin,
             current_friction_margin_N=current_margin,
-            elastic_displacement_m=_tuple3(elastic),
-            slip_displacement_m=_tuple3(slip),
+            elastic_displacement_m=elastic,
+            slip_displacement_m=slip,
             contact_mode=contact_mode,
             spring=spring,
             balance_residual_m=balance_residual,
@@ -838,20 +819,13 @@ def _mechanical_response(
     return None
 
 
-def _candidate_effective_radius_m(
-    candidate: ContactCandidateLike, tip_radius_m: float
+def _equivalent_radius_m(
+    candidate: ContactCandidate, tip_radius_m: float
 ) -> float | None:
-    direct = getattr(candidate, "effective_radius_m", None)
-    if direct is not None:
-        value = float(direct)
-        return value if math.isfinite(value) and value > 0.0 else None
-    surface_radius = getattr(candidate, "curvature_radius_m", None)
+    surface_radius = candidate.curvature_radius_m
     if surface_radius is None:
         return None
-    value = float(surface_radius)
-    if not math.isfinite(value) or value <= 0.0:
-        return None
-    return 1.0 / (1.0 / tip_radius_m + 1.0 / value)
+    return 1.0 / (1.0 / tip_radius_m + 1.0 / surface_radius)
 
 
 def _assessment_unclosed(
@@ -895,7 +869,9 @@ def _has_sources(material: SpineMaterial, names: tuple[str, ...]) -> bool:
 def _capacity_assessments(
     geometry: SpineGeometry,
     material: SpineMaterial,
-    candidate: ContactCandidateLike,
+    candidate: ContactCandidate,
+    axis: Vector3,
+    root_position_m: Vector3,
     force_N: Vector3,
     normal_force_N: float,
     tangential_force_N: Vector3,
@@ -913,10 +889,7 @@ def _capacity_assessments(
         "surface_edge_tension_Pa": None,
         "fracture_force_capacity_N": None,
     }
-    axis = _unit3(geometry.axis_root_to_tip, "axis_root_to_tip")
-    lever = contact_point_m - _vector3(
-        geometry.root_position_m, "root_position_m"
-    )
+    lever = contact_point_m - root_position_m
     moment = np.cross(lever, force_N)
     axial_force = float(np.dot(force_N, axis))
     shear_force = float(np.linalg.norm(force_N - axial_force * axis))
@@ -981,7 +954,7 @@ def _capacity_assessments(
             "surface", "surface", "edge_tension"
         )
     else:
-        equivalent_radius = _candidate_effective_radius_m(
+        equivalent_radius = _equivalent_radius_m(
             candidate, geometry.tip_radius_m
         )
         needed = (
@@ -1149,8 +1122,8 @@ def _failure_from_assessments(
         and controlling.failure_mode == "catastrophic_disconnect"
     )
     return FailurePayload(
-        failure_object=str(controlling.failure_object),
-        failure_mode=str(controlling.failure_mode),
+        failure_object=controlling.failure_object,
+        failure_mode=controlling.failure_mode,
         criterion=f"{controlling.name}_utilization>=1",
         demand=float(controlling.demand),
         capacity=float(controlling.capacity),
@@ -1186,18 +1159,19 @@ def _new_event(
 
 def _contact_point(
     geometry: SpineGeometry,
-    candidate: ContactCandidateLike,
+    candidate: ContactCandidate,
     normal: Vector3,
 ) -> Vector3:
-    center = _vector3(candidate.sphere_center_m, "candidate.sphere_center_m")
-    return center - geometry.tip_radius_m * normal
+    return candidate.sphere_center_m - geometry.tip_radius_m * normal
 
 
 def _root_wrench(
-    geometry: SpineGeometry, contact_point_m: Vector3, force_N: Vector3
+    geometry: SpineGeometry,
+    root_position_m: Vector3,
+    contact_point_m: Vector3,
+    force_N: Vector3,
 ) -> Wrench:
-    root = _vector3(geometry.root_position_m, "root_position_m")
-    moment = np.cross(contact_point_m - root, force_N)
+    moment = np.cross(contact_point_m - root_position_m, force_N)
     return Wrench(
         force_N=_tuple3(force_N),
         moment_Nm=_tuple3(moment),
@@ -1256,36 +1230,30 @@ def _zero_result(
 
 
 def _candidate_gate(
-    candidate: ContactCandidateLike,
-) -> tuple[bool, str | None, ModelState]:
-    if bool(candidate.near_tie):
-        return False, "near_tie_requires_resolved_normal_model", ModelState.PARAMETER_UNCLOSED
+    candidate: ContactCandidate,
+) -> tuple[Vector3 | None, str | None, ModelState]:
+    if candidate.near_tie:
+        return None, "near_tie_requires_resolved_normal_model", ModelState.PARAMETER_UNCLOSED
     selected_normal = candidate.selected_normal
     if selected_normal is None:
-        return False, "contact_normal_unclosed", ModelState.PARAMETER_UNCLOSED
-    normal = np.asarray(selected_normal, dtype=np.float64)
-    if (
-        normal.shape != (3,)
-        or not np.all(np.isfinite(normal))
-        or float(np.linalg.norm(normal)) <= 0.0
-    ):
-        return False, "contact_normal_invalid", ModelState.CLOSED
+        return None, "contact_normal_unclosed", ModelState.PARAMETER_UNCLOSED
+    normal_norm = float(np.linalg.norm(selected_normal))
+    if normal_norm <= 0.0:
+        return None, "contact_normal_invalid", ModelState.CLOSED
+    normal = selected_normal / normal_norm
     forward = candidate.forward_cap_valid
     if forward is None:
-        return False, "forward_cap_unclosed", ModelState.PARAMETER_UNCLOSED
-    if not bool(forward):
-        return False, "forward_cap_rejected", ModelState.CLOSED
-    clearance = candidate.rod_clearance
-    if clearance is None:
-        return False, "rod_clearance_unclosed", ModelState.PARAMETER_UNCLOSED
-    collision = getattr(clearance, "collision", None)
+        return None, "forward_cap_unclosed", ModelState.PARAMETER_UNCLOSED
+    if not forward:
+        return None, "forward_cap_rejected", ModelState.CLOSED
+    collision = candidate.rod_clearance.collision
     if collision is None:
-        return False, "rod_clearance_unclosed", ModelState.PARAMETER_UNCLOSED
-    if bool(collision):
-        return False, "rod_collision", ModelState.CLOSED
-    if not bool(candidate.valid):
-        return False, "candidate_invalid", ModelState.CLOSED
-    return True, None, ModelState.CLOSED
+        return None, "rod_clearance_unclosed", ModelState.PARAMETER_UNCLOSED
+    if collision:
+        return None, "rod_collision", ModelState.CLOSED
+    if not candidate.valid:
+        return None, "candidate_invalid", ModelState.CLOSED
+    return normal, None, ModelState.CLOSED
 
 
 def _rejected_search_trial(
@@ -1294,7 +1262,7 @@ def _rejected_search_trial(
     motion: BaseMotion,
     reason: str,
     model_state: ModelState,
-    search_cursor: str | int | None,
+    search_cursor: CandidateCursor | None,
 ) -> SingleSpineTrial:
     event = _new_event(
         accepted,
@@ -1496,14 +1464,15 @@ def _detachment_trial(
 
 
 def _interpolate_motion(
-    accepted: SpineAcceptedState, target: BaseMotion, fraction: float
+    accepted: SpineAcceptedState,
+    target: BaseMotion,
+    start_displacement_m: Vector3,
+    target_displacement_m: Vector3,
+    fraction: float,
 ) -> BaseMotion:
-    start = _vector3(
-        accepted.relative_displacement_m,
-        "accepted.relative_displacement_m",
+    displacement = start_displacement_m + fraction * (
+        target_displacement_m - start_displacement_m
     )
-    end = _vector3(target.relative_displacement_m, "relative_displacement_m")
-    displacement = start + fraction * (end - start)
     load_parameter = accepted.last_load_parameter + fraction * (
         target.load_parameter - accepted.last_load_parameter
     )
@@ -1522,35 +1491,16 @@ def _interpolate_motion(
 def _event_values(
     geometry: SpineGeometry,
     material: SpineMaterial,
-    friction: FrictionParameters,
     suspension: SuspensionParameters,
-    accepted: SpineAcceptedState,
-    motion: BaseMotion,
-    candidate: ContactCandidateLike,
-    normal: Vector3,
+    candidate: ContactCandidate,
+    axis: Vector3,
+    root_position_m: Vector3,
+    compression_direction: Vector3,
     contact_point: Vector3,
     tolerances: SingleSpineTolerances,
-) -> tuple[dict[str, float], _MechanicalResponse | None]:
-    mechanical = _mechanical_response(
-        geometry,
-        material,
-        friction,
-        suspension,
-        accepted,
-        motion,
-        normal,
-        tolerances,
-    )
-    if mechanical is None:
-        return {}, None
-    force = _vector3(mechanical.force_N, "mechanical.force_N")
-    tangent = _vector3(
-        mechanical.tangential_force_N, "mechanical.tangential_force_N"
-    )
-    compression_direction = -_unit3(
-        geometry.axis_root_to_tip, "axis_root_to_tip"
-    )
-    axial_load = float(np.dot(force, compression_direction))
+    mechanical: _MechanicalResponse,
+) -> dict[str, float]:
+    axial_load = float(np.dot(mechanical.force_N, compression_direction))
     values = {
         "normal": mechanical.normal_force_N - tolerances.force_N,
         "friction": mechanical.static_required_margin_N,
@@ -1564,9 +1514,11 @@ def _event_values(
         geometry,
         material,
         candidate,
-        force,
+        axis,
+        root_position_m,
+        mechanical.force_N,
         mechanical.normal_force_N,
-        tangent,
+        mechanical.tangential_force_N,
         contact_point,
     )
     for name, assessment in assessments.items():
@@ -1574,7 +1526,7 @@ def _event_values(
             values[f"capacity:{name}"] = (
                 assessment.margin - tolerances.capacity_relative
             )
-    return values, mechanical
+    return values
 
 
 def _locate_earliest_event(
@@ -1584,38 +1536,58 @@ def _locate_earliest_event(
     suspension: SuspensionParameters,
     accepted: SpineAcceptedState,
     target: BaseMotion,
-    candidate: ContactCandidateLike,
+    candidate: ContactCandidate,
     normal: Vector3,
+    axis: Vector3,
+    root_position_m: Vector3,
+    compression_direction: Vector3,
     contact_point: Vector3,
+    base_compliance: Matrix3,
+    start_displacement_m: Vector3,
+    target_displacement_m: Vector3,
+    tangential_velocity_m_per_s: Vector3,
+    target_mechanical: _MechanicalResponse | None,
     tolerances: SingleSpineTolerances,
 ) -> tuple[str, float, BaseMotion] | None:
-    start_motion = _interpolate_motion(accepted, target, 0.0)
-    start_values, start_mechanical = _event_values(
-        geometry,
-        material,
-        friction,
-        suspension,
-        accepted,
-        start_motion,
-        candidate,
-        normal,
-        contact_point,
-        tolerances,
-    )
-    end_values, end_mechanical = _event_values(
-        geometry,
-        material,
-        friction,
-        suspension,
-        accepted,
-        target,
-        candidate,
-        normal,
-        contact_point,
-        tolerances,
-    )
-    if start_mechanical is None or end_mechanical is None:
+    if target_mechanical is None:
         return None
+    start_mechanical = _mechanical_response(
+        start_displacement_m,
+        tangential_velocity_m_per_s,
+        normal,
+        base_compliance,
+        compression_direction,
+        friction,
+        suspension,
+        accepted,
+        tolerances,
+    )
+    if start_mechanical is None:
+        return None
+    start_values = _event_values(
+        geometry,
+        material,
+        suspension,
+        candidate,
+        axis,
+        root_position_m,
+        compression_direction,
+        contact_point,
+        tolerances,
+        start_mechanical,
+    )
+    end_values = _event_values(
+        geometry,
+        material,
+        suspension,
+        candidate,
+        axis,
+        root_position_m,
+        compression_direction,
+        contact_point,
+        tolerances,
+        target_mechanical,
+    )
     active_keys: list[str] = ["normal"]
     previous_mode = (
         accepted.contact_submode
@@ -1648,18 +1620,35 @@ def _locate_earliest_event(
         high = 1.0
         while high - low > tolerances.event_fraction:
             middle = 0.5 * (low + high)
-            middle_motion = _interpolate_motion(accepted, target, middle)
-            middle_values, _ = _event_values(
-                geometry,
-                material,
+            middle_displacement = start_displacement_m + middle * (
+                target_displacement_m - start_displacement_m
+            )
+            middle_mechanical = _mechanical_response(
+                middle_displacement,
+                tangential_velocity_m_per_s,
+                normal,
+                base_compliance,
+                compression_direction,
                 friction,
                 suspension,
                 accepted,
-                middle_motion,
-                candidate,
-                normal,
-                contact_point,
                 tolerances,
+            )
+            middle_values = (
+                {}
+                if middle_mechanical is None
+                else _event_values(
+                    geometry,
+                    material,
+                    suspension,
+                    candidate,
+                    axis,
+                    root_position_m,
+                    compression_direction,
+                    contact_point,
+                    tolerances,
+                    middle_mechanical,
+                )
             )
             middle_value = middle_values.get(key, math.nan)
             if not math.isfinite(middle_value) or middle_value <= 0.0:
@@ -1670,7 +1659,13 @@ def _locate_earliest_event(
     if not crossings:
         return None
     fraction, key = min(crossings)
-    return key, fraction, _interpolate_motion(accepted, target, fraction)
+    return key, fraction, _interpolate_motion(
+        accepted,
+        target,
+        start_displacement_m,
+        target_displacement_m,
+        fraction,
+    )
 
 
 def solve_single_spine(
@@ -1680,7 +1675,7 @@ def solve_single_spine(
     suspension: SuspensionParameters,
     accepted: SpineAcceptedState,
     motion: BaseMotion,
-    candidate: ContactCandidateLike | None,
+    candidate: ContactCandidate | None,
     *,
     tolerances: SingleSpineTolerances,
 ) -> SingleSpineTrial:
@@ -1688,8 +1683,16 @@ def solve_single_spine(
 
     if accepted.spine_id != geometry.spine_id:
         raise ConfigurationError("accepted state and geometry spine_id do not match")
-    if accepted.physical_state is PhysicalState.CONTACT:
-        raise ConfigurationError("CONTACT is a trial-only state and cannot be accepted")
+    axis = np.asarray(geometry.axis_root_to_tip, dtype=np.float64)
+    axis = axis / np.linalg.norm(axis)
+    root_position = np.asarray(geometry.root_position_m, dtype=np.float64)
+    target_displacement = np.asarray(
+        motion.relative_displacement_m, dtype=np.float64
+    )
+    tangential_velocity = np.asarray(
+        motion.relative_tangential_velocity_m_per_s,
+        dtype=np.float64,
+    )
     if accepted.physical_state is PhysicalState.FAILED:
         result = _zero_result(
             geometry,
@@ -1733,10 +1736,8 @@ def solve_single_spine(
             geometry, accepted, motion, "contact_candidate_missing"
         )
 
-    candidate_id = str(candidate.candidate_id)
-    gap = float(candidate.signed_gap_m)
-    if not candidate_id or not math.isfinite(gap):
-        raise ConfigurationError("candidate id and signed gap must be valid")
+    candidate_id = candidate.candidate_id
+    gap = candidate.signed_gap_m
     if (
         accepted.physical_state is not PhysicalState.SEARCH
         and accepted.candidate_id is not None
@@ -1773,37 +1774,44 @@ def solve_single_spine(
                 motion,
                 "candidate_penetration",
                 ModelState.CLOSED,
-                getattr(candidate, "search_cursor", accepted.search_cursor),
+                candidate.search_cursor,
             )
         return _detachment_trial(
             geometry, accepted, motion, "candidate_penetration"
         )
-    gate_valid, gate_reason, gate_model_state = _candidate_gate(candidate)
-    if not gate_valid:
+    normal, gate_reason, gate_model_state = _candidate_gate(candidate)
+    if normal is None:
         if accepted.physical_state is PhysicalState.SEARCH:
             return _rejected_search_trial(
                 geometry,
                 accepted,
                 motion,
-                str(gate_reason),
+                gate_reason,
                 gate_model_state,
-                getattr(candidate, "search_cursor", accepted.search_cursor),
+                candidate.search_cursor,
             )
         return _detachment_trial(
-            geometry, accepted, motion, str(gate_reason)
+            geometry, accepted, motion, gate_reason
         )
 
-    normal = _unit3(candidate.selected_normal, "candidate.selected_normal")
+    compression_direction = -axis
+    base_compliance = _beam_compliance(
+        geometry, material, suspension, axis
+    )
+    start_displacement = np.asarray(
+        accepted.relative_displacement_m, dtype=np.float64
+    )
     contact_point = _contact_point(geometry, candidate, normal)
     located_event: tuple[str, float] | None = None
     mechanical = _mechanical_response(
-        geometry,
-        material,
+        target_displacement,
+        tangential_velocity,
+        normal,
+        base_compliance,
+        compression_direction,
         friction,
         suspension,
         accepted,
-        motion,
-        normal,
         tolerances,
     )
     located = _locate_earliest_event(
@@ -1815,7 +1823,15 @@ def solve_single_spine(
         motion,
         candidate,
         normal,
+        axis,
+        root_position,
+        compression_direction,
         contact_point,
+        base_compliance,
+        start_displacement,
+        target_displacement,
+        tangential_velocity,
+        mechanical,
         tolerances,
     )
     if located is not None:
@@ -1825,18 +1841,31 @@ def solve_single_spine(
                 1.0,
                 event_fraction + 64.0 * tolerances.event_fraction,
             )
-            motion = _interpolate_motion(accepted, motion, post_fraction)
+            evaluated_displacement = start_displacement + post_fraction * (
+                target_displacement - start_displacement
+            )
+            motion = _interpolate_motion(
+                accepted,
+                motion,
+                start_displacement,
+                target_displacement,
+                post_fraction,
+            )
         else:
+            evaluated_displacement = start_displacement + event_fraction * (
+                target_displacement - start_displacement
+            )
             motion = event_motion
         located_event = (event_key, event_fraction)
         mechanical = _mechanical_response(
-            geometry,
-            material,
+            evaluated_displacement,
+            tangential_velocity,
+            normal,
+            base_compliance,
+            compression_direction,
             friction,
             suspension,
             accepted,
-            motion,
-            normal,
             tolerances,
             force_slip=event_key == "friction",
         )
@@ -1861,7 +1890,7 @@ def solve_single_spine(
                 motion,
                 "nonpositive_normal_reaction",
                 ModelState.CLOSED,
-                getattr(candidate, "search_cursor", accepted.search_cursor),
+                candidate.search_cursor,
             )
         return _detachment_trial(
             geometry, accepted, motion, "nonpositive_normal_reaction"
@@ -1984,14 +2013,14 @@ def solve_single_spine(
             )
             current = PhysicalState.HARDSTOP
 
-    force = _vector3(mechanical.force_N, "mechanical.force_N")
-    tangential_force = _vector3(
-        mechanical.tangential_force_N, "mechanical.tangential_force_N"
-    )
+    force = mechanical.force_N
+    tangential_force = mechanical.tangential_force_N
     assessments, diagnostics = _capacity_assessments(
         geometry,
         material,
         candidate,
+        axis,
+        root_position,
         force,
         mechanical.normal_force_N,
         tangential_force,
@@ -2002,9 +2031,7 @@ def solve_single_spine(
         assessments, material, tolerances
     )
     force_before_failure = force.copy()
-    tangent_matrix = _matrix3(
-        mechanical.tangent_N_per_m, "mechanical.tangent_N_per_m"
-    )
+    tangent_matrix = mechanical.tangent_N_per_m
     if failure is not None:
         to_state = (
             PhysicalState.FAILED
@@ -2030,9 +2057,6 @@ def solve_single_spine(
         else:
             model_state = ModelState.OUT_OF_SCOPE
 
-    compression_direction = -_unit3(
-        geometry.axis_root_to_tip, "axis_root_to_tip"
-    )
     axial_load = float(np.dot(force_before_failure, compression_direction))
     stiffness = suspension.axial_spring_stiffness_N_per_m
     travel = suspension.axial_spring_travel_m
@@ -2058,24 +2082,21 @@ def solve_single_spine(
             for name, assessment in assessments.items()
         }
     )
+    tangential_force_norm = float(
+        np.linalg.norm(mechanical.tangential_force_N)
+    )
     complementarity = {
         "penetration_m": max(-gap, 0.0),
         "negative_normal_N": max(-mechanical.normal_force_N, 0.0),
         "gap_force_Nm": abs(gap * mechanical.normal_force_N),
         "static_friction_cone_N": max(
-            float(np.linalg.norm(_vector3(
-                mechanical.tangential_force_N,
-                "mechanical.tangential_force_N",
-            )))
+            tangential_force_norm
             - friction.static_coefficient * mechanical.normal_force_N,
             0.0,
         ),
         "kinetic_slip_cone_N": (
             abs(
-                float(np.linalg.norm(_vector3(
-                    mechanical.tangential_force_N,
-                    "mechanical.tangential_force_N",
-                )))
+                tangential_force_norm
                 - friction.kinetic_coefficient * mechanical.normal_force_N
             )
             if mechanical.contact_mode is PhysicalState.SLIP
@@ -2109,7 +2130,11 @@ def solve_single_spine(
         numerical_state is NumericalState.CONVERGED
         and not stopped_at_model_limit
     )
-    result_wrench = _root_wrench(geometry, contact_point, force)
+    result_wrench = _root_wrench(
+        geometry, root_position, contact_point, force
+    )
+    elastic_displacement = _tuple3(mechanical.elastic_displacement_m)
+    slip_displacement = _tuple3(mechanical.slip_displacement_m)
     result = SingleSpineResult(
         wall_force_N=_tuple3(force),
         root_wrench=result_wrench,
@@ -2124,8 +2149,8 @@ def solve_single_spine(
             else mechanical.normal_force_N
         ),
         tangential_force_N=_tuple3(tangential_force),
-        elastic_displacement_m=mechanical.elastic_displacement_m,
-        slip_displacement_m=mechanical.slip_displacement_m,
+        elastic_displacement_m=elastic_displacement,
+        slip_displacement_m=slip_displacement,
         model_state=model_state,
         numerical_state=numerical_state,
         margins=margins,
@@ -2155,9 +2180,9 @@ def solve_single_spine(
             None if current is PhysicalState.FAILED else _tuple3(normal)
         ),
         relative_displacement_m=motion.relative_displacement_m,
-        elastic_displacement_m=mechanical.elastic_displacement_m,
-        slip_displacement_m=mechanical.slip_displacement_m,
-        search_cursor=getattr(candidate, "search_cursor", accepted.search_cursor),
+        elastic_displacement_m=elastic_displacement,
+        slip_displacement_m=slip_displacement,
+        search_cursor=candidate.search_cursor,
         reengagement_count=(
             accepted.reengagement_count + 1
             if reengaged
@@ -2197,15 +2222,12 @@ def commit_single_spine_trial(
         raise ConfigurationError("noncommittable single-spine trial cannot be committed")
     if trial.result.numerical_state is not NumericalState.CONVERGED:
         raise ConfigurationError("nonconverged single-spine trial cannot be committed")
-    if trial.proposed_state.physical_state is PhysicalState.CONTACT:
-        raise ConfigurationError("CONTACT cannot be committed as a resident state")
     return trial.proposed_state
 
 
 __all__ = [
     "BaseMotion",
     "CapacityAssessment",
-    "ContactCandidateLike",
     "FailurePayload",
     "FrictionParameters",
     "SingleSpineResult",

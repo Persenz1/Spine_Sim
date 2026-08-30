@@ -9,7 +9,7 @@
       },
       "evidence_status": "frozen_design_semantics",
       "source": [
-        "docs/archive/legacy_requirements/爪刺耦合仿真器_工程背景_理论边界与实现指导_执行版.md:106-108"
+        "git:50a1a3bfc011775910a3ffca535a739609927b52:docs/archive/legacy_requirements/爪刺耦合仿真器_工程背景_理论边界与实现指导_执行版.md:106-108"
       ]
     },
     "unit_frame": {
@@ -20,7 +20,7 @@
       },
       "evidence_status": "frozen_design_semantics",
       "source": [
-        "docs/archive/legacy_requirements/爪刺耦合仿真器_工程背景_理论边界与实现指导_执行版.md:110-116"
+        "git:50a1a3bfc011775910a3ffca535a739609927b52:docs/archive/legacy_requirements/爪刺耦合仿真器_工程背景_理论边界与实现指导_执行版.md:110-116"
       ]
     },
     "spine_axis": {
@@ -31,8 +31,8 @@
       },
       "evidence_status": "frozen_design_semantics",
       "source": [
-        "docs/engineering/工程仿真参数继承表.md:39-42",
-        "docs/archive/legacy_requirements/爪刺耦合仿真器_工程背景_理论边界与实现指导_执行版.md:118-122"
+        "git:9667a1430936a39cf72a885d738a72961c73ced3:docs/engineering/工程仿真参数继承表.md:39-42",
+        "git:50a1a3bfc011775910a3ffca535a739609927b52:docs/archive/legacy_requirements/爪刺耦合仿真器_工程背景_理论边界与实现指导_执行版.md:118-122"
       ]
     },
     "wrench_metadata": {
@@ -45,7 +45,7 @@
       ],
       "evidence_status": "frozen_design_semantics",
       "source": [
-        "docs/archive/legacy_requirements/爪刺耦合仿真器_工程背景_理论边界与实现指导_执行版.md:124-139"
+        "git:50a1a3bfc011775910a3ffca535a739609927b52:docs/archive/legacy_requirements/爪刺耦合仿真器_工程背景_理论边界与实现指导_执行版.md:124-139"
       ]
     }
   },
@@ -54,21 +54,21 @@
       "value": [5e-05, 0.0001],
       "evidence_status": "candidate_design_value",
       "source": [
-        "docs/archive/legacy_requirements/爪刺耦合仿真器_工程背景_理论边界与实现指导_执行版.md:141-144"
+        "git:50a1a3bfc011775910a3ffca535a739609927b52:docs/archive/legacy_requirements/爪刺耦合仿真器_工程背景_理论边界与实现指导_执行版.md:141-144"
       ]
     },
     "rod_diameter_m": {
       "value": [0.0006, 0.0008],
       "evidence_status": "candidate_design_value",
       "source": [
-        "docs/archive/legacy_requirements/爪刺耦合仿真器_工程背景_理论边界与实现指导_执行版.md:143-145"
+        "git:50a1a3bfc011775910a3ffca535a739609927b52:docs/archive/legacy_requirements/爪刺耦合仿真器_工程背景_理论边界与实现指导_执行版.md:143-145"
       ]
     },
     "fixed_length_m": {
       "value": 0.004,
       "evidence_status": "candidate_design_value",
       "source": [
-        "docs/archive/legacy_requirements/爪刺耦合仿真器_工程背景_理论边界与实现指导_执行版.md:145"
+        "git:50a1a3bfc011775910a3ffca535a739609927b52:docs/archive/legacy_requirements/爪刺耦合仿真器_工程背景_理论边界与实现指导_执行版.md:145"
       ]
     },
     "fixed_pitch_rad": {
@@ -80,15 +80,15 @@
       ],
       "evidence_status": "candidate_design_value",
       "source": [
-        "docs/engineering/工程仿真参数继承表.md:45",
-        "docs/archive/legacy_requirements/爪刺耦合仿真器_工程背景_理论边界与实现指导_执行版.md:146"
+        "git:9667a1430936a39cf72a885d738a72961c73ced3:docs/engineering/工程仿真参数继承表.md:45",
+        "git:50a1a3bfc011775910a3ffca535a739609927b52:docs/archive/legacy_requirements/爪刺耦合仿真器_工程背景_理论边界与实现指导_执行版.md:146"
       ]
     },
     "yaw_rad": {
       "value": [0.0],
       "evidence_status": "candidate_design_value",
       "source": [
-        "docs/archive/legacy_requirements/爪刺耦合仿真器_工程背景_理论边界与实现指导_执行版.md:147"
+        "git:50a1a3bfc011775910a3ffca535a739609927b52:docs/archive/legacy_requirements/爪刺耦合仿真器_工程背景_理论边界与实现指导_执行版.md:147"
       ]
     },
     "gradient_pitch_endpoints_rad": {
@@ -99,43 +99,43 @@
       },
       "evidence_status": "candidate_design_value",
       "source": [
-        "docs/engineering/工程仿真参数继承表.md:50-52",
-        "docs/archive/legacy_requirements/爪刺耦合仿真器_工程背景_理论边界与实现指导_执行版.md:164-167"
+        "git:9667a1430936a39cf72a885d738a72961c73ced3:docs/engineering/工程仿真参数继承表.md:50-52",
+        "git:50a1a3bfc011775910a3ffca535a739609927b52:docs/archive/legacy_requirements/爪刺耦合仿真器_工程背景_理论边界与实现指导_执行版.md:164-167"
       ]
     },
     "nx": {
       "value": [2, 3, 4, 5, 6],
       "evidence_status": "candidate_design_value",
       "source": [
-        "docs/archive/legacy_requirements/爪刺耦合仿真器_工程背景_理论边界与实现指导_执行版.md:152-162"
+        "git:50a1a3bfc011775910a3ffca535a739609927b52:docs/archive/legacy_requirements/爪刺耦合仿真器_工程背景_理论边界与实现指导_执行版.md:152-162"
       ]
     },
     "ny": {
       "value": [2, 3, 4, 5, 6],
       "evidence_status": "candidate_design_value",
       "source": [
-        "docs/archive/legacy_requirements/爪刺耦合仿真器_工程背景_理论边界与实现指导_执行版.md:152-162"
+        "git:50a1a3bfc011775910a3ffca535a739609927b52:docs/archive/legacy_requirements/爪刺耦合仿真器_工程背景_理论边界与实现指导_执行版.md:152-162"
       ]
     },
     "spacing_m": {
       "value": [0.004, 0.005, 0.006],
       "evidence_status": "candidate_design_value",
       "source": [
-        "docs/archive/legacy_requirements/爪刺耦合仿真器_工程背景_理论边界与实现指导_执行版.md:154-162"
+        "git:50a1a3bfc011775910a3ffca535a739609927b52:docs/archive/legacy_requirements/爪刺耦合仿真器_工程背景_理论边界与实现指导_执行版.md:154-162"
       ]
     },
     "spring_stiffness_range_N_per_m": {
       "value": [100.0, 2000.0],
       "evidence_status": "candidate_design_value",
       "source": [
-        "docs/archive/legacy_requirements/爪刺耦合仿真器_工程背景_理论边界与实现指导_执行版.md:177-182"
+        "git:50a1a3bfc011775910a3ffca535a739609927b52:docs/archive/legacy_requirements/爪刺耦合仿真器_工程背景_理论边界与实现指导_执行版.md:177-182"
       ]
     },
     "spring_travel_m": {
       "value": 0.004,
       "evidence_status": "candidate_design_value",
       "source": [
-        "docs/archive/legacy_requirements/爪刺耦合仿真器_工程背景_理论边界与实现指导_执行版.md:177-180"
+        "git:50a1a3bfc011775910a3ffca535a739609927b52:docs/archive/legacy_requirements/爪刺耦合仿真器_工程背景_理论边界与实现指导_执行版.md:177-180"
       ]
     },
     "installation_semantics": {
@@ -150,7 +150,7 @@
       },
       "evidence_status": "frozen_design_semantics",
       "source": [
-        "docs/archive/legacy_requirements/爪刺耦合仿真器_工程背景_理论边界与实现指导_执行版.md:177-182"
+        "git:50a1a3bfc011775910a3ffca535a739609927b52:docs/archive/legacy_requirements/爪刺耦合仿真器_工程背景_理论边界与实现指导_执行版.md:177-182"
       ]
     },
     "tip_geometry_semantics": {
@@ -160,63 +160,63 @@
       },
       "evidence_status": "frozen_design_semantics",
       "source": [
-        "docs/archive/legacy_requirements/爪刺耦合仿真器_工程背景_理论边界与实现指导_执行版.md:148-150"
+        "git:50a1a3bfc011775910a3ffca535a739609927b52:docs/archive/legacy_requirements/爪刺耦合仿真器_工程背景_理论边界与实现指导_执行版.md:148-150"
       ]
     },
     "material_category": {
       "value": "high_carbon_steel",
       "evidence_status": "candidate_design_value",
       "source": [
-        "docs/archive/legacy_requirements/爪刺耦合仿真器_工程背景_理论边界与实现指导_执行版.md:148"
+        "git:50a1a3bfc011775910a3ffca535a739609927b52:docs/archive/legacy_requirements/爪刺耦合仿真器_工程背景_理论边界与实现指导_执行版.md:148"
       ]
     },
     "single_spine_normal_preload_N": {
       "value": 0.5,
       "evidence_status": "candidate_design_value",
       "source": [
-        "docs/archive/legacy_requirements/爪刺耦合仿真器_工程背景_理论边界与实现指导_执行版.md:184-196"
+        "git:50a1a3bfc011775910a3ffca535a739609927b52:docs/archive/legacy_requirements/爪刺耦合仿真器_工程背景_理论边界与实现指导_执行版.md:184-196"
       ]
     },
     "array_total_normal_preloads_N": {
       "value": [0.5, 1.0, 2.0],
       "evidence_status": "candidate_design_value",
       "source": [
-        "docs/archive/legacy_requirements/爪刺耦合仿真器_工程背景_理论边界与实现指导_执行版.md:184-196"
+        "git:50a1a3bfc011775910a3ffca535a739609927b52:docs/archive/legacy_requirements/爪刺耦合仿真器_工程背景_理论边界与实现指导_执行版.md:184-196"
       ]
     },
     "continuous_external_preload_semantics": {
       "value": "constant_loader_force_throughout_path_not_constant_contact_reaction",
       "evidence_status": "frozen_design_semantics",
       "source": [
-        "docs/archive/legacy_requirements/爪刺耦合仿真器_工程背景_理论边界与实现指导_执行版.md:184-196"
+        "git:50a1a3bfc011775910a3ffca535a739609927b52:docs/archive/legacy_requirements/爪刺耦合仿真器_工程背景_理论边界与实现指导_执行版.md:184-196"
       ]
     },
     "drag_direction": {
       "value": "local_positive_x",
       "evidence_status": "frozen_design_semantics",
       "source": [
-        "docs/archive/legacy_requirements/爪刺耦合仿真器_工程背景_理论边界与实现指导_执行版.md:191"
+        "git:50a1a3bfc011775910a3ffca535a739609927b52:docs/archive/legacy_requirements/爪刺耦合仿真器_工程背景_理论边界与实现指导_执行版.md:191"
       ]
     },
     "drag_speed_m_per_s": {
       "value": 0.001,
       "evidence_status": "candidate_design_value",
       "source": [
-        "docs/archive/legacy_requirements/爪刺耦合仿真器_工程背景_理论边界与实现指导_执行版.md:192"
+        "git:50a1a3bfc011775910a3ffca535a739609927b52:docs/archive/legacy_requirements/爪刺耦合仿真器_工程背景_理论边界与实现指导_执行版.md:192"
       ]
     },
     "maximum_drag_length_m": {
       "value": 0.1,
       "evidence_status": "candidate_design_value",
       "source": [
-        "docs/archive/legacy_requirements/爪刺耦合仿真器_工程背景_理论边界与实现指导_执行版.md:193"
+        "git:50a1a3bfc011775910a3ffca535a739609927b52:docs/archive/legacy_requirements/爪刺耦合仿真器_工程背景_理论边界与实现指导_执行版.md:193"
       ]
     },
     "terrain_resolution_protocol_m": {
       "value": {"production": 1e-05, "final_convergence": 5e-06},
       "evidence_status": "numerical_protocol",
       "source": [
-        "docs/engineering/工程仿真参数继承表.md:90"
+        "git:9667a1430936a39cf72a885d738a72961c73ced3:docs/engineering/工程仿真参数继承表.md:90"
       ]
     }
   },
@@ -224,27 +224,27 @@
     "young_modulus_Pa": {
       "value": 200000000000.0,
       "evidence_status": "legacy_regression",
-      "source": ["src/spine_sim/m3_fast/model.py:322"]
+      "source": ["git:dc3f2b6ca17fdd66dd2b9f0f95b64406a4f7f9af:src/spine_sim/m3_fast/model.py:322"]
     },
     "poisson_ratio": {
       "value": 0.29,
       "evidence_status": "legacy_regression",
-      "source": ["src/spine_sim/m3_fast/model.py:323"]
+      "source": ["git:dc3f2b6ca17fdd66dd2b9f0f95b64406a4f7f9af:src/spine_sim/m3_fast/model.py:323"]
     },
     "shear_correction": {
       "value": 0.8571428571428571,
       "evidence_status": "legacy_regression",
-      "source": ["src/spine_sim/m3_fast/model.py:324"]
+      "source": ["git:dc3f2b6ca17fdd66dd2b9f0f95b64406a4f7f9af:src/spine_sim/m3_fast/model.py:324"]
     },
     "static_friction": {
       "value": 0.45,
       "evidence_status": "legacy_regression",
-      "source": ["src/spine_sim/m3_fast/model.py:325"]
+      "source": ["git:dc3f2b6ca17fdd66dd2b9f0f95b64406a4f7f9af:src/spine_sim/m3_fast/model.py:325"]
     },
     "kinetic_friction": {
       "value": 0.35,
       "evidence_status": "legacy_regression",
-      "source": ["src/spine_sim/m3_fast/model.py:326"]
+      "source": ["git:dc3f2b6ca17fdd66dd2b9f0f95b64406a4f7f9af:src/spine_sim/m3_fast/model.py:326"]
     }
   },
   "unclosed_parameters": {
@@ -265,7 +265,7 @@
       ],
       "evidence_status": "unclosed",
       "source": [
-        "docs/engineering/工程仿真参数继承表.md:144-151"
+        "git:9667a1430936a39cf72a885d738a72961c73ced3:docs/engineering/工程仿真参数继承表.md:144-151"
       ]
     },
     "out_of_scope_dynamic_inputs": {
@@ -277,60 +277,60 @@
       ],
       "evidence_status": "unclosed",
       "source": [
-        "docs/engineering/工程仿真参数继承表.md:144-151"
+        "git:9667a1430936a39cf72a885d738a72961c73ced3:docs/engineering/工程仿真参数继承表.md:144-151"
       ]
     }
   },
   "generators": {
     "source_defined_m3a": {
       "evidence_status": "candidate_design_value",
-      "source": ["src/spine_sim/m3_fast/campaign.py:311-327"],
+      "source": ["git:9fd8c4a8e17835353c31f9058595abaceca31b4f:src/spine_sim/m3_fast/campaign.py:311-327"],
       "fields": {
         "expected_count": {
           "value": 80,
           "evidence_status": "candidate_design_value",
-          "source": ["src/spine_sim/m3_fast/campaign.py:311-327"]
+          "source": ["git:9fd8c4a8e17835353c31f9058595abaceca31b4f:src/spine_sim/m3_fast/campaign.py:311-327"]
         },
         "tip_radius_m": {
           "value": [5e-05, 0.0001],
           "evidence_status": "candidate_design_value",
-          "source": ["src/spine_sim/m3_fast/campaign.py:313"]
+          "source": ["git:9fd8c4a8e17835353c31f9058595abaceca31b4f:src/spine_sim/m3_fast/campaign.py:313"]
         },
         "rod_diameter_m": {
           "value": [0.0006, 0.0008],
           "evidence_status": "candidate_design_value",
-          "source": ["src/spine_sim/m3_fast/campaign.py:314"]
+          "source": ["git:9fd8c4a8e17835353c31f9058595abaceca31b4f:src/spine_sim/m3_fast/campaign.py:314"]
         },
         "fixed_pitch_rad": {
           "value": [-0.8726646259971648, -1.0471975511965976, -1.2217304763960306, -1.3962634015954636],
           "evidence_status": "candidate_design_value",
-          "source": ["src/spine_sim/m3_fast/campaign.py:315"]
+          "source": ["git:9fd8c4a8e17835353c31f9058595abaceca31b4f:src/spine_sim/m3_fast/campaign.py:315"]
         },
         "spring_stiffness_N_per_m": {
           "value": ["rigid", 200.0, 500.0, 1000.0, 2000.0],
           "evidence_status": "candidate_design_value",
-          "source": ["src/spine_sim/m3_fast/campaign.py:316"]
+          "source": ["git:9fd8c4a8e17835353c31f9058595abaceca31b4f:src/spine_sim/m3_fast/campaign.py:316"]
         }
       }
     },
     "source_defined_m3b": {
       "evidence_status": "candidate_design_value",
-      "source": ["src/spine_sim/m3_fast/campaign.py:330-342"],
+      "source": ["git:9fd8c4a8e17835353c31f9058595abaceca31b4f:src/spine_sim/m3_fast/campaign.py:330-342"],
       "fields": {
         "expected_count": {
           "value": 28,
           "evidence_status": "candidate_design_value",
-          "source": ["src/spine_sim/m3_fast/campaign.py:330-342"]
+          "source": ["git:9fd8c4a8e17835353c31f9058595abaceca31b4f:src/spine_sim/m3_fast/campaign.py:330-342"]
         },
         "fixed_shapes": {
           "value": [[2, 2], [2, 5], [5, 2], [3, 5], [5, 3], [4, 4], [6, 6]],
           "evidence_status": "candidate_design_value",
-          "source": ["src/spine_sim/m3_fast/campaign.py:331-336"]
+          "source": ["git:9fd8c4a8e17835353c31f9058595abaceca31b4f:src/spine_sim/m3_fast/campaign.py:331-336"]
         },
         "fixed_spacing_m": {
           "value": [0.004, 0.005, 0.006],
           "evidence_status": "candidate_design_value",
-          "source": ["src/spine_sim/m3_fast/campaign.py:333-336"]
+          "source": ["git:9fd8c4a8e17835353c31f9058595abaceca31b4f:src/spine_sim/m3_fast/campaign.py:333-336"]
         },
         "gradient_layouts": {
           "value": [
@@ -338,58 +338,58 @@
             {"shapes": [[4, 4]], "spacing_m": 0.005, "legacy_angle_pattern": "80_to_50", "pitch_endpoints_rad": [-1.3962634015954636, -0.8726646259971648]}
           ],
           "evidence_status": "candidate_design_value",
-          "source": ["src/spine_sim/m3_fast/campaign.py:337-339"]
+          "source": ["git:9fd8c4a8e17835353c31f9058595abaceca31b4f:src/spine_sim/m3_fast/campaign.py:337-339"]
         }
       }
     },
     "legacy_full_scan": {
       "evidence_status": "legacy_regression",
-      "source": ["src/spine_sim/m3_fast/campaign.py:226-308"],
+      "source": ["git:9fd8c4a8e17835353c31f9058595abaceca31b4f:src/spine_sim/m3_fast/campaign.py:226-308"],
       "fields": {
         "expected_count": {
           "value": 1344,
           "evidence_status": "legacy_regression",
-          "source": ["src/spine_sim/m3_fast/campaign.py:260-308"]
+          "source": ["git:9fd8c4a8e17835353c31f9058595abaceca31b4f:src/spine_sim/m3_fast/campaign.py:260-308"]
         },
         "shapes": {
           "value": [[2, 2], [2, 5], [5, 2], [3, 5], [5, 3], [4, 4], [6, 6]],
           "evidence_status": "legacy_regression",
-          "source": ["src/spine_sim/m3_fast/campaign.py:226-234"]
+          "source": ["git:9fd8c4a8e17835353c31f9058595abaceca31b4f:src/spine_sim/m3_fast/campaign.py:226-234"]
         },
         "spacing_m": {
           "value": [0.004, 0.005, 0.006],
           "evidence_status": "legacy_regression",
-          "source": ["src/spine_sim/m3_fast/campaign.py:265"]
+          "source": ["git:9fd8c4a8e17835353c31f9058595abaceca31b4f:src/spine_sim/m3_fast/campaign.py:265"]
         },
         "tip_radius_m": {
           "value": [5e-05, 0.0001],
           "evidence_status": "legacy_regression",
-          "source": ["src/spine_sim/m3_fast/campaign.py:266"]
+          "source": ["git:9fd8c4a8e17835353c31f9058595abaceca31b4f:src/spine_sim/m3_fast/campaign.py:266"]
         },
         "rod_diameter_m": {
           "value": [0.0006, 0.0008],
           "evidence_status": "legacy_regression",
-          "source": ["src/spine_sim/m3_fast/campaign.py:267"]
+          "source": ["git:9fd8c4a8e17835353c31f9058595abaceca31b4f:src/spine_sim/m3_fast/campaign.py:267"]
         },
         "spring_stiffness_N_per_m": {
           "value": [300.0, 800.0, 2000.0, "rigid"],
           "evidence_status": "legacy_regression",
-          "source": ["src/spine_sim/m3_fast/campaign.py:268"]
+          "source": ["git:9fd8c4a8e17835353c31f9058595abaceca31b4f:src/spine_sim/m3_fast/campaign.py:268"]
         },
         "fixed_pitch_rad": {
           "value": [-1.0471975511965976, -1.2217304763960306, -1.3962634015954636],
           "evidence_status": "legacy_regression",
-          "source": ["src/spine_sim/m3_fast/campaign.py:269"]
+          "source": ["git:9fd8c4a8e17835353c31f9058595abaceca31b4f:src/spine_sim/m3_fast/campaign.py:269"]
         },
         "gradient_pitch_endpoints_rad": {
           "value": [-1.0471975511965976, -1.3962634015954636],
           "evidence_status": "legacy_regression",
-          "source": ["src/spine_sim/m3_fast/campaign.py:286-300"]
+          "source": ["git:9fd8c4a8e17835353c31f9058595abaceca31b4f:src/spine_sim/m3_fast/campaign.py:286-300"]
         },
         "legacy_gradient_name": {
           "value": "60_to_80",
           "evidence_status": "legacy_regression",
-          "source": ["src/spine_sim/m3_fast/campaign.py:286-300"]
+          "source": ["git:9fd8c4a8e17835353c31f9058595abaceca31b4f:src/spine_sim/m3_fast/campaign.py:286-300"]
         }
       }
     }
@@ -407,9 +407,9 @@
       },
       "evidence_status": "legacy_regression",
       "source": [
-        "src/spine_sim/m3_fast/campaign.py:84-165",
-        "src/spine_sim/m3_fast/campaign.py:201-216",
-        "src/spine_sim/m3_fast/campaign.py:352-360"
+        "git:9fd8c4a8e17835353c31f9058595abaceca31b4f:src/spine_sim/m3_fast/campaign.py:84-165",
+        "git:9fd8c4a8e17835353c31f9058595abaceca31b4f:src/spine_sim/m3_fast/campaign.py:201-216",
+        "git:9fd8c4a8e17835353c31f9058595abaceca31b4f:src/spine_sim/m3_fast/campaign.py:352-360"
       ]
     }
   },
@@ -417,268 +417,271 @@
     "source_defined_m3ab": {
       "value": [41005, 41010, 41015, 41020, 41025, 41030],
       "evidence_status": "candidate_design_value",
-      "source": ["src/spine_sim/m3_fast/campaign.py:2201-2210"]
+      "source": ["git:9fd8c4a8e17835353c31f9058595abaceca31b4f:src/spine_sim/m3_fast/campaign.py:2201-2210"]
     },
     "legacy_coarse": {
       "value": [41001, 41002, 41003, 41004, 41005, 41051, 41052, 41053, 41054, 41055, 41096, 41097, 41098, 41099, 41100],
       "evidence_status": "legacy_regression",
-      "source": ["src/spine_sim/m3_fast/campaign.py:236-240"]
+      "source": ["git:9fd8c4a8e17835353c31f9058595abaceca31b4f:src/spine_sim/m3_fast/campaign.py:236-240"]
     },
     "legacy_fine": {
       "value": [41001, 41002, 41003, 41004, 41005, 41011, 41012, 41013, 41014, 41015, 41021, 41022, 41023, 41024, 41025, 41031, 41032, 41033, 41034, 41035, 41041, 41042, 41043, 41044, 41045, 41051, 41052, 41053, 41054, 41055, 41061, 41062, 41063, 41064, 41065, 41071, 41072, 41073, 41074, 41075, 41081, 41082, 41083, 41084, 41085, 41096, 41097, 41098, 41099, 41100],
       "evidence_status": "legacy_regression",
-      "source": ["src/spine_sim/m3_fast/campaign.py:241-256"]
+      "source": ["git:9fd8c4a8e17835353c31f9058595abaceca31b4f:src/spine_sim/m3_fast/campaign.py:241-256"]
     },
     "legacy_final": {
       "value": [41001, 41002, 41003, 41004, 41005, 41006, 41007, 41008, 41009, 41010, 41011, 41012, 41013, 41014, 41015, 41016, 41017, 41018, 41019, 41020, 41021, 41022, 41023, 41024, 41025, 41026, 41027, 41028, 41029, 41030, 41031, 41032, 41033, 41034, 41035, 41036, 41037, 41038, 41039, 41040, 41041, 41042, 41043, 41044, 41045, 41046, 41047, 41048, 41049, 41050, 41051, 41052, 41053, 41054, 41055, 41056, 41057, 41058, 41059, 41060, 41061, 41062, 41063, 41064, 41065, 41066, 41067, 41068, 41069, 41070, 41071, 41072, 41073, 41074, 41075, 41076, 41077, 41078, 41079, 41080, 41081, 41082, 41083, 41084, 41085, 41086, 41087, 41088, 41089, 41090, 41091, 41092, 41093, 41094, 41095, 41096, 41097, 41098, 41099, 41100],
       "evidence_status": "legacy_regression",
-      "source": ["src/spine_sim/m3_fast/campaign.py:257"]
+      "source": ["git:9fd8c4a8e17835353c31f9058595abaceca31b4f:src/spine_sim/m3_fast/campaign.py:257"]
     },
     "legacy_large_array": {
       "value": [52001, 52002, 52003, 52004, 52005, 52006, 52007, 52008, 52009, 52010],
       "evidence_status": "legacy_regression",
-      "source": ["docs/archive/legacy_simulation_evidence/manifests/large_array_manifest.json#/seeds"]
+      "source": ["provenance/legacy_simulation/large_array_manifest.json#/seeds"]
     }
   },
   "protocols": {
     "legacy_runtime_default": {
       "evidence_status": "legacy_regression",
-      "source": ["src/spine_sim/m3_fast/model.py:311-326", "src/spine_sim/m3_fast/solver.py:44-54"],
+      "source": ["git:dc3f2b6ca17fdd66dd2b9f0f95b64406a4f7f9af:src/spine_sim/m3_fast/model.py:311-326", "git:9fd8c4a8e17835353c31f9058595abaceca31b4f:src/spine_sim/m3_fast/solver.py:44-54"],
       "fields": {
-        "fixed_pitch_rad": {"value": -1.2217304763960306, "evidence_status": "legacy_regression", "source": ["src/spine_sim/m3_fast/model.py:317"]},
-        "yaw_rad": {"value": 0.0, "evidence_status": "legacy_regression", "source": ["docs/engineering/工程仿真参数继承表.md:109"]},
-        "fixed_length_m": {"value": 0.004, "evidence_status": "legacy_regression", "source": ["src/spine_sim/m3_fast/model.py:383-389"]},
-        "tip_radius_m": {"value": 5e-05, "evidence_status": "legacy_regression", "source": ["src/spine_sim/m3_fast/model.py:318"]},
-        "rod_diameter_m": {"value": 0.0008, "evidence_status": "legacy_regression", "source": ["src/spine_sim/m3_fast/model.py:319"]},
-        "installation": {"value": {"mode": "unilateral_spring", "stiffness_N_per_m": 800.0, "travel_m": 0.004, "preload_N": 0.0, "tension_allowed": false}, "evidence_status": "legacy_regression", "source": ["src/spine_sim/m3_fast/model.py:320-321"]},
-        "normal_preload_N": {"value": 1.0, "evidence_status": "legacy_regression", "source": ["src/spine_sim/m3_fast/solver.py:48"]},
-        "path_length_m": {"value": 0.01, "evidence_status": "legacy_regression", "source": ["src/spine_sim/m3_fast/solver.py:49"]},
-        "dx_m": {"value": 0.0001, "evidence_status": "numerical_protocol", "source": ["src/spine_sim/m3_fast/solver.py:50"]},
-        "path_start_x_m": {"value": 0.0, "evidence_status": "numerical_protocol", "source": ["src/spine_sim/m3_fast/solver.py:51"]},
-        "root_bracket_width_m": {"value": 0.006, "evidence_status": "numerical_protocol", "source": ["src/spine_sim/m3_fast/solver.py:52"]},
-        "contact_clearance_m": {"value": 1e-12, "evidence_status": "numerical_protocol", "source": ["src/spine_sim/m3_fast/solver.py:53"]},
-        "legacy_relanding_search_steps": {"value": 5, "evidence_status": "legacy_regression", "source": ["src/spine_sim/m3_fast/solver.py:54"]},
-        "legacy_max_newton_corrections": {"value": 3, "evidence_status": "legacy_regression", "source": ["src/spine_sim/m3_fast/solver.py:38"]},
-        "legacy_max_interval_evaluations": {"value": 6, "evidence_status": "legacy_regression", "source": ["src/spine_sim/m3_fast/solver.py:40"]},
-        "legacy_max_station_evaluations": {"value": 9, "evidence_status": "legacy_regression", "source": ["src/spine_sim/m3_fast/solver.py:41"]},
-        "legacy_force_tolerance": {"value": {"absolute_floor_N": 0.01, "relative_to_preload": 0.01, "formula": "max(absolute_floor_N, relative_to_preload*preload_N)"}, "evidence_status": "legacy_regression", "source": ["src/spine_sim/m3_fast/solver.py:214-215"]},
-        "legacy_solver_semantics": {"value": "constant-preload-reseat-v3", "evidence_status": "legacy_regression", "source": ["src/spine_sim/m3_fast/campaign.py:81"]},
-        "model_baseline_ref": {"value": "legacy_model_baseline", "evidence_status": "legacy_regression", "source": ["src/spine_sim/m3_fast/model.py:322-326"]}
+        "fixed_pitch_rad": {"value": -1.2217304763960306, "evidence_status": "legacy_regression", "source": ["git:dc3f2b6ca17fdd66dd2b9f0f95b64406a4f7f9af:src/spine_sim/m3_fast/model.py:317"]},
+        "yaw_rad": {"value": 0.0, "evidence_status": "legacy_regression", "source": ["git:9667a1430936a39cf72a885d738a72961c73ced3:docs/engineering/工程仿真参数继承表.md:109"]},
+        "fixed_length_m": {"value": 0.004, "evidence_status": "legacy_regression", "source": ["git:dc3f2b6ca17fdd66dd2b9f0f95b64406a4f7f9af:src/spine_sim/m3_fast/model.py:383-389"]},
+        "tip_radius_m": {"value": 5e-05, "evidence_status": "legacy_regression", "source": ["git:dc3f2b6ca17fdd66dd2b9f0f95b64406a4f7f9af:src/spine_sim/m3_fast/model.py:318"]},
+        "rod_diameter_m": {"value": 0.0008, "evidence_status": "legacy_regression", "source": ["git:dc3f2b6ca17fdd66dd2b9f0f95b64406a4f7f9af:src/spine_sim/m3_fast/model.py:319"]},
+        "installation": {"value": {"mode": "unilateral_spring", "stiffness_N_per_m": 800.0, "travel_m": 0.004, "preload_N": 0.0, "tension_allowed": false}, "evidence_status": "legacy_regression", "source": ["git:dc3f2b6ca17fdd66dd2b9f0f95b64406a4f7f9af:src/spine_sim/m3_fast/model.py:320-321"]},
+        "normal_preload_N": {"value": 1.0, "evidence_status": "legacy_regression", "source": ["git:9fd8c4a8e17835353c31f9058595abaceca31b4f:src/spine_sim/m3_fast/solver.py:48"]},
+        "path_length_m": {"value": 0.01, "evidence_status": "legacy_regression", "source": ["git:9fd8c4a8e17835353c31f9058595abaceca31b4f:src/spine_sim/m3_fast/solver.py:49"]},
+        "dx_m": {"value": 0.0001, "evidence_status": "numerical_protocol", "source": ["git:9fd8c4a8e17835353c31f9058595abaceca31b4f:src/spine_sim/m3_fast/solver.py:50"]},
+        "path_start_x_m": {"value": 0.0, "evidence_status": "numerical_protocol", "source": ["git:9fd8c4a8e17835353c31f9058595abaceca31b4f:src/spine_sim/m3_fast/solver.py:51"]},
+        "root_bracket_width_m": {"value": 0.006, "evidence_status": "numerical_protocol", "source": ["git:9fd8c4a8e17835353c31f9058595abaceca31b4f:src/spine_sim/m3_fast/solver.py:52"]},
+        "contact_clearance_m": {"value": 1e-12, "evidence_status": "numerical_protocol", "source": ["git:9fd8c4a8e17835353c31f9058595abaceca31b4f:src/spine_sim/m3_fast/solver.py:53"]},
+        "legacy_relanding_search_steps": {"value": 5, "evidence_status": "legacy_regression", "source": ["git:9fd8c4a8e17835353c31f9058595abaceca31b4f:src/spine_sim/m3_fast/solver.py:54"]},
+        "legacy_max_newton_corrections": {"value": 3, "evidence_status": "legacy_regression", "source": ["git:9fd8c4a8e17835353c31f9058595abaceca31b4f:src/spine_sim/m3_fast/solver.py:38"]},
+        "legacy_max_interval_evaluations": {"value": 6, "evidence_status": "legacy_regression", "source": ["git:9fd8c4a8e17835353c31f9058595abaceca31b4f:src/spine_sim/m3_fast/solver.py:40"]},
+        "legacy_max_station_evaluations": {"value": 9, "evidence_status": "legacy_regression", "source": ["git:9fd8c4a8e17835353c31f9058595abaceca31b4f:src/spine_sim/m3_fast/solver.py:41"]},
+        "legacy_force_tolerance": {"value": {"absolute_floor_N": 0.01, "relative_to_preload": 0.01, "formula": "max(absolute_floor_N, relative_to_preload*preload_N)"}, "evidence_status": "legacy_regression", "source": ["git:9fd8c4a8e17835353c31f9058595abaceca31b4f:src/spine_sim/m3_fast/solver.py:214-215"]},
+        "legacy_solver_semantics": {"value": "constant-preload-reseat-v3", "evidence_status": "legacy_regression", "source": ["git:9fd8c4a8e17835353c31f9058595abaceca31b4f:src/spine_sim/m3_fast/campaign.py:81"]},
+        "model_baseline_ref": {"value": "legacy_model_baseline", "evidence_status": "legacy_regression", "source": ["git:dc3f2b6ca17fdd66dd2b9f0f95b64406a4f7f9af:src/spine_sim/m3_fast/model.py:322-326"]}
       }
     },
     "legacy_full_scan": {
       "evidence_status": "legacy_regression",
-      "source": ["src/spine_sim/m3_fast/campaign.py:226-308"],
+      "source": ["git:9fd8c4a8e17835353c31f9058595abaceca31b4f:src/spine_sim/m3_fast/campaign.py:226-308"],
       "fields": {
-        "generator_id": {"value": "legacy_full_scan", "evidence_status": "legacy_regression", "source": ["src/spine_sim/m3_fast/campaign.py:260-308"]},
-        "design_count": {"value": 1344, "evidence_status": "legacy_regression", "source": ["src/spine_sim/m3_fast/campaign.py:302-305"]},
-        "normal_preloads_N": {"value": [0.5, 1.0, 2.0], "evidence_status": "legacy_regression", "source": ["src/spine_sim/m3_fast/campaign.py:235"]},
-        "model_baseline_ref": {"value": "legacy_model_baseline", "evidence_status": "legacy_regression", "source": ["src/spine_sim/m3_fast/campaign.py:169-175"]}
+        "generator_id": {"value": "legacy_full_scan", "evidence_status": "legacy_regression", "source": ["git:9fd8c4a8e17835353c31f9058595abaceca31b4f:src/spine_sim/m3_fast/campaign.py:260-308"]},
+        "design_count": {"value": 1344, "evidence_status": "legacy_regression", "source": ["git:9fd8c4a8e17835353c31f9058595abaceca31b4f:src/spine_sim/m3_fast/campaign.py:302-305"]},
+        "normal_preloads_N": {"value": [0.5, 1.0, 2.0], "evidence_status": "legacy_regression", "source": ["git:9fd8c4a8e17835353c31f9058595abaceca31b4f:src/spine_sim/m3_fast/campaign.py:235"]},
+        "model_baseline_ref": {"value": "legacy_model_baseline", "evidence_status": "legacy_regression", "source": ["git:9fd8c4a8e17835353c31f9058595abaceca31b4f:src/spine_sim/m3_fast/campaign.py:169-175"]}
       }
     },
     "source_defined_m3a": {
       "evidence_status": "candidate_design_value",
-      "source": ["src/spine_sim/m3_fast/campaign.py:1029-1117"],
+      "source": ["git:9fd8c4a8e17835353c31f9058595abaceca31b4f:src/spine_sim/m3_fast/campaign.py:1029-1117"],
       "fields": {
-        "generator_id": {"value": "source_defined_m3a", "evidence_status": "candidate_design_value", "source": ["src/spine_sim/m3_fast/campaign.py:1056"]},
-        "executed_archive_available": {"value": false, "evidence_status": "candidate_design_value", "source": ["docs/engineering/工程仿真参数继承表.md:111"]},
-        "reference_geometry": {"value": {"nx": 4, "ny": 4, "spacing_m": 0.005, "angle_layout": "fixed"}, "evidence_status": "candidate_design_value", "source": ["src/spine_sim/m3_fast/campaign.py:448-449"]},
-        "normal_preload_N": {"value": 1.0, "evidence_status": "candidate_design_value", "source": ["src/spine_sim/m3_fast/campaign.py:1057-1062"]},
-        "path_length_m": {"value": 0.01, "evidence_status": "numerical_protocol", "source": ["src/spine_sim/m3_fast/campaign.py:1057-1062"]},
-        "dx_m": {"value": 0.0001, "evidence_status": "numerical_protocol", "source": ["src/spine_sim/m3_fast/campaign.py:1057-1062"]},
-        "root_bracket_width_m": {"value": 0.006, "evidence_status": "numerical_protocol", "source": ["src/spine_sim/m3_fast/campaign.py:1038"]},
-        "paired_seed_set": {"value": "source_defined_m3ab", "evidence_status": "candidate_design_value", "source": ["src/spine_sim/m3_fast/campaign.py:1035"]},
-        "model_baseline_ref": {"value": "legacy_model_baseline", "evidence_status": "candidate_design_value", "source": ["src/spine_sim/m3_fast/campaign.py:1037"]}
+        "generator_id": {"value": "source_defined_m3a", "evidence_status": "candidate_design_value", "source": ["git:9fd8c4a8e17835353c31f9058595abaceca31b4f:src/spine_sim/m3_fast/campaign.py:1056"]},
+        "executed_archive_available": {"value": false, "evidence_status": "candidate_design_value", "source": ["git:9667a1430936a39cf72a885d738a72961c73ced3:docs/engineering/工程仿真参数继承表.md:111"]},
+        "reference_geometry": {"value": {"nx": 4, "ny": 4, "spacing_m": 0.005, "angle_layout": "fixed"}, "evidence_status": "candidate_design_value", "source": ["git:9fd8c4a8e17835353c31f9058595abaceca31b4f:src/spine_sim/m3_fast/campaign.py:448-449"]},
+        "normal_preload_N": {"value": 1.0, "evidence_status": "candidate_design_value", "source": ["git:9fd8c4a8e17835353c31f9058595abaceca31b4f:src/spine_sim/m3_fast/campaign.py:1057-1062"]},
+        "path_length_m": {"value": 0.01, "evidence_status": "numerical_protocol", "source": ["git:9fd8c4a8e17835353c31f9058595abaceca31b4f:src/spine_sim/m3_fast/campaign.py:1057-1062"]},
+        "dx_m": {"value": 0.0001, "evidence_status": "numerical_protocol", "source": ["git:9fd8c4a8e17835353c31f9058595abaceca31b4f:src/spine_sim/m3_fast/campaign.py:1057-1062"]},
+        "root_bracket_width_m": {"value": 0.006, "evidence_status": "numerical_protocol", "source": ["git:9fd8c4a8e17835353c31f9058595abaceca31b4f:src/spine_sim/m3_fast/campaign.py:1038"]},
+        "paired_seed_set": {"value": "source_defined_m3ab", "evidence_status": "candidate_design_value", "source": ["git:9fd8c4a8e17835353c31f9058595abaceca31b4f:src/spine_sim/m3_fast/campaign.py:1035"]},
+        "model_baseline_ref": {"value": "legacy_model_baseline", "evidence_status": "candidate_design_value", "source": ["git:9fd8c4a8e17835353c31f9058595abaceca31b4f:src/spine_sim/m3_fast/campaign.py:1037"]}
       }
     },
     "source_defined_m3b": {
       "evidence_status": "candidate_design_value",
-      "source": ["src/spine_sim/m3_fast/campaign.py:1120-1219"],
+      "source": ["git:9fd8c4a8e17835353c31f9058595abaceca31b4f:src/spine_sim/m3_fast/campaign.py:1120-1219"],
       "fields": {
-        "generator_id": {"value": "source_defined_m3b", "evidence_status": "candidate_design_value", "source": ["src/spine_sim/m3_fast/campaign.py:330-342"]},
-        "executed_archive_available": {"value": false, "evidence_status": "candidate_design_value", "source": ["docs/engineering/工程仿真参数继承表.md:112"]},
-        "normal_preload_N": {"value": 1.0, "evidence_status": "candidate_design_value", "source": ["src/spine_sim/m3_fast/campaign.py:1158-1163"]},
-        "path_length_m": {"value": 0.01, "evidence_status": "numerical_protocol", "source": ["src/spine_sim/m3_fast/campaign.py:1158-1163"]},
-        "dx_m": {"value": 0.0001, "evidence_status": "numerical_protocol", "source": ["src/spine_sim/m3_fast/campaign.py:1158-1163"]},
-        "root_bracket_width_m": {"value": 0.006, "evidence_status": "numerical_protocol", "source": ["src/spine_sim/m3_fast/campaign.py:1129"]},
-        "paired_seed_set": {"value": "source_defined_m3ab", "evidence_status": "candidate_design_value", "source": ["src/spine_sim/m3_fast/campaign.py:1126"]},
-        "model_baseline_ref": {"value": "legacy_model_baseline", "evidence_status": "candidate_design_value", "source": ["src/spine_sim/m3_fast/campaign.py:1128"]}
+        "generator_id": {"value": "source_defined_m3b", "evidence_status": "candidate_design_value", "source": ["git:9fd8c4a8e17835353c31f9058595abaceca31b4f:src/spine_sim/m3_fast/campaign.py:330-342"]},
+        "executed_archive_available": {"value": false, "evidence_status": "candidate_design_value", "source": ["git:9667a1430936a39cf72a885d738a72961c73ced3:docs/engineering/工程仿真参数继承表.md:112"]},
+        "normal_preload_N": {"value": 1.0, "evidence_status": "candidate_design_value", "source": ["git:9fd8c4a8e17835353c31f9058595abaceca31b4f:src/spine_sim/m3_fast/campaign.py:1158-1163"]},
+        "path_length_m": {"value": 0.01, "evidence_status": "numerical_protocol", "source": ["git:9fd8c4a8e17835353c31f9058595abaceca31b4f:src/spine_sim/m3_fast/campaign.py:1158-1163"]},
+        "dx_m": {"value": 0.0001, "evidence_status": "numerical_protocol", "source": ["git:9fd8c4a8e17835353c31f9058595abaceca31b4f:src/spine_sim/m3_fast/campaign.py:1158-1163"]},
+        "root_bracket_width_m": {"value": 0.006, "evidence_status": "numerical_protocol", "source": ["git:9fd8c4a8e17835353c31f9058595abaceca31b4f:src/spine_sim/m3_fast/campaign.py:1129"]},
+        "paired_seed_set": {"value": "source_defined_m3ab", "evidence_status": "candidate_design_value", "source": ["git:9fd8c4a8e17835353c31f9058595abaceca31b4f:src/spine_sim/m3_fast/campaign.py:1126"]},
+        "model_baseline_ref": {"value": "legacy_model_baseline", "evidence_status": "candidate_design_value", "source": ["git:9fd8c4a8e17835353c31f9058595abaceca31b4f:src/spine_sim/m3_fast/campaign.py:1128"]}
       }
     },
     "legacy_coarse_archive": {
       "evidence_status": "legacy_regression",
-      "source": ["docs/archive/legacy_simulation_evidence/manifests/coarse_manifest.json"],
+      "source": ["provenance/legacy_simulation/coarse_manifest.json"],
       "fields": {
-        "generator_id": {"value": "legacy_full_scan", "evidence_status": "legacy_regression", "source": ["docs/archive/legacy_simulation_evidence/manifests/coarse_manifest.json#/design_count"]},
-        "paired_seed_set": {"value": "legacy_coarse", "evidence_status": "legacy_regression", "source": ["src/spine_sim/m3_fast/campaign.py:236-240"]},
-        "terrain_condition_count": {"value": 45, "evidence_status": "legacy_regression", "source": ["docs/archive/legacy_simulation_evidence/manifests/coarse_manifest.json#/condition_count"]},
-        "input_design_count": {"value": 1344, "evidence_status": "legacy_regression", "source": ["docs/archive/legacy_simulation_evidence/manifests/coarse_manifest.json#/design_count"]},
-        "selected_design_count": {"value": 96, "evidence_status": "legacy_regression", "source": ["docs/archive/legacy_simulation_evidence/manifests/coarse_manifest.json#/selected_design_count"]},
-        "normal_preloads_N": {"value": [0.5, 1.0, 2.0], "evidence_status": "legacy_regression", "source": ["docs/archive/legacy_simulation_evidence/manifests/coarse_manifest.json#/preloads_N"]},
-        "path_length_m": {"value": 0.01, "evidence_status": "legacy_regression", "source": ["docs/archive/legacy_simulation_evidence/manifests/coarse_manifest.json#/path_settings/path_length_m"]},
-        "dx_m": {"value": 0.0001, "evidence_status": "numerical_protocol", "source": ["docs/archive/legacy_simulation_evidence/manifests/coarse_manifest.json#/path_settings/dx_m"]},
-        "path_start_x_m": {"value": 0.0, "evidence_status": "numerical_protocol", "source": ["docs/archive/legacy_simulation_evidence/manifests/coarse_manifest.json#/path_settings/path_start_x_m"]},
-        "root_bracket_width_m": {"value": 0.006, "evidence_status": "numerical_protocol", "source": ["docs/archive/legacy_simulation_evidence/manifests/coarse_manifest.json#/path_settings/backplate_travel_m"]},
-        "contact_clearance_m": {"value": 1e-12, "evidence_status": "legacy_regression", "source": ["docs/archive/legacy_simulation_evidence/manifests/coarse_manifest.json#/path_settings/contact_clearance_m"]},
-        "legacy_relanding_search_steps": {"value": 5, "evidence_status": "legacy_regression", "source": ["docs/archive/legacy_simulation_evidence/manifests/coarse_manifest.json#/path_settings/relanding_search_steps"]},
-        "capture_full_paths": {"value": false, "evidence_status": "legacy_regression", "source": ["docs/archive/legacy_simulation_evidence/manifests/coarse_manifest.json#/capture_full_paths"]},
-        "legacy_solver_semantics": {"value": "constant-preload-reseat-v3", "evidence_status": "legacy_regression", "source": ["docs/archive/legacy_simulation_evidence/manifests/coarse_manifest.json#/solver_semantics"]},
-        "model_baseline_ref": {"value": "legacy_model_baseline", "evidence_status": "legacy_regression", "source": ["docs/archive/legacy_simulation_evidence/manifests/coarse_manifest.json#/model_settings"]}
+        "generator_id": {"value": "legacy_full_scan", "evidence_status": "legacy_regression", "source": ["provenance/legacy_simulation/coarse_manifest.json#/design_count"]},
+        "paired_seed_set": {"value": "legacy_coarse", "evidence_status": "legacy_regression", "source": ["git:9fd8c4a8e17835353c31f9058595abaceca31b4f:src/spine_sim/m3_fast/campaign.py:236-240"]},
+        "terrain_condition_count": {"value": 45, "evidence_status": "legacy_regression", "source": ["provenance/legacy_simulation/coarse_manifest.json#/condition_count"]},
+        "input_design_count": {"value": 1344, "evidence_status": "legacy_regression", "source": ["provenance/legacy_simulation/coarse_manifest.json#/design_count"]},
+        "selected_design_count": {"value": 96, "evidence_status": "legacy_regression", "source": ["provenance/legacy_simulation/coarse_manifest.json#/selected_design_count"]},
+        "normal_preloads_N": {"value": [0.5, 1.0, 2.0], "evidence_status": "legacy_regression", "source": ["provenance/legacy_simulation/coarse_manifest.json#/preloads_N"]},
+        "path_length_m": {"value": 0.01, "evidence_status": "legacy_regression", "source": ["provenance/legacy_simulation/coarse_manifest.json#/path_settings/path_length_m"]},
+        "dx_m": {"value": 0.0001, "evidence_status": "numerical_protocol", "source": ["provenance/legacy_simulation/coarse_manifest.json#/path_settings/dx_m"]},
+        "path_start_x_m": {"value": 0.0, "evidence_status": "numerical_protocol", "source": ["provenance/legacy_simulation/coarse_manifest.json#/path_settings/path_start_x_m"]},
+        "root_bracket_width_m": {"value": 0.006, "evidence_status": "numerical_protocol", "source": ["provenance/legacy_simulation/coarse_manifest.json#/path_settings/backplate_travel_m"]},
+        "contact_clearance_m": {"value": 1e-12, "evidence_status": "legacy_regression", "source": ["provenance/legacy_simulation/coarse_manifest.json#/path_settings/contact_clearance_m"]},
+        "legacy_relanding_search_steps": {"value": 5, "evidence_status": "legacy_regression", "source": ["provenance/legacy_simulation/coarse_manifest.json#/path_settings/relanding_search_steps"]},
+        "capture_full_paths": {"value": false, "evidence_status": "legacy_regression", "source": ["provenance/legacy_simulation/coarse_manifest.json#/capture_full_paths"]},
+        "legacy_solver_semantics": {"value": "constant-preload-reseat-v3", "evidence_status": "legacy_regression", "source": ["provenance/legacy_simulation/coarse_manifest.json#/solver_semantics"]},
+        "model_baseline_ref": {"value": "legacy_model_baseline", "evidence_status": "legacy_regression", "source": ["provenance/legacy_simulation/coarse_manifest.json#/model_settings"]}
       }
     },
     "legacy_fine_archive": {
       "evidence_status": "legacy_regression",
-      "source": ["docs/archive/legacy_simulation_evidence/manifests/fine_manifest.json"],
+      "source": ["provenance/legacy_simulation/fine_manifest.json"],
       "fields": {
-        "paired_seed_set": {"value": "legacy_fine", "evidence_status": "legacy_regression", "source": ["src/spine_sim/m3_fast/campaign.py:241-256"]},
-        "terrain_condition_count": {"value": 150, "evidence_status": "legacy_regression", "source": ["docs/archive/legacy_simulation_evidence/manifests/fine_manifest.json#/condition_count"]},
-        "input_design_count": {"value": 96, "evidence_status": "legacy_regression", "source": ["docs/archive/legacy_simulation_evidence/manifests/fine_manifest.json#/design_count"]},
-        "selected_design_count": {"value": 24, "evidence_status": "legacy_regression", "source": ["docs/archive/legacy_simulation_evidence/manifests/fine_manifest.json#/selected_design_count"]},
-        "normal_preloads_N": {"value": [0.5, 1.0, 2.0], "evidence_status": "legacy_regression", "source": ["docs/archive/legacy_simulation_evidence/manifests/fine_manifest.json#/preloads_N"]},
-        "path_length_m": {"value": 0.01, "evidence_status": "legacy_regression", "source": ["docs/archive/legacy_simulation_evidence/manifests/fine_manifest.json#/path_settings/path_length_m"]},
-        "dx_m": {"value": 0.0001, "evidence_status": "numerical_protocol", "source": ["docs/archive/legacy_simulation_evidence/manifests/fine_manifest.json#/path_settings/dx_m"]},
-        "path_start_x_m": {"value": 0.0, "evidence_status": "numerical_protocol", "source": ["docs/archive/legacy_simulation_evidence/manifests/fine_manifest.json#/path_settings/path_start_x_m"]},
-        "root_bracket_width_m": {"value": 0.006, "evidence_status": "numerical_protocol", "source": ["docs/archive/legacy_simulation_evidence/manifests/fine_manifest.json#/path_settings/backplate_travel_m"]},
-        "contact_clearance_m": {"value": 1e-12, "evidence_status": "legacy_regression", "source": ["docs/archive/legacy_simulation_evidence/manifests/fine_manifest.json#/path_settings/contact_clearance_m"]},
-        "legacy_relanding_search_steps": {"value": 5, "evidence_status": "legacy_regression", "source": ["docs/archive/legacy_simulation_evidence/manifests/fine_manifest.json#/path_settings/relanding_search_steps"]},
-        "capture_full_paths": {"value": true, "evidence_status": "legacy_regression", "source": ["docs/archive/legacy_simulation_evidence/manifests/fine_manifest.json#/capture_full_paths"]},
-        "legacy_solver_semantics": {"value": "constant-preload-reseat-v3", "evidence_status": "legacy_regression", "source": ["docs/archive/legacy_simulation_evidence/manifests/fine_manifest.json#/solver_semantics"]},
-        "model_baseline_ref": {"value": "legacy_model_baseline", "evidence_status": "legacy_regression", "source": ["docs/archive/legacy_simulation_evidence/manifests/fine_manifest.json#/model_settings"]}
+        "paired_seed_set": {"value": "legacy_fine", "evidence_status": "legacy_regression", "source": ["git:9fd8c4a8e17835353c31f9058595abaceca31b4f:src/spine_sim/m3_fast/campaign.py:241-256"]},
+        "terrain_condition_count": {"value": 150, "evidence_status": "legacy_regression", "source": ["provenance/legacy_simulation/fine_manifest.json#/condition_count"]},
+        "input_design_count": {"value": 96, "evidence_status": "legacy_regression", "source": ["provenance/legacy_simulation/fine_manifest.json#/design_count"]},
+        "selected_design_count": {"value": 24, "evidence_status": "legacy_regression", "source": ["provenance/legacy_simulation/fine_manifest.json#/selected_design_count"]},
+        "normal_preloads_N": {"value": [0.5, 1.0, 2.0], "evidence_status": "legacy_regression", "source": ["provenance/legacy_simulation/fine_manifest.json#/preloads_N"]},
+        "path_length_m": {"value": 0.01, "evidence_status": "legacy_regression", "source": ["provenance/legacy_simulation/fine_manifest.json#/path_settings/path_length_m"]},
+        "dx_m": {"value": 0.0001, "evidence_status": "numerical_protocol", "source": ["provenance/legacy_simulation/fine_manifest.json#/path_settings/dx_m"]},
+        "path_start_x_m": {"value": 0.0, "evidence_status": "numerical_protocol", "source": ["provenance/legacy_simulation/fine_manifest.json#/path_settings/path_start_x_m"]},
+        "root_bracket_width_m": {"value": 0.006, "evidence_status": "numerical_protocol", "source": ["provenance/legacy_simulation/fine_manifest.json#/path_settings/backplate_travel_m"]},
+        "contact_clearance_m": {"value": 1e-12, "evidence_status": "legacy_regression", "source": ["provenance/legacy_simulation/fine_manifest.json#/path_settings/contact_clearance_m"]},
+        "legacy_relanding_search_steps": {"value": 5, "evidence_status": "legacy_regression", "source": ["provenance/legacy_simulation/fine_manifest.json#/path_settings/relanding_search_steps"]},
+        "capture_full_paths": {"value": true, "evidence_status": "legacy_regression", "source": ["provenance/legacy_simulation/fine_manifest.json#/capture_full_paths"]},
+        "legacy_solver_semantics": {"value": "constant-preload-reseat-v3", "evidence_status": "legacy_regression", "source": ["provenance/legacy_simulation/fine_manifest.json#/solver_semantics"]},
+        "model_baseline_ref": {"value": "legacy_model_baseline", "evidence_status": "legacy_regression", "source": ["provenance/legacy_simulation/fine_manifest.json#/model_settings"]}
       }
     },
     "legacy_terminal_archive": {
       "evidence_status": "legacy_regression",
-      "source": ["docs/archive/legacy_simulation_evidence/manifests/terminal_final_manifest.json"],
+      "source": [
+        "provenance/legacy_simulation/terminal_final_manifest.json",
+        "provenance/legacy_simulation/terminal_input_selected_designs.json"
+      ],
       "fields": {
-        "paired_seed_set": {"value": "legacy_final", "evidence_status": "legacy_regression", "source": ["src/spine_sim/m3_fast/campaign.py:257"]},
-        "terrain_condition_count": {"value": 300, "evidence_status": "legacy_regression", "source": ["docs/archive/legacy_simulation_evidence/manifests/terminal_final_manifest.json#/condition_count"]},
-        "input_design_count": {"value": 12, "evidence_status": "legacy_regression", "source": ["docs/archive/legacy_simulation_evidence/manifests/terminal_final_manifest.json#/design_count"]},
-        "selected_design_count": {"value": 6, "evidence_status": "legacy_regression", "source": ["docs/archive/legacy_simulation_evidence/manifests/terminal_final_manifest.json#/selected_design_count"]},
-        "normal_preloads_N": {"value": [0.5, 1.0, 2.0], "evidence_status": "legacy_regression", "source": ["docs/archive/legacy_simulation_evidence/manifests/terminal_final_manifest.json#/preloads_N"]},
-        "path_length_m": {"value": 0.01, "evidence_status": "legacy_regression", "source": ["docs/archive/legacy_simulation_evidence/manifests/terminal_final_manifest.json#/path_settings/path_length_m"]},
-        "dx_m": {"value": 5e-05, "evidence_status": "numerical_protocol", "source": ["docs/archive/legacy_simulation_evidence/manifests/terminal_final_manifest.json#/path_settings/dx_m"]},
-        "path_start_x_m": {"value": 0.0, "evidence_status": "numerical_protocol", "source": ["docs/archive/legacy_simulation_evidence/manifests/terminal_final_manifest.json#/path_settings/path_start_x_m"]},
-        "root_bracket_width_m": {"value": 0.006, "evidence_status": "numerical_protocol", "source": ["docs/archive/legacy_simulation_evidence/manifests/terminal_final_manifest.json#/path_settings/backplate_travel_m"]},
-        "contact_clearance_m": {"value": 1e-12, "evidence_status": "legacy_regression", "source": ["docs/archive/legacy_simulation_evidence/manifests/terminal_final_manifest.json#/path_settings/contact_clearance_m"]},
-        "legacy_relanding_search_steps": {"value": 5, "evidence_status": "legacy_regression", "source": ["docs/archive/legacy_simulation_evidence/manifests/terminal_final_manifest.json#/path_settings/relanding_search_steps"]},
-        "capture_full_paths": {"value": true, "evidence_status": "legacy_regression", "source": ["docs/archive/legacy_simulation_evidence/manifests/terminal_final_manifest.json#/capture_full_paths"]},
-        "terminal_preset_set": {"value": "terminal_12", "evidence_status": "legacy_regression", "source": ["docs/archive/legacy_simulation_evidence/manifests/terminal_input_selected_designs.json"]},
-        "legacy_solver_semantics": {"value": "constant-preload-reseat-v3", "evidence_status": "legacy_regression", "source": ["docs/archive/legacy_simulation_evidence/manifests/terminal_final_manifest.json#/solver_semantics"]},
-        "model_baseline_ref": {"value": "legacy_model_baseline", "evidence_status": "legacy_regression", "source": ["docs/archive/legacy_simulation_evidence/manifests/terminal_final_manifest.json#/model_settings"]}
+        "paired_seed_set": {"value": "legacy_final", "evidence_status": "legacy_regression", "source": ["git:9fd8c4a8e17835353c31f9058595abaceca31b4f:src/spine_sim/m3_fast/campaign.py:257"]},
+        "terrain_condition_count": {"value": 300, "evidence_status": "legacy_regression", "source": ["provenance/legacy_simulation/terminal_final_manifest.json#/condition_count"]},
+        "input_design_count": {"value": 12, "evidence_status": "legacy_regression", "source": ["provenance/legacy_simulation/terminal_final_manifest.json#/design_count"]},
+        "selected_design_count": {"value": 6, "evidence_status": "legacy_regression", "source": ["provenance/legacy_simulation/terminal_final_manifest.json#/selected_design_count"]},
+        "normal_preloads_N": {"value": [0.5, 1.0, 2.0], "evidence_status": "legacy_regression", "source": ["provenance/legacy_simulation/terminal_final_manifest.json#/preloads_N"]},
+        "path_length_m": {"value": 0.01, "evidence_status": "legacy_regression", "source": ["provenance/legacy_simulation/terminal_final_manifest.json#/path_settings/path_length_m"]},
+        "dx_m": {"value": 5e-05, "evidence_status": "numerical_protocol", "source": ["provenance/legacy_simulation/terminal_final_manifest.json#/path_settings/dx_m"]},
+        "path_start_x_m": {"value": 0.0, "evidence_status": "numerical_protocol", "source": ["provenance/legacy_simulation/terminal_final_manifest.json#/path_settings/path_start_x_m"]},
+        "root_bracket_width_m": {"value": 0.006, "evidence_status": "numerical_protocol", "source": ["provenance/legacy_simulation/terminal_final_manifest.json#/path_settings/backplate_travel_m"]},
+        "contact_clearance_m": {"value": 1e-12, "evidence_status": "legacy_regression", "source": ["provenance/legacy_simulation/terminal_final_manifest.json#/path_settings/contact_clearance_m"]},
+        "legacy_relanding_search_steps": {"value": 5, "evidence_status": "legacy_regression", "source": ["provenance/legacy_simulation/terminal_final_manifest.json#/path_settings/relanding_search_steps"]},
+        "capture_full_paths": {"value": true, "evidence_status": "legacy_regression", "source": ["provenance/legacy_simulation/terminal_final_manifest.json#/capture_full_paths"]},
+        "terminal_preset_set": {"value": "terminal_12", "evidence_status": "legacy_regression", "source": ["provenance/legacy_simulation/terminal_input_selected_designs.json"]},
+        "legacy_solver_semantics": {"value": "constant-preload-reseat-v3", "evidence_status": "legacy_regression", "source": ["provenance/legacy_simulation/terminal_final_manifest.json#/solver_semantics"]},
+        "model_baseline_ref": {"value": "legacy_model_baseline", "evidence_status": "legacy_regression", "source": ["provenance/legacy_simulation/terminal_final_manifest.json#/model_settings"]}
       }
     },
     "current_final_source": {
       "evidence_status": "numerical_protocol",
-      "source": ["src/spine_sim/m3_fast/campaign.py:1986-1995"],
+      "source": ["git:9fd8c4a8e17835353c31f9058595abaceca31b4f:src/spine_sim/m3_fast/campaign.py:1986-1995"],
       "fields": {
-        "paired_seed_set": {"value": "legacy_final", "evidence_status": "numerical_protocol", "source": ["src/spine_sim/m3_fast/campaign.py:1988"]},
-        "terrain_condition_count": {"value": 300, "evidence_status": "numerical_protocol", "source": ["src/spine_sim/m3_fast/campaign.py:2022-2027"]},
-        "input_design_count": {"value": 24, "evidence_status": "numerical_protocol", "source": ["src/spine_sim/m3_fast/campaign.py:2032-2036"]},
-        "selected_design_count": {"value": 6, "evidence_status": "numerical_protocol", "source": ["src/spine_sim/m3_fast/campaign.py:1986-1995"]},
-        "normal_preloads_N": {"value": [0.5, 1.0, 2.0], "evidence_status": "numerical_protocol", "source": ["src/spine_sim/m3_fast/campaign.py:235"]},
-        "path_length_m": {"value": 0.02, "evidence_status": "numerical_protocol", "source": ["src/spine_sim/m3_fast/campaign.py:1989-1993"]},
-        "dx_m": {"value": 0.0001, "evidence_status": "numerical_protocol", "source": ["src/spine_sim/m3_fast/campaign.py:1989-1993"]},
-        "path_start_x_m": {"value": 0.0, "evidence_status": "numerical_protocol", "source": ["src/spine_sim/m3_fast/solver.py:51"]},
-        "root_bracket_width_m": {"value": 0.006, "evidence_status": "numerical_protocol", "source": ["src/spine_sim/m3_fast/campaign.py:2007"]},
-        "contact_clearance_m": {"value": 1e-12, "evidence_status": "numerical_protocol", "source": ["src/spine_sim/m3_fast/solver.py:53"]},
-        "legacy_relanding_search_steps": {"value": 5, "evidence_status": "legacy_regression", "source": ["src/spine_sim/m3_fast/solver.py:54"]},
-        "capture_full_paths": {"value": true, "evidence_status": "numerical_protocol", "source": ["src/spine_sim/m3_fast/campaign.py:1986-1995"]},
-        "legacy_solver_semantics": {"value": "constant-preload-reseat-v3", "evidence_status": "legacy_regression", "source": ["src/spine_sim/m3_fast/campaign.py:81"]},
-        "model_baseline_ref": {"value": "legacy_model_baseline", "evidence_status": "numerical_protocol", "source": ["src/spine_sim/m3_fast/campaign.py:2006"]}
+        "paired_seed_set": {"value": "legacy_final", "evidence_status": "numerical_protocol", "source": ["git:9fd8c4a8e17835353c31f9058595abaceca31b4f:src/spine_sim/m3_fast/campaign.py:1988"]},
+        "terrain_condition_count": {"value": 300, "evidence_status": "numerical_protocol", "source": ["git:9fd8c4a8e17835353c31f9058595abaceca31b4f:src/spine_sim/m3_fast/campaign.py:2022-2027"]},
+        "input_design_count": {"value": 24, "evidence_status": "numerical_protocol", "source": ["git:9fd8c4a8e17835353c31f9058595abaceca31b4f:src/spine_sim/m3_fast/campaign.py:2032-2036"]},
+        "selected_design_count": {"value": 6, "evidence_status": "numerical_protocol", "source": ["git:9fd8c4a8e17835353c31f9058595abaceca31b4f:src/spine_sim/m3_fast/campaign.py:1986-1995"]},
+        "normal_preloads_N": {"value": [0.5, 1.0, 2.0], "evidence_status": "numerical_protocol", "source": ["git:9fd8c4a8e17835353c31f9058595abaceca31b4f:src/spine_sim/m3_fast/campaign.py:235"]},
+        "path_length_m": {"value": 0.02, "evidence_status": "numerical_protocol", "source": ["git:9fd8c4a8e17835353c31f9058595abaceca31b4f:src/spine_sim/m3_fast/campaign.py:1989-1993"]},
+        "dx_m": {"value": 0.0001, "evidence_status": "numerical_protocol", "source": ["git:9fd8c4a8e17835353c31f9058595abaceca31b4f:src/spine_sim/m3_fast/campaign.py:1989-1993"]},
+        "path_start_x_m": {"value": 0.0, "evidence_status": "numerical_protocol", "source": ["git:9fd8c4a8e17835353c31f9058595abaceca31b4f:src/spine_sim/m3_fast/solver.py:51"]},
+        "root_bracket_width_m": {"value": 0.006, "evidence_status": "numerical_protocol", "source": ["git:9fd8c4a8e17835353c31f9058595abaceca31b4f:src/spine_sim/m3_fast/campaign.py:2007"]},
+        "contact_clearance_m": {"value": 1e-12, "evidence_status": "numerical_protocol", "source": ["git:9fd8c4a8e17835353c31f9058595abaceca31b4f:src/spine_sim/m3_fast/solver.py:53"]},
+        "legacy_relanding_search_steps": {"value": 5, "evidence_status": "legacy_regression", "source": ["git:9fd8c4a8e17835353c31f9058595abaceca31b4f:src/spine_sim/m3_fast/solver.py:54"]},
+        "capture_full_paths": {"value": true, "evidence_status": "numerical_protocol", "source": ["git:9fd8c4a8e17835353c31f9058595abaceca31b4f:src/spine_sim/m3_fast/campaign.py:1986-1995"]},
+        "legacy_solver_semantics": {"value": "constant-preload-reseat-v3", "evidence_status": "legacy_regression", "source": ["git:9fd8c4a8e17835353c31f9058595abaceca31b4f:src/spine_sim/m3_fast/campaign.py:81"]},
+        "model_baseline_ref": {"value": "legacy_model_baseline", "evidence_status": "numerical_protocol", "source": ["git:9fd8c4a8e17835353c31f9058595abaceca31b4f:src/spine_sim/m3_fast/campaign.py:2006"]}
       }
     },
     "legacy_large_array_archive": {
       "evidence_status": "legacy_regression",
-      "source": ["docs/archive/legacy_simulation_evidence/manifests/large_array_manifest.json"],
+      "source": ["provenance/legacy_simulation/large_array_manifest.json"],
       "fields": {
-        "paired_seed_set": {"value": "legacy_large_array", "evidence_status": "legacy_regression", "source": ["docs/archive/legacy_simulation_evidence/manifests/large_array_manifest.json#/seeds"]},
-        "array_shapes": {"value": [[20, 20], [40, 40], [60, 60]], "evidence_status": "legacy_regression", "source": ["docs/archive/legacy_simulation_evidence/manifests/large_array_manifest.json#/array_sizes"]},
-        "spacing_m": {"value": 0.004, "evidence_status": "legacy_regression", "source": ["docs/archive/legacy_simulation_evidence/manifests/large_array_manifest.json#/spacing_m"]},
-        "tip_radius_m": {"value": 0.0001, "evidence_status": "legacy_regression", "source": ["docs/archive/legacy_simulation_evidence/manifests/large_array_manifest.json#/tip_radius_m"]},
-        "rod_diameter_m": {"value": 0.0006, "evidence_status": "legacy_regression", "source": ["docs/archive/legacy_simulation_evidence/manifests/large_array_manifest.json#/diameter_m"]},
-        "configurations": {"value": [{"pitch_rad": -1.0471975511965976, "installation": {"mode": "rigid"}}, {"pitch_rad": -1.3962634015954636, "installation": {"mode": "unilateral_spring", "stiffness_N_per_m": 2000.0, "travel_m": 0.004, "preload_N": 0.0, "tension_allowed": false}}], "evidence_status": "legacy_regression", "source": ["docs/archive/legacy_simulation_evidence/manifests/large_array_manifest.json#/configurations"]},
-        "normal_preloads_N": {"value": [2.0, 5.0, 10.0], "evidence_status": "legacy_regression", "source": ["docs/archive/legacy_simulation_evidence/manifests/large_array_manifest.json#/preloads_N"]},
-        "path_length_m": {"value": 0.01, "evidence_status": "legacy_regression", "source": ["docs/archive/legacy_simulation_evidence/manifests/large_array_manifest.json#/path_settings/path_length_m"]},
-        "dx_m": {"value": 5e-05, "evidence_status": "numerical_protocol", "source": ["docs/archive/legacy_simulation_evidence/manifests/large_array_manifest.json#/path_settings/dx_m"]},
-        "path_start_x_m": {"value": 0.0, "evidence_status": "numerical_protocol", "source": ["docs/archive/legacy_simulation_evidence/manifests/large_array_manifest.json#/path_settings/path_start_x_m"]},
-        "root_bracket_width_m": {"value": 0.006, "evidence_status": "numerical_protocol", "source": ["docs/archive/legacy_simulation_evidence/manifests/large_array_manifest.json#/path_settings/backplate_travel_m"]},
-        "contact_clearance_m": {"value": 1e-12, "evidence_status": "legacy_regression", "source": ["docs/archive/legacy_simulation_evidence/manifests/large_array_manifest.json#/path_settings/contact_clearance_m"]},
-        "legacy_relanding_search_steps": {"value": 5, "evidence_status": "legacy_regression", "source": ["docs/archive/legacy_simulation_evidence/manifests/large_array_manifest.json#/path_settings/relanding_search_steps"]},
-        "terrain_resolution_m": {"value": 2e-05, "evidence_status": "legacy_regression", "source": ["docs/archive/legacy_simulation_evidence/manifests/large_array_manifest.json#/terrain_resolution_m"]},
-        "terrain_target_rms_height_m": {"value": 3e-05, "evidence_status": "legacy_regression", "source": ["docs/archive/legacy_simulation_evidence/manifests/large_array_manifest.json#/terrain_statistics/target_rms_height_m"]},
-        "terrain_correlation_length_x_m": {"value": 5e-05, "evidence_status": "legacy_regression", "source": ["docs/archive/legacy_simulation_evidence/manifests/large_array_manifest.json#/terrain_statistics/correlation_length_x_m"]},
-        "terrain_correlation_length_y_m": {"value": 5e-05, "evidence_status": "legacy_regression", "source": ["docs/archive/legacy_simulation_evidence/manifests/large_array_manifest.json#/terrain_statistics/correlation_length_y_m"]}
+        "paired_seed_set": {"value": "legacy_large_array", "evidence_status": "legacy_regression", "source": ["provenance/legacy_simulation/large_array_manifest.json#/seeds"]},
+        "array_shapes": {"value": [[20, 20], [40, 40], [60, 60]], "evidence_status": "legacy_regression", "source": ["provenance/legacy_simulation/large_array_manifest.json#/array_sizes"]},
+        "spacing_m": {"value": 0.004, "evidence_status": "legacy_regression", "source": ["provenance/legacy_simulation/large_array_manifest.json#/spacing_m"]},
+        "tip_radius_m": {"value": 0.0001, "evidence_status": "legacy_regression", "source": ["provenance/legacy_simulation/large_array_manifest.json#/tip_radius_m"]},
+        "rod_diameter_m": {"value": 0.0006, "evidence_status": "legacy_regression", "source": ["provenance/legacy_simulation/large_array_manifest.json#/diameter_m"]},
+        "configurations": {"value": [{"pitch_rad": -1.0471975511965976, "installation": {"mode": "rigid"}}, {"pitch_rad": -1.3962634015954636, "installation": {"mode": "unilateral_spring", "stiffness_N_per_m": 2000.0, "travel_m": 0.004, "preload_N": 0.0, "tension_allowed": false}}], "evidence_status": "legacy_regression", "source": ["provenance/legacy_simulation/large_array_manifest.json#/configurations"]},
+        "normal_preloads_N": {"value": [2.0, 5.0, 10.0], "evidence_status": "legacy_regression", "source": ["provenance/legacy_simulation/large_array_manifest.json#/preloads_N"]},
+        "path_length_m": {"value": 0.01, "evidence_status": "legacy_regression", "source": ["provenance/legacy_simulation/large_array_manifest.json#/path_settings/path_length_m"]},
+        "dx_m": {"value": 5e-05, "evidence_status": "numerical_protocol", "source": ["provenance/legacy_simulation/large_array_manifest.json#/path_settings/dx_m"]},
+        "path_start_x_m": {"value": 0.0, "evidence_status": "numerical_protocol", "source": ["provenance/legacy_simulation/large_array_manifest.json#/path_settings/path_start_x_m"]},
+        "root_bracket_width_m": {"value": 0.006, "evidence_status": "numerical_protocol", "source": ["provenance/legacy_simulation/large_array_manifest.json#/path_settings/backplate_travel_m"]},
+        "contact_clearance_m": {"value": 1e-12, "evidence_status": "legacy_regression", "source": ["provenance/legacy_simulation/large_array_manifest.json#/path_settings/contact_clearance_m"]},
+        "legacy_relanding_search_steps": {"value": 5, "evidence_status": "legacy_regression", "source": ["provenance/legacy_simulation/large_array_manifest.json#/path_settings/relanding_search_steps"]},
+        "terrain_resolution_m": {"value": 2e-05, "evidence_status": "legacy_regression", "source": ["provenance/legacy_simulation/large_array_manifest.json#/terrain_resolution_m"]},
+        "terrain_target_rms_height_m": {"value": 3e-05, "evidence_status": "legacy_regression", "source": ["provenance/legacy_simulation/large_array_manifest.json#/terrain_statistics/target_rms_height_m"]},
+        "terrain_correlation_length_x_m": {"value": 5e-05, "evidence_status": "legacy_regression", "source": ["provenance/legacy_simulation/large_array_manifest.json#/terrain_statistics/correlation_length_x_m"]},
+        "terrain_correlation_length_y_m": {"value": 5e-05, "evidence_status": "legacy_regression", "source": ["provenance/legacy_simulation/large_array_manifest.json#/terrain_statistics/correlation_length_y_m"]}
       }
     },
     "terrain_coverage_envelope": {
       "evidence_status": "numerical_protocol",
-      "source": ["docs/engineering/工程仿真参数继承表.md:118"],
+      "source": ["git:9667a1430936a39cf72a885d738a72961c73ced3:docs/engineering/工程仿真参数继承表.md:118"],
       "fields": {
-        "drag_length_m": {"value": 0.1, "evidence_status": "numerical_protocol", "source": ["docs/engineering/工程仿真参数继承表.md:118"]},
-        "maximum_array_shape": {"value": [6, 6], "evidence_status": "numerical_protocol", "source": ["docs/engineering/工程仿真参数继承表.md:118"]},
-        "maximum_spacing_m": {"value": 0.006, "evidence_status": "numerical_protocol", "source": ["docs/engineering/工程仿真参数继承表.md:118"]},
-        "maximum_tip_radius_m": {"value": 0.0001, "evidence_status": "numerical_protocol", "source": ["docs/engineering/工程仿真参数继承表.md:118"]},
-        "maximum_spring_travel_m": {"value": 0.004, "evidence_status": "numerical_protocol", "source": ["docs/engineering/工程仿真参数继承表.md:118"]},
-        "beam_margin_m": {"value": 0.0005, "evidence_status": "numerical_protocol", "source": ["docs/engineering/工程仿真参数继承表.md:118"]},
-        "event_margin_m": {"value": 0.0001, "evidence_status": "numerical_protocol", "source": ["docs/engineering/工程仿真参数继承表.md:118"]},
-        "rod_clearance_reserve_m": {"value": 0.00425, "evidence_status": "numerical_protocol", "source": ["docs/engineering/工程仿真参数继承表.md:118"]},
-        "lateral_compliance_margin_m": {"value": 0.0005, "evidence_status": "numerical_protocol", "source": ["docs/engineering/工程仿真参数继承表.md:118"]},
-        "terrain_resolution_m": {"value": 1e-05, "evidence_status": "numerical_protocol", "source": ["docs/engineering/工程仿真参数继承表.md:118"]}
+        "drag_length_m": {"value": 0.1, "evidence_status": "numerical_protocol", "source": ["git:9667a1430936a39cf72a885d738a72961c73ced3:docs/engineering/工程仿真参数继承表.md:118"]},
+        "maximum_array_shape": {"value": [6, 6], "evidence_status": "numerical_protocol", "source": ["git:9667a1430936a39cf72a885d738a72961c73ced3:docs/engineering/工程仿真参数继承表.md:118"]},
+        "maximum_spacing_m": {"value": 0.006, "evidence_status": "numerical_protocol", "source": ["git:9667a1430936a39cf72a885d738a72961c73ced3:docs/engineering/工程仿真参数继承表.md:118"]},
+        "maximum_tip_radius_m": {"value": 0.0001, "evidence_status": "numerical_protocol", "source": ["git:9667a1430936a39cf72a885d738a72961c73ced3:docs/engineering/工程仿真参数继承表.md:118"]},
+        "maximum_spring_travel_m": {"value": 0.004, "evidence_status": "numerical_protocol", "source": ["git:9667a1430936a39cf72a885d738a72961c73ced3:docs/engineering/工程仿真参数继承表.md:118"]},
+        "beam_margin_m": {"value": 0.0005, "evidence_status": "numerical_protocol", "source": ["git:9667a1430936a39cf72a885d738a72961c73ced3:docs/engineering/工程仿真参数继承表.md:118"]},
+        "event_margin_m": {"value": 0.0001, "evidence_status": "numerical_protocol", "source": ["git:9667a1430936a39cf72a885d738a72961c73ced3:docs/engineering/工程仿真参数继承表.md:118"]},
+        "rod_clearance_reserve_m": {"value": 0.00425, "evidence_status": "numerical_protocol", "source": ["git:9667a1430936a39cf72a885d738a72961c73ced3:docs/engineering/工程仿真参数继承表.md:118"]},
+        "lateral_compliance_margin_m": {"value": 0.0005, "evidence_status": "numerical_protocol", "source": ["git:9667a1430936a39cf72a885d738a72961c73ced3:docs/engineering/工程仿真参数继承表.md:118"]},
+        "terrain_resolution_m": {"value": 1e-05, "evidence_status": "numerical_protocol", "source": ["git:9667a1430936a39cf72a885d738a72961c73ced3:docs/engineering/工程仿真参数继承表.md:118"]}
       }
     },
     "legacy_cross_gripper_preset": {
       "evidence_status": "legacy_regression",
-      "source": ["docs/archive/legacy_requirements/爪刺耦合仿真器_工程背景_理论边界与实现指导_执行版.md:214-234"],
+      "source": ["git:50a1a3bfc011775910a3ffca535a739609927b52:docs/archive/legacy_requirements/爪刺耦合仿真器_工程背景_理论边界与实现指导_执行版.md:214-234"],
       "fields": {
-        "unit_directions_global": {"value": ["+X", "-X", "+Y", "-Y"], "evidence_status": "legacy_regression", "source": ["docs/archive/legacy_requirements/爪刺耦合仿真器_工程背景_理论边界与实现指导_执行版.md:214-220"]},
-        "nominal_half_span_m": {"value": 0.04, "evidence_status": "legacy_regression", "source": ["docs/archive/legacy_requirements/爪刺耦合仿真器_工程背景_理论边界与实现指导_执行版.md:216-220"]},
-        "external_load_point_m": {"value": [0.0, 0.0, 0.05], "evidence_status": "legacy_regression", "source": ["docs/archive/legacy_requirements/爪刺耦合仿真器_工程背景_理论边界与实现指导_执行版.md:222-226"]},
-        "comparison_directions_global": {"value": [[1.0, 0.0, 0.0], [0.7071067811865476, 0.7071067811865476, 0.0]], "evidence_status": "legacy_regression", "source": ["docs/archive/legacy_requirements/爪刺耦合仿真器_工程背景_理论边界与实现指导_执行版.md:228-234"]},
-        "implementation_scope": {"value": "future_recalculation_only_not_current_whole_gripper_solver", "evidence_status": "legacy_regression", "source": ["docs/engineering/工程仿真参数继承表.md:64"]}
+        "unit_directions_global": {"value": ["+X", "-X", "+Y", "-Y"], "evidence_status": "legacy_regression", "source": ["git:50a1a3bfc011775910a3ffca535a739609927b52:docs/archive/legacy_requirements/爪刺耦合仿真器_工程背景_理论边界与实现指导_执行版.md:214-220"]},
+        "nominal_half_span_m": {"value": 0.04, "evidence_status": "legacy_regression", "source": ["git:50a1a3bfc011775910a3ffca535a739609927b52:docs/archive/legacy_requirements/爪刺耦合仿真器_工程背景_理论边界与实现指导_执行版.md:216-220"]},
+        "external_load_point_m": {"value": [0.0, 0.0, 0.05], "evidence_status": "legacy_regression", "source": ["git:50a1a3bfc011775910a3ffca535a739609927b52:docs/archive/legacy_requirements/爪刺耦合仿真器_工程背景_理论边界与实现指导_执行版.md:222-226"]},
+        "comparison_directions_global": {"value": [[1.0, 0.0, 0.0], [0.7071067811865476, 0.7071067811865476, 0.0]], "evidence_status": "legacy_regression", "source": ["git:50a1a3bfc011775910a3ffca535a739609927b52:docs/archive/legacy_requirements/爪刺耦合仿真器_工程背景_理论边界与实现指导_执行版.md:228-234"]},
+        "implementation_scope": {"value": "future_recalculation_only_not_current_whole_gripper_solver", "evidence_status": "legacy_regression", "source": ["git:9667a1430936a39cf72a885d738a72961c73ced3:docs/engineering/工程仿真参数继承表.md:64"]}
       }
     },
     "legacy_analysis": {
       "evidence_status": "legacy_analysis",
-      "source": ["docs/archive/legacy_simulation_evidence/data_contract/派生指标字段说明.md"],
+      "source": ["git:50a1a3bfc011775910a3ffca535a739609927b52:docs/archive/legacy_simulation_evidence/data_contract/派生指标字段说明.md:#M3细筛派生指标说明"],
       "fields": {
-        "primary_force_ratio_threshold": {"value": 0.25, "evidence_status": "legacy_analysis", "source": ["docs/archive/legacy_simulation_evidence/data_contract/派生指标字段说明.md#承载建立"]},
-        "sensitivity_force_ratio_thresholds": {"value": [0.1, 0.5], "evidence_status": "legacy_analysis", "source": ["docs/archive/legacy_simulation_evidence/data_contract/派生指标字段说明.md#承载建立"]},
-        "primary_window_m": {"value": 0.0005, "evidence_status": "legacy_analysis", "source": ["docs/archive/legacy_simulation_evidence/data_contract/派生指标字段说明.md#承载建立"]},
-        "sensitivity_window_m": {"value": 0.00025, "evidence_status": "legacy_analysis", "source": ["docs/archive/legacy_simulation_evidence/data_contract/派生指标字段说明.md#承载建立"]},
-        "duty_metric": {"value": "duty25", "evidence_status": "legacy_analysis", "source": ["docs/archive/legacy_simulation_evidence/data_contract/派生指标字段说明.md#承载维持与恢复"]},
-        "invalid_station_policy": {"value": "legacy_zero_fill_for_analysis_only", "evidence_status": "legacy_analysis", "source": ["docs/archive/legacy_simulation_evidence/data_contract/派生指标字段说明.md#支撑和均载"]}
+        "primary_force_ratio_threshold": {"value": 0.25, "evidence_status": "legacy_analysis", "source": ["git:50a1a3bfc011775910a3ffca535a739609927b52:docs/archive/legacy_simulation_evidence/data_contract/派生指标字段说明.md:#承载建立"]},
+        "sensitivity_force_ratio_thresholds": {"value": [0.1, 0.5], "evidence_status": "legacy_analysis", "source": ["git:50a1a3bfc011775910a3ffca535a739609927b52:docs/archive/legacy_simulation_evidence/data_contract/派生指标字段说明.md:#承载建立"]},
+        "primary_window_m": {"value": 0.0005, "evidence_status": "legacy_analysis", "source": ["git:50a1a3bfc011775910a3ffca535a739609927b52:docs/archive/legacy_simulation_evidence/data_contract/派生指标字段说明.md:#承载建立"]},
+        "sensitivity_window_m": {"value": 0.00025, "evidence_status": "legacy_analysis", "source": ["git:50a1a3bfc011775910a3ffca535a739609927b52:docs/archive/legacy_simulation_evidence/data_contract/派生指标字段说明.md:#承载建立"]},
+        "duty_metric": {"value": "duty25", "evidence_status": "legacy_analysis", "source": ["git:50a1a3bfc011775910a3ffca535a739609927b52:docs/archive/legacy_simulation_evidence/data_contract/派生指标字段说明.md:#承载维持与恢复"]},
+        "invalid_station_policy": {"value": "legacy_zero_fill_for_analysis_only", "evidence_status": "legacy_analysis", "source": ["git:50a1a3bfc011775910a3ffca535a739609927b52:docs/archive/legacy_simulation_evidence/data_contract/派生指标字段说明.md:#支撑和均载"]}
       }
     }
   },
   "terminal_presets": {
-    "A1": {"value": {"legacy_design_id": "m3_full_design_b1417f0abdd7ab61b2b1", "role": "优势候选A1", "mechanism": "刚性快速起载/中等阵列", "reason": "稳定起载成功率100%，中位起载距离0.2 mm；用于检验刚性快速承载。"}, "evidence_status": "legacy_regression", "source": ["docs/archive/legacy_simulation_evidence/manifests/terminal_input_selected_designs.json#/roles/m3_full_design_b1417f0abdd7ab61b2b1"]},
-    "A2": {"value": {"legacy_design_id": "m3_full_design_4f0c3f82336e077e90bc", "role": "优势候选A2", "mechanism": "刚性高累计承载/沿+x五列", "reason": "正向累计承载和净承载均高，起载中位距离0.5 mm。"}, "evidence_status": "legacy_regression", "source": ["docs/archive/legacy_simulation_evidence/manifests/terminal_input_selected_designs.json#/roles/m3_full_design_4f0c3f82336e077e90bc"]},
-    "A3": {"value": {"legacy_design_id": "m3_full_design_60bc3108fbb407b1815c", "role": "优势候选A3", "mechanism": "高刚度柔顺/大阵列/固定80°", "reason": "无支撑缺口、净承载为正，兼顾持续性和载荷共享。"}, "evidence_status": "legacy_regression", "source": ["docs/archive/legacy_simulation_evidence/manifests/terminal_input_selected_designs.json#/roles/m3_full_design_60bc3108fbb407b1815c"]},
-    "A4": {"value": {"legacy_design_id": "m3_full_design_84bc8db4f9902f13b75c", "role": "优势候选A4", "mechanism": "低刚度柔顺/高均载", "reason": "300 N/m中表现突出，起载成功率高、均载好，用于检验柔顺增益。"}, "evidence_status": "legacy_regression", "source": ["docs/archive/legacy_simulation_evidence/manifests/terminal_input_selected_designs.json#/roles/m3_full_design_84bc8db4f9902f13b75c"]},
-    "A5": {"value": {"legacy_design_id": "m3_full_design_10af3f726401a9407f30", "role": "优势候选A5", "mechanism": "中刚度/角度梯度/小阵列", "reason": "800 N/m、60→80°梯度的高成功率代表，制造规模小。"}, "evidence_status": "legacy_regression", "source": ["docs/archive/legacy_simulation_evidence/manifests/terminal_input_selected_designs.json#/roles/m3_full_design_10af3f726401a9407f30"]},
-    "C1": {"value": {"legacy_design_id": "m3_full_design_165e033132586fff1c48", "role": "机理对照C1", "mechanism": "最小刚性阵列", "reason": "2×2刚性仍可快速承载；用于区分阵列冗余与刚性起载效应。"}, "evidence_status": "legacy_regression", "source": ["docs/archive/legacy_simulation_evidence/manifests/terminal_input_selected_designs.json#/roles/m3_full_design_165e033132586fff1c48"]},
-    "C2": {"value": {"legacy_design_id": "m3_full_design_acc60e377b0cca874e29", "role": "机理对照C2", "mechanism": "刚性角度梯度", "reason": "与刚性固定角方案比较角度梯度对起载和恢复的影响。"}, "evidence_status": "legacy_regression", "source": ["docs/archive/legacy_simulation_evidence/manifests/terminal_input_selected_designs.json#/roles/m3_full_design_acc60e377b0cca874e29"]},
-    "C3": {"value": {"legacy_design_id": "m3_full_design_679df696f2811efa84f4", "role": "刚度对照C3", "mechanism": "匹配几何/300 N/m", "reason": "2×2、6 mm、固定60°、d0.8/r50刚度三联对照之一。"}, "evidence_status": "legacy_regression", "source": ["docs/archive/legacy_simulation_evidence/manifests/terminal_input_selected_designs.json#/roles/m3_full_design_679df696f2811efa84f4"]},
-    "C4": {"value": {"legacy_design_id": "m3_full_design_5b14632013cae856bf1f", "role": "刚度对照C4", "mechanism": "匹配几何/800 N/m", "reason": "2×2、6 mm、固定60°、d0.8/r50刚度三联对照之一。"}, "evidence_status": "legacy_regression", "source": ["docs/archive/legacy_simulation_evidence/manifests/terminal_input_selected_designs.json#/roles/m3_full_design_5b14632013cae856bf1f"]},
-    "C5": {"value": {"legacy_design_id": "m3_full_design_373480a2081564f5a91e", "role": "刚度对照C5", "mechanism": "匹配几何/2000 N/m", "reason": "2×2、6 mm、固定60°、d0.8/r50刚度三联对照之一。"}, "evidence_status": "legacy_regression", "source": ["docs/archive/legacy_simulation_evidence/manifests/terminal_input_selected_designs.json#/roles/m3_full_design_373480a2081564f5a91e"]},
-    "C6": {"value": {"legacy_design_id": "m3_full_design_ddb66bd524680d765f5c", "role": "方向对照C6", "mechanism": "2×5梯度阵列", "reason": "与5×2完全匹配，用于隔离阵列长边方向效应。"}, "evidence_status": "legacy_regression", "source": ["docs/archive/legacy_simulation_evidence/manifests/terminal_input_selected_designs.json#/roles/m3_full_design_ddb66bd524680d765f5c"]},
-    "C7": {"value": {"legacy_design_id": "m3_full_design_7c8a201bbcbd0989e2b1", "role": "方向对照C7", "mechanism": "5×2梯度阵列", "reason": "与2×5完全匹配，用于隔离阵列长边方向效应。"}, "evidence_status": "legacy_regression", "source": ["docs/archive/legacy_simulation_evidence/manifests/terminal_input_selected_designs.json#/roles/m3_full_design_7c8a201bbcbd0989e2b1"]}
+    "A1": {"value": {"legacy_design_id": "m3_full_design_b1417f0abdd7ab61b2b1", "role": "优势候选A1", "mechanism": "刚性快速起载/中等阵列", "reason": "稳定起载成功率100%，中位起载距离0.2 mm；用于检验刚性快速承载。"}, "evidence_status": "legacy_regression", "source": ["provenance/legacy_simulation/terminal_input_selected_designs.json#/roles/m3_full_design_b1417f0abdd7ab61b2b1"]},
+    "A2": {"value": {"legacy_design_id": "m3_full_design_4f0c3f82336e077e90bc", "role": "优势候选A2", "mechanism": "刚性高累计承载/沿+x五列", "reason": "正向累计承载和净承载均高，起载中位距离0.5 mm。"}, "evidence_status": "legacy_regression", "source": ["provenance/legacy_simulation/terminal_input_selected_designs.json#/roles/m3_full_design_4f0c3f82336e077e90bc"]},
+    "A3": {"value": {"legacy_design_id": "m3_full_design_60bc3108fbb407b1815c", "role": "优势候选A3", "mechanism": "高刚度柔顺/大阵列/固定80°", "reason": "无支撑缺口、净承载为正，兼顾持续性和载荷共享。"}, "evidence_status": "legacy_regression", "source": ["provenance/legacy_simulation/terminal_input_selected_designs.json#/roles/m3_full_design_60bc3108fbb407b1815c"]},
+    "A4": {"value": {"legacy_design_id": "m3_full_design_84bc8db4f9902f13b75c", "role": "优势候选A4", "mechanism": "低刚度柔顺/高均载", "reason": "300 N/m中表现突出，起载成功率高、均载好，用于检验柔顺增益。"}, "evidence_status": "legacy_regression", "source": ["provenance/legacy_simulation/terminal_input_selected_designs.json#/roles/m3_full_design_84bc8db4f9902f13b75c"]},
+    "A5": {"value": {"legacy_design_id": "m3_full_design_10af3f726401a9407f30", "role": "优势候选A5", "mechanism": "中刚度/角度梯度/小阵列", "reason": "800 N/m、60→80°梯度的高成功率代表，制造规模小。"}, "evidence_status": "legacy_regression", "source": ["provenance/legacy_simulation/terminal_input_selected_designs.json#/roles/m3_full_design_10af3f726401a9407f30"]},
+    "C1": {"value": {"legacy_design_id": "m3_full_design_165e033132586fff1c48", "role": "机理对照C1", "mechanism": "最小刚性阵列", "reason": "2×2刚性仍可快速承载；用于区分阵列冗余与刚性起载效应。"}, "evidence_status": "legacy_regression", "source": ["provenance/legacy_simulation/terminal_input_selected_designs.json#/roles/m3_full_design_165e033132586fff1c48"]},
+    "C2": {"value": {"legacy_design_id": "m3_full_design_acc60e377b0cca874e29", "role": "机理对照C2", "mechanism": "刚性角度梯度", "reason": "与刚性固定角方案比较角度梯度对起载和恢复的影响。"}, "evidence_status": "legacy_regression", "source": ["provenance/legacy_simulation/terminal_input_selected_designs.json#/roles/m3_full_design_acc60e377b0cca874e29"]},
+    "C3": {"value": {"legacy_design_id": "m3_full_design_679df696f2811efa84f4", "role": "刚度对照C3", "mechanism": "匹配几何/300 N/m", "reason": "2×2、6 mm、固定60°、d0.8/r50刚度三联对照之一。"}, "evidence_status": "legacy_regression", "source": ["provenance/legacy_simulation/terminal_input_selected_designs.json#/roles/m3_full_design_679df696f2811efa84f4"]},
+    "C4": {"value": {"legacy_design_id": "m3_full_design_5b14632013cae856bf1f", "role": "刚度对照C4", "mechanism": "匹配几何/800 N/m", "reason": "2×2、6 mm、固定60°、d0.8/r50刚度三联对照之一。"}, "evidence_status": "legacy_regression", "source": ["provenance/legacy_simulation/terminal_input_selected_designs.json#/roles/m3_full_design_5b14632013cae856bf1f"]},
+    "C5": {"value": {"legacy_design_id": "m3_full_design_373480a2081564f5a91e", "role": "刚度对照C5", "mechanism": "匹配几何/2000 N/m", "reason": "2×2、6 mm、固定60°、d0.8/r50刚度三联对照之一。"}, "evidence_status": "legacy_regression", "source": ["provenance/legacy_simulation/terminal_input_selected_designs.json#/roles/m3_full_design_373480a2081564f5a91e"]},
+    "C6": {"value": {"legacy_design_id": "m3_full_design_ddb66bd524680d765f5c", "role": "方向对照C6", "mechanism": "2×5梯度阵列", "reason": "与5×2完全匹配，用于隔离阵列长边方向效应。"}, "evidence_status": "legacy_regression", "source": ["provenance/legacy_simulation/terminal_input_selected_designs.json#/roles/m3_full_design_ddb66bd524680d765f5c"]},
+    "C7": {"value": {"legacy_design_id": "m3_full_design_7c8a201bbcbd0989e2b1", "role": "方向对照C7", "mechanism": "5×2梯度阵列", "reason": "与2×5完全匹配，用于隔离阵列长边方向效应。"}, "evidence_status": "legacy_regression", "source": ["provenance/legacy_simulation/terminal_input_selected_designs.json#/roles/m3_full_design_7c8a201bbcbd0989e2b1"]}
   },
   "selection_sets": {
     "machine_final_six": {
       "value": ["C6", "A3", "A4", "C5", "C2", "C7"],
       "evidence_status": "legacy_regression",
-      "source": ["docs/engineering/工程仿真参数继承表.md:68-74"]
+      "source": ["git:9667a1430936a39cf72a885d738a72961c73ced3:docs/engineering/工程仿真参数继承表.md:68-74"]
     },
     "human_primary_four": {
       "value": ["A1", "A2", "A3", "A5"],
       "evidence_status": "legacy_regression",
-      "source": ["docs/engineering/工程仿真参数继承表.md:68-74"]
+      "source": ["git:9667a1430936a39cf72a885d738a72961c73ced3:docs/engineering/工程仿真参数继承表.md:68-74"]
     },
     "human_optional_fifth": {
       "value": ["A4"],
       "evidence_status": "legacy_regression",
-      "source": ["docs/engineering/工程仿真参数继承表.md:68-74"]
+      "source": ["git:9667a1430936a39cf72a885d738a72961c73ced3:docs/engineering/工程仿真参数继承表.md:68-74"]
     }
   }
 }

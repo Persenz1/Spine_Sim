@@ -19,12 +19,11 @@ from .envelope import (
     compute_track_geometry,
     forward_cap_gate,
 )
-from .heightmap import (
+from .measured import (
     FileHeightMapSource,
     register_heightmap_source,
     sample_file_heightmap,
 )
-from .formal import generate_formal_terrain_batch
 from .library import TerrainLibrary
 from .models import (
     ENVELOPE_ALGORITHM_VERSION,
@@ -86,7 +85,6 @@ __all__ = [
     "generate_defined_geometry",
     "generate_terrain",
     "refine_material_terrain_same_realization",
-    "generate_formal_terrain_batch",
     "generate_terrain_suite",
     "place_sphere_on_patch",
     "available_profiles",

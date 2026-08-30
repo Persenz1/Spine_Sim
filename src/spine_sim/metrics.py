@@ -49,11 +49,11 @@ class PathResistanceMetrics:
 
 def _inverse_simpson(values: Sequence[float]) -> float | None:
     array = np.asarray(values, dtype=float)
-    if array.size == 0:
-        return None
     total = float(np.sum(array))
+    if total <= 0.0:
+        return None
     denominator = float(np.dot(array, array))
-    if total <= 0.0 or denominator <= 0.0:
+    if denominator <= 0.0:
         return None
     return total * total / denominator
 
@@ -113,10 +113,9 @@ def compute_array_counts(
         and item.tangent_resistance_N is not None
         and np.isfinite(item.tangent_resistance_N)
     ]
-    if active_magnitudes and float(np.mean(active_magnitudes)) > 0.0:
-        sharing_index = float(
-            np.max(active_magnitudes) / np.mean(active_magnitudes)
-        )
+    active_mean = float(np.mean(active_magnitudes)) if active_magnitudes else 0.0
+    if active_mean > 0.0:
+        sharing_index = float(np.max(active_magnitudes) / active_mean)
     else:
         sharing_index = None
 

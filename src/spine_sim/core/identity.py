@@ -63,23 +63,3 @@ def identity(kind: str, normalized_input: Any, *, module_version: str = "1") -> 
 
 def lineage_hash(*upstream_records: Any) -> str:
     return stable_hash({"upstream": list(upstream_records)})
-
-
-def terrain_recipe_id(value: Any, *, module_version: str) -> str:
-    return identity("terrain_recipe", value, module_version=module_version)
-
-
-def region_id(value: Any, *, module_version: str = "1") -> str:
-    return identity("region", value, module_version=module_version)
-
-
-def track_id(value: Any, *, module_version: str = "1") -> str:
-    return identity("track", value, module_version=module_version)
-
-
-def case_id(value: Any, *, module_version: str) -> str:
-    return identity("case", value, module_version=module_version)
-
-
-def campaign_id(value: Any, *, module_version: str) -> str:
-    return identity("campaign", value, module_version=module_version)

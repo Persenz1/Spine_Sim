@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass, replace
+from dataclasses import replace
 from typing import Any, Mapping
 
 import numpy as np
@@ -32,6 +32,7 @@ from spine_sim.core.states import (
     PhysicalState,
     SpringBranch,
 )
+from spine_sim.geometry import CandidateCursor, ContactCandidate, GEOMETRY_VERSION
 from spine_sim.single_spine import (
     BaseMotion,
     FailurePayload,
@@ -45,30 +46,7 @@ from spine_sim.single_spine import (
     SuspensionParameters,
     solve_single_spine,
 )
-
-
-@dataclass(frozen=True)
-class Clearance:
-    collision: bool | None = False
-
-
-@dataclass(frozen=True)
-class Candidate:
-    candidate_id: str
-    selected_normal: tuple[float, float, float]
-    signed_gap_m: float
-    sphere_center_m: tuple[float, float, float]
-    support_points_m: tuple[tuple[float, float, float], ...]
-    valid: bool = True
-    near_tie: bool = False
-    tangent_basis: tuple[tuple[float, float, float], ...] = (
-        (0.0, 1.0, 0.0),
-        (0.0, 0.0, 1.0),
-    )
-    forward_cap_valid: bool | None = True
-    rod_clearance: Clearance | None = Clearance()
-    effective_radius_m: float | None = 40e-6
-    search_cursor: int = 0
+from spine_sim.terrain.envelope import RodClearanceResult
 
 
 def _candidate(
@@ -78,14 +56,47 @@ def _candidate(
     normal: tuple[float, float, float] = (1.0, 0.0, 0.0),
     terrain_gap_m: float = 0.0,
     tip_radius_m: float = 50e-6,
-) -> Candidate:
-    center = np.asarray(point) + tip_radius_m * np.asarray(normal)
-    return Candidate(
+    candidate_index: int = 0,
+) -> ContactCandidate:
+    normal_vector = np.asarray(normal, dtype=np.float64)
+    normal_vector /= np.linalg.norm(normal_vector)
+    center = np.asarray(point, dtype=np.float64) + tip_radius_m * normal_vector
+    reference = np.array([0.0, 1.0, 0.0])
+    if abs(float(np.dot(reference, normal_vector))) > 0.9:
+        reference = np.array([0.0, 0.0, 1.0])
+    tangent = reference - np.dot(reference, normal_vector) * normal_vector
+    tangent /= np.linalg.norm(tangent)
+    feature_id = f"feature-{spine_id}"
+    return ContactCandidate(
         candidate_id=f"candidate-{spine_id}",
-        selected_normal=normal,
+        lineage=f"lineage-{spine_id}",
+        terrain_version="array-test-terrain",
+        track_id=f"track-{spine_id}",
+        geometry_version=GEOMETRY_VERSION,
+        candidate_index=candidate_index,
+        path_position_m=float(candidate_index),
+        feature_id=feature_id,
+        sphere_center_m=center,
+        support_points_m=np.asarray([point], dtype=np.float64),
         signed_gap_m=terrain_gap_m,
-        sphere_center_m=tuple(float(value) for value in center),
-        support_points_m=(point,),
+        curvature_radius_m=200e-6,
+        surface_normal=normal_vector,
+        envelope_normal=normal_vector,
+        contact_normal=normal_vector,
+        normal_model="contact",
+        tangent_basis=np.stack((tangent, np.cross(normal_vector, tangent))),
+        valid=True,
+        near_tie=False,
+        geometry_uncertain=False,
+        gap_lower_m=None,
+        gap_upper_m=None,
+        forward_cap_valid=True,
+        rod_clearance=RodClearanceResult(False, 1e-3, 1, ()),
+        search_cursor=CandidateCursor(
+            next_path_index=candidate_index + 1,
+            candidate_index=candidate_index + 1,
+            last_feature_id=feature_id,
+        ),
     )
 
 
@@ -214,7 +225,7 @@ def _install_linear_single_solver(
         suspension: SuspensionParameters,
         accepted: SpineAcceptedState,
         motion: BaseMotion,
-        candidate: Candidate | None,
+        candidate: ContactCandidate | None,
         *,
         tolerances: SingleSpineTolerances,
     ) -> SingleSpineTrial:
@@ -292,11 +303,6 @@ def _install_linear_single_solver(
                     spine_id=geometry.spine_id,
                     load_parameter=motion.load_parameter,
                     details={
-                        "failure": {
-                            "continuation_action": (
-                                ContinuationAction.PERMANENT_REMOVE.value
-                            )
-                        },
                         "force_before_N": tuple(
                             float(value) for value in force_before
                         ),
@@ -408,7 +414,7 @@ def _install_linear_single_solver(
                 accepted,
                 physical_state=PhysicalState.SEARCH,
                 relative_displacement_m=motion.relative_displacement_m,
-                search_cursor=law["next_cursor"],
+                search_cursor=candidate.search_cursor,
                 last_load_parameter=motion.load_parameter,
                 event_sequence=result_events[-1].sequence,
                 revision=accepted.revision + 1,
@@ -481,9 +487,7 @@ def _install_linear_single_solver(
             numerical_state=numerical_state,
             margins={},
             capacity_assessments={},
-            complementarity_residuals=law.get(
-                "complementarity_residuals", {}
-            ),
+            complementarity_residuals={},
             diagnostics={},
             events=result_events,
             failure=result_failure,
@@ -550,6 +554,42 @@ def test_n_equals_one_is_the_canonical_single_spine_and_pose_sign() -> None:
     assert array_trial.result.physical_backplate_pose == pytest.approx(
         tuple(-value for value in q)
     )
+
+
+def test_array_accepted_state_owns_its_local_integrity_boundary() -> None:
+    initial = ArrayAcceptedState.initial([_spine("state-boundary")])
+    with pytest.raises(ConfigurationError, match="q_C"):
+        replace(initial, q_C=(0.0,) * 5)
+    with pytest.raises(ConfigurationError, match="q_C"):
+        replace(initial, q_C=(0.0, 0.0, 0.0, 0.0, 0.0, np.nan))
+    with pytest.raises(ConfigurationError, match="load_parameter"):
+        replace(initial, load_parameter=np.inf)
+    with pytest.raises(ConfigurationError, match="revision"):
+        replace(initial, revision=-1)
+    with pytest.raises(ConfigurationError, match="at least one spine"):
+        replace(initial, spine_states=())
+    with pytest.raises(ConfigurationError, match="IDs must be unique"):
+        replace(
+            initial,
+            spine_states=(initial.spine_states[0], initial.spine_states[0]),
+        )
+
+
+def test_active_candidate_missing_from_instance_is_data_integrity_error() -> None:
+    spine = _spine("missing-active")
+    initial = ArrayAcceptedState.initial([spine])
+    active_candidate = spine.candidate
+    assert active_candidate is not None
+    active = replace(
+        initial.spine_states[0],
+        physical_state=PhysicalState.STICK,
+        candidate_id="missing-candidate",
+        contact_point_m=active_candidate.support_points_m[0],
+        contact_normal=active_candidate.selected_normal,
+        search_cursor=active_candidate.search_cursor,
+    )
+    with pytest.raises(ConfigurationError, match="candidate_id is missing"):
+        array_module._candidate_for_state(spine, active)
 
 
 def test_identical_gaps_and_stiffness_share_load_exactly(
@@ -1242,7 +1282,7 @@ def test_slip_direction_must_be_dissipative(
     assert trial.result.dynamic_stability is ModelState.OUT_OF_SCOPE
 
 
-def test_slip_friction_cone_residual_blocks_directional_admissibility(
+def test_invalid_local_numerical_state_blocks_directional_stability(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     spine = _spine("slip-residual")
@@ -1252,9 +1292,8 @@ def test_slip_friction_cone_residual_blocks_directional_admissibility(
             "slip-residual": {
                 "tangent": np.diag([1000.0, 0.0, 0.0]),
                 "physical_state": PhysicalState.SLIP,
-                "complementarity_residuals": {
-                    "kinetic_slip_cone_N": 1e-3,
-                },
+                "numerical_state": NumericalState.INVALID_RESIDUAL,
+                "committable": False,
             }
         },
     )
@@ -1267,6 +1306,7 @@ def test_slip_friction_cone_residual_blocks_directional_admissibility(
 
     assert trial.result.equilibrium_status is EquilibriumStatus.SOLVED
     assert trial.result.quasistatic_stability is QuasistaticStability.NOT_EVALUATED
+    assert trial.result.numerical_state is NumericalState.INVALID_RESIDUAL
     assert not trial.committable
 
 
@@ -1488,9 +1528,13 @@ def test_contact_reject_advances_candidate_cursor_before_re_equilibration(
 ) -> None:
     spine = _spine("candidate-sequence", terrain_gap_m=0.001)
     next_candidate = _candidate(
-        "candidate-sequence-next", terrain_gap_m=0.002
+        "candidate-sequence-next",
+        terrain_gap_m=0.002,
+        candidate_index=1,
     )
     spine = replace(spine, continuation_candidates=(next_candidate,))
+    assert spine.candidate is not None
+    next_cursor = spine.candidate.search_cursor
     calls: list[dict[str, Any]] = []
     _install_linear_single_solver(
         monkeypatch,
@@ -1499,7 +1543,6 @@ def test_contact_reject_advances_candidate_cursor_before_re_equilibration(
                 "tangent": np.diag([1000.0, 0.0, 0.0]),
                 "unilateral": True,
                 "reject_on_call": 2,
-                "next_cursor": 1,
             }
         },
         calls,
@@ -1522,7 +1565,7 @@ def test_contact_reject_advances_candidate_cursor_before_re_equilibration(
     )
     assert calls[reject_index + 1 :]
     assert all(
-        call["accepted_cursor"] == 1
+        call["accepted_cursor"] == next_cursor
         and call["candidate"].candidate_id == next_candidate.candidate_id
         for call in calls[reject_index + 1 :]
     )
@@ -1532,10 +1575,10 @@ def test_contact_reject_advances_candidate_cursor_before_re_equilibration(
     assert [event.event_type for event in trial.result.events] == [
         EventType.CONTACT_REJECT,
     ]
-    assert trial.proposed_state.spine_states[0].search_cursor == 1
+    assert trial.proposed_state.spine_states[0].search_cursor == next_cursor
     assert trial.committable
     committed = commit_array_trial(accepted, trial)
-    assert committed.spine_states[0].search_cursor == 1
+    assert committed.spine_states[0].search_cursor == next_cursor
 
 
 def test_permanent_failure_cannot_revive_during_same_load_redistribution(

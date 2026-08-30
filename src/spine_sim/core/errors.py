@@ -8,9 +8,7 @@ from enum import StrEnum
 class ErrorCategory(StrEnum):
     INPUT_CONFIGURATION = "input_configuration"
     MODEL_UNCLOSED = "model_unclosed"
-    NUMERICAL_NONCONVERGENCE = "numerical_nonconvergence"
     EXECUTION = "execution"
-    USER_CANCELLED = "user_cancelled"
 
 
 class SpineSimError(Exception):
@@ -30,18 +28,6 @@ class ConfigurationError(SpineSimError):
 
 class ModelUnclosedError(SpineSimError):
     category = ErrorCategory.MODEL_UNCLOSED
-
-
-class NumericalConvergenceError(SpineSimError):
-    category = ErrorCategory.NUMERICAL_NONCONVERGENCE
-
-
-class ExecutionError(SpineSimError):
-    category = ErrorCategory.EXECUTION
-
-
-class UserCancelledError(SpineSimError):
-    category = ErrorCategory.USER_CANCELLED
 
 
 def classify_exception(exc: BaseException) -> dict[str, str]:

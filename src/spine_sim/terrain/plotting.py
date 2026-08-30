@@ -11,7 +11,7 @@ from typing import Any
 import numpy as np
 from numpy.typing import ArrayLike, NDArray
 
-from spine_sim.io.results import atomic_write_json
+from spine_sim.io.files import atomic_write_json
 
 from .library import TerrainLibrary
 from .models import RegionSpec

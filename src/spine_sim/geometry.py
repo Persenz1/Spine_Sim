@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Iterator, Literal
+from typing import Literal
 
 import numpy as np
 from numpy.typing import ArrayLike, NDArray
@@ -197,11 +197,38 @@ class SpinePose:
     clearance_perimeter_samples: int = 16
 
     def __post_init__(self) -> None:
-        _unit_vector(self.tip_axis, "tip_axis")
+        object.__setattr__(self, "tip_axis", _unit_vector(self.tip_axis, "tip_axis"))
         if self.normal_model not in {"surface", "envelope", "contact", "none"}:
             raise ValueError("unsupported normal_model")
-        if not np.isfinite(self.gap_tolerance_m) or self.gap_tolerance_m < 0.0:
+        gap_tolerance_m = float(self.gap_tolerance_m)
+        if not np.isfinite(gap_tolerance_m) or gap_tolerance_m < 0.0:
             raise ValueError("gap_tolerance_m must be finite and non-negative")
+        object.__setattr__(self, "gap_tolerance_m", gap_tolerance_m)
+        for name in (
+            "spherical_cap_axial_length_m",
+            "cone_length_m",
+            "rod_radius_m",
+            "exposed_rod_length_m",
+        ):
+            value = getattr(self, name)
+            if value is None:
+                continue
+            dimension = float(value)
+            if not np.isfinite(dimension) or dimension <= 0.0:
+                raise ValueError(f"{name} must be finite and positive when supplied")
+            object.__setattr__(self, name, dimension)
+        for name, minimum in (
+            ("clearance_axial_samples", 3),
+            ("clearance_perimeter_samples", 8),
+        ):
+            value = getattr(self, name)
+            if (
+                isinstance(value, (bool, np.bool_))
+                or not isinstance(value, (int, np.integer))
+                or int(value) < minimum
+            ):
+                raise ValueError(f"{name} must be an integer >= {minimum}")
+            object.__setattr__(self, name, int(value))
 
     @property
     def has_complete_body_geometry(self) -> bool:
@@ -211,7 +238,7 @@ class SpinePose:
             self.rod_radius_m,
             self.exposed_rod_length_m,
         )
-        return all(value is not None and value > 0.0 for value in values)
+        return all(value is not None for value in values)
 
 
 @dataclass(frozen=True)
@@ -254,23 +281,115 @@ class ContactCandidate:
     rod_clearance: RodClearanceResult
     search_cursor: CandidateCursor
 
+    def __post_init__(self) -> None:
+        for name in (
+            "candidate_id",
+            "lineage",
+            "terrain_version",
+            "track_id",
+            "geometry_version",
+            "feature_id",
+        ):
+            if not getattr(self, name):
+                raise ValueError(f"{name} cannot be empty")
+        if self.geometry_version != GEOMETRY_VERSION:
+            raise ValueError("candidate geometry_version is not current")
+        if (
+            isinstance(self.candidate_index, (bool, np.bool_))
+            or not isinstance(self.candidate_index, (int, np.integer))
+            or int(self.candidate_index) < 0
+        ):
+            raise ValueError("candidate_index must be a non-negative integer")
+        object.__setattr__(self, "candidate_index", int(self.candidate_index))
+        for name in ("valid", "near_tie", "geometry_uncertain"):
+            value = getattr(self, name)
+            if not isinstance(value, (bool, np.bool_)):
+                raise ValueError(f"{name} must be boolean")
+            object.__setattr__(self, name, bool(value))
+        if self.forward_cap_valid is not None:
+            if not isinstance(self.forward_cap_valid, (bool, np.bool_)):
+                raise ValueError("forward_cap_valid must be boolean or None")
+            object.__setattr__(
+                self, "forward_cap_valid", bool(self.forward_cap_valid)
+            )
+
+        path_position_m = float(self.path_position_m)
+        signed_gap_m = float(self.signed_gap_m)
+        if not np.isfinite(path_position_m) or not np.isfinite(signed_gap_m):
+            raise ValueError("candidate path position and signed gap must be finite")
+        object.__setattr__(self, "path_position_m", path_position_m)
+        object.__setattr__(self, "signed_gap_m", signed_gap_m)
+        sphere_center = np.asarray(self.sphere_center_m, dtype=np.float64)
+        support_points = np.asarray(self.support_points_m, dtype=np.float64)
+        support_count = 2 if self.near_tie else 1
+        if sphere_center.shape != (3,) or not np.all(np.isfinite(sphere_center)):
+            raise ValueError("sphere_center_m must be a finite 3-vector")
+        if support_points.shape != (support_count, 3) or not np.all(
+            np.isfinite(support_points)
+        ):
+            raise ValueError(
+                "support_points_m must contain one unique or two near-tie supports"
+            )
+        object.__setattr__(self, "sphere_center_m", sphere_center)
+        object.__setattr__(self, "support_points_m", support_points)
+
+        if self.normal_model not in {"surface", "envelope", "contact", "none"}:
+            raise ValueError("unsupported normal_model")
+        for name in ("surface_normal", "envelope_normal", "contact_normal"):
+            value = getattr(self, name)
+            if value is None:
+                continue
+            if self.near_tie and name == "envelope_normal":
+                raise ValueError("near-tie candidates cannot have one envelope normal")
+            normal = np.asarray(value, dtype=np.float64)
+            expected_shape = (2, 3) if self.near_tie else (3,)
+            if normal.shape != expected_shape or not np.all(np.isfinite(normal)):
+                raise ValueError(
+                    f"{name} has invalid unique/near-tie normal representation"
+                )
+            object.__setattr__(self, name, normal)
+
+        tangent_basis = self.tangent_basis
+        if tangent_basis is not None:
+            tangent = np.asarray(tangent_basis, dtype=np.float64)
+            if tangent.shape != (2, 3) or not np.all(np.isfinite(tangent)):
+                raise ValueError("tangent_basis must be a finite (2, 3) array")
+            if self.selected_normal is None:
+                raise ValueError("tangent_basis requires one selected normal")
+            object.__setattr__(self, "tangent_basis", tangent)
+
+        if (self.gap_lower_m is None) != (self.gap_upper_m is None):
+            raise ValueError("candidate gap bounds must both be present or both be None")
+        if self.gap_lower_m is not None:
+            lower = float(self.gap_lower_m)
+            upper = float(self.gap_upper_m)
+            if not np.isfinite(lower) or not np.isfinite(upper) or lower > upper:
+                raise ValueError("candidate gap bounds must be finite and ordered")
+            object.__setattr__(self, "gap_lower_m", lower)
+            object.__setattr__(self, "gap_upper_m", upper)
+        if self.curvature_radius_m is not None:
+            curvature = float(self.curvature_radius_m)
+            if not np.isfinite(curvature) or curvature <= 0.0:
+                raise ValueError("curvature_radius_m must be finite and positive")
+            object.__setattr__(self, "curvature_radius_m", curvature)
+        if not isinstance(self.rod_clearance, RodClearanceResult):
+            raise ValueError("rod_clearance must be a RodClearanceResult")
+        if not isinstance(self.search_cursor, CandidateCursor) or (
+            self.search_cursor.candidate_index != self.candidate_index + 1
+            or self.search_cursor.last_feature_id != self.feature_id
+        ):
+            raise ValueError("candidate continuation cursor does not match the candidate")
+
     @property
     def selected_normal(self) -> NDArray[np.float64] | None:
-        if self.near_tie or self.normal_model == "none":
+        if self.near_tie:
             return None
-        selected = {
+        return {
             "surface": self.surface_normal,
             "envelope": self.envelope_normal,
             "contact": self.contact_normal,
+            "none": None,
         }[self.normal_model]
-        if selected is None:
-            return None
-        array = np.asarray(selected, dtype=np.float64)
-        if array.shape == (3,) and np.all(np.isfinite(array)):
-            return array
-        if array.shape == (1, 3) and np.all(np.isfinite(array[0])):
-            return array[0]
-        return None
 
 
 def _feature_id(track: TrackGeometry, index: int, support_count: int) -> str:
@@ -303,11 +422,14 @@ def _candidate_normals(
         track.contact_normals[track_index, :support_count], dtype=np.float64
     )
     envelope = np.asarray(track.envelope_normals[track_index], dtype=np.float64)
-    surface_output = surface if np.any(np.isfinite(surface)) else None
-    contact_output = contact if np.any(np.isfinite(contact)) else None
+    surface_output = surface if np.all(np.isfinite(surface)) else None
+    contact_output = contact if np.all(np.isfinite(contact)) else None
     envelope_output = (
         None if near_tie or not np.all(np.isfinite(envelope)) else envelope
     )
+    if not near_tie:
+        surface_output = None if surface_output is None else surface_output[0]
+        contact_output = None if contact_output is None else contact_output[0]
     return surface_output, envelope_output, contact_output
 
 
@@ -357,7 +479,7 @@ def query_next_candidate(
     if cursor.exhausted:
         return None, cursor
     track = surface_state.track
-    axis = _unit_vector(spine_pose.tip_axis, "tip_axis")
+    axis = spine_pose.tip_axis
     previous_gap: float | None = None
     previous_center: NDArray[np.float64] | None = None
     previous_position: float | None = None
@@ -388,13 +510,10 @@ def query_next_candidate(
             continue
         near_tie = bool(track.near_tie_flag[track_index])
         support_count = 2 if near_tie else 1
-        support_points = np.asarray(
-            track.support_points_m[track_index, :support_count], dtype=np.float64
-        )
+        support_points = track.support_points_m[track_index, :support_count]
         finite_support = np.all(np.isfinite(support_points), axis=1)
         support_points = support_points[finite_support]
-        support_count = int(support_points.shape[0])
-        if support_count == 0:
+        if support_points.shape[0] != support_count:
             previous_gap = gap
             previous_center = center
             previous_position = float(spine_path.path_position_m[path_index])
@@ -444,11 +563,9 @@ def query_next_candidate(
                 )
                 signed_gap = spine_pose.gap_tolerance_m
 
-        forward_values = np.asarray(
-            forward_cap_gate(support_points, candidate_center, axis),
-            dtype=np.bool_,
+        forward_valid = bool(
+            np.all(forward_cap_gate(support_points, candidate_center, axis))
         )
-        forward_valid = bool(np.all(forward_values))
         rod_clearance = _clearance(surface_state, spine_pose, candidate_center)
         surface_normal, envelope_normal, contact_normal = _candidate_normals(
             track, track_index, support_count, near_tie
@@ -456,23 +573,14 @@ def query_next_candidate(
         radial = candidate_center[None, :] - support_points
         radial_norm = np.linalg.norm(radial, axis=1, keepdims=True)
         if np.all(radial_norm > 0.0):
-            contact_normal = radial / radial_norm
-        selected: NDArray[np.float64] | None = None
-        if not near_tie:
-            normal_source = {
-                "surface": surface_normal,
-                "envelope": envelope_normal,
-                "contact": contact_normal,
-                "none": None,
-            }[spine_pose.normal_model]
-            if normal_source is not None:
-                normal_array = np.asarray(normal_source, dtype=np.float64)
-                if normal_array.shape == (3,):
-                    selected = normal_array
-                elif normal_array.shape == (1, 3):
-                    selected = normal_array[0]
-                if selected is not None and not np.all(np.isfinite(selected)):
-                    selected = None
+            radial_normal = radial / radial_norm
+            contact_normal = radial_normal if near_tie else radial_normal[0]
+        selected = None if near_tie else {
+            "surface": surface_normal,
+            "envelope": envelope_normal,
+            "contact": contact_normal,
+            "none": None,
+        }[spine_pose.normal_model]
         tangent_basis = _tangent_basis(selected, axis)
         lower = track.envelope_height_lower_m
         upper = track.envelope_height_upper_m
@@ -557,24 +665,6 @@ def query_next_candidate(
     )
 
 
-def drive_candidate_path(
-    surface_state: SurfaceState,
-    spine_path: SpinePath,
-    spine_pose: SpinePose,
-    cursor: CandidateCursor | None = None,
-) -> Iterator[ContactCandidate]:
-    """The sole path continuation driver used by search/reject/re-engagement."""
-
-    current = CandidateCursor() if cursor is None else cursor
-    while not current.exhausted:
-        candidate, current = query_next_candidate(
-            surface_state, spine_path, current, spine_pose
-        )
-        if candidate is None:
-            break
-        yield candidate
-
-
 __all__ = [
     "CandidateCursor",
     "ContactCandidate",
@@ -582,6 +672,5 @@ __all__ = [
     "SpinePath",
     "SpinePose",
     "SurfaceState",
-    "drive_candidate_path",
     "query_next_candidate",
 ]

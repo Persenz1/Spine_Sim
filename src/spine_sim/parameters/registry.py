@@ -434,18 +434,22 @@ def _normalize_legacy_geometry(value: Any) -> dict[str, Any]:
 
 class ParameterRegistry:
     def __init__(self, document: Mapping[str, Any]):
-        self._document = dict(document)
-        if self._document.get("schema_version") != REGISTRY_SCHEMA_VERSION:
+        if document.get("schema_version") != REGISTRY_SCHEMA_VERSION:
             raise ValueError("unsupported parameter registry schema")
-        self.registry_version = str(self._document.get("registry_version", ""))
+        self.registry_version = str(document.get("registry_version", ""))
         if self.registry_version != PARAMETER_REGISTRY_VERSION:
             raise ValueError(
                 "parameter registry version must be "
                 f"{PARAMETER_REGISTRY_VERSION!r}"
             )
-        self._validate_evidence()
+        self._evidence_sections: dict[str, dict[str, EvidenceValue]] = {}
+        self._generators: dict[
+            str, tuple[Mapping[str, Any], str, tuple[str, ...]]
+        ] = {}
+        self._protocols: dict[str, Protocol] = {}
+        self._validate_evidence(document)
 
-    def _validate_evidence(self) -> None:
+    def _validate_evidence(self, document: Mapping[str, Any]) -> None:
         for section_name in (
             "coordinate_contract",
             "candidate_axes",
@@ -456,29 +460,62 @@ class ParameterRegistry:
             "terminal_presets",
             "selection_sets",
         ):
-            section = self._mapping(section_name)
+            section = document.get(section_name)
+            if not isinstance(section, Mapping):
+                raise TypeError(f"registry section {section_name!r} must be a mapping")
+            parsed: dict[str, EvidenceValue] = {}
             for name, raw in section.items():
-                _evidence(raw, f"{section_name}.{name}")
+                if not isinstance(name, str):
+                    raise TypeError(f"{section_name} keys must be strings")
+                evidence = _evidence(raw, f"{section_name}.{name}")
+                if section_name == "terminal_presets" and not isinstance(
+                    evidence.value, Mapping
+                ):
+                    raise TypeError(
+                        f"terminal preset {name} must contain a mapping"
+                    )
+                parsed[name] = evidence
+            self._evidence_sections[section_name] = parsed
         for section_name in ("generators", "protocols"):
-            section = self._mapping(section_name)
+            section = document.get(section_name)
+            if not isinstance(section, Mapping):
+                raise TypeError(f"registry section {section_name!r} must be a mapping")
             for name, raw in section.items():
+                if not isinstance(name, str):
+                    raise TypeError(f"{section_name} keys must be strings")
                 if not isinstance(raw, Mapping):
                     raise TypeError(f"{section_name}.{name} must be a mapping")
-                _metadata(raw, f"{section_name}.{name}")
+                status, source = _metadata(raw, f"{section_name}.{name}")
                 fields = raw.get("fields")
                 if not isinstance(fields, Mapping) or not fields:
                     raise ValueError(f"{section_name}.{name}.fields cannot be empty")
+                parsed_fields: dict[str, EvidenceValue] = {}
                 for field_name, field in fields.items():
-                    _evidence(field, f"{section_name}.{name}.{field_name}")
-
-    def _mapping(self, name: str) -> Mapping[str, Any]:
-        value = self._document.get(name)
-        if not isinstance(value, Mapping):
-            raise TypeError(f"registry section {name!r} must be a mapping")
-        return value
+                    if not isinstance(field_name, str):
+                        raise TypeError(f"{section_name}.{name} field names must be strings")
+                    parsed_fields[field_name] = _evidence(
+                        field, f"{section_name}.{name}.{field_name}"
+                    )
+                if section_name == "generators":
+                    self._generators[name] = (
+                        {
+                            field_name: evidence.value
+                            for field_name, evidence in parsed_fields.items()
+                        },
+                        status,
+                        source,
+                    )
+                else:
+                    self._protocols[name] = Protocol(
+                        name,
+                        status,
+                        source,
+                        parsed_fields,
+                        self.registry_version,
+                    )
 
     def evidence(self, section: str, name: str) -> EvidenceValue:
-        return _evidence(self._mapping(section)[name], f"{section}.{name}")
+        return self._evidence_sections[section][name]
 
     def candidate_axis(self, name: str) -> EvidenceValue:
         """Return one axis without materializing any parameter combinations."""
@@ -486,20 +523,7 @@ class ParameterRegistry:
         return self.evidence("candidate_axes", name)
 
     def protocol(self, protocol_id: str) -> Protocol:
-        raw = self._mapping("protocols")[protocol_id]
-        assert isinstance(raw, Mapping)
-        status, source = _metadata(raw, f"protocols.{protocol_id}")
-        fields = {
-            name: _evidence(value, f"protocols.{protocol_id}.{name}")
-            for name, value in raw["fields"].items()
-        }
-        return Protocol(
-            protocol_id,
-            status,
-            source,
-            fields,
-            self.registry_version,
-        )
+        return self._protocols[protocol_id]
 
     def paired_seed_set(self, seed_set_id: str) -> tuple[int, ...]:
         raw = self.evidence("paired_seed_sets", seed_set_id).value
@@ -511,8 +535,7 @@ class ParameterRegistry:
         return () if seed_set is None else self.paired_seed_set(str(seed_set.value))
 
     def generate_source_defined_m3a(self) -> tuple[SpinePackage, ...]:
-        raw, status, source = self._generator("source_defined_m3a")
-        fields = _field_values(raw)
+        fields, status, source = self._generators["source_defined_m3a"]
         fixed_length_m = float(self.candidate_axis("fixed_length_m").value)
         yaw_rad = float(self.candidate_axis("yaw_rad").value[0])
         packages: list[SpinePackage] = []
@@ -540,12 +563,11 @@ class ParameterRegistry:
                                 source,
                             )
                         )
-        self._check_count("source_defined_m3a", raw, len(packages))
+        self._check_count("source_defined_m3a", fields, len(packages))
         return tuple(packages)
 
     def generate_source_defined_m3b(self) -> tuple[ArrayGeometry, ...]:
-        raw, status, source = self._generator("source_defined_m3b")
-        fields = _field_values(raw)
+        fields, status, source = self._generators["source_defined_m3b"]
         geometries: list[ArrayGeometry] = []
         for nx, ny in fields["fixed_shapes"]:
             for spacing in fields["fixed_spacing_m"]:
@@ -568,12 +590,11 @@ class ParameterRegistry:
                         source,
                     )
                 )
-        self._check_count("source_defined_m3b", raw, len(geometries))
+        self._check_count("source_defined_m3b", fields, len(geometries))
         return tuple(geometries)
 
     def generate_legacy_full_scan(self) -> tuple[LegacyDesign, ...]:
-        raw, status, source = self._generator("legacy_full_scan")
-        fields = _field_values(raw)
+        fields, status, source = self._generators["legacy_full_scan"]
         designs: list[LegacyDesign] = []
         fixed_length_m = float(self.candidate_axis("fixed_length_m").value)
         for nx, ny in fields["shapes"]:
@@ -619,7 +640,7 @@ class ParameterRegistry:
                                     source,
                                 )
                             )
-        self._check_count("legacy_full_scan", raw, len(designs))
+        self._check_count("legacy_full_scan", fields, len(designs))
         ids = [design.legacy_design_id for design in designs]
         if len(ids) != len(set(ids)):
             raise ValueError("legacy full-scan design IDs are not unique")
@@ -639,12 +660,6 @@ class ParameterRegistry:
             raise ValueError("legacy design_id does not match its physical payload")
         protocol = self.protocol(protocol_id)
         migration_source = protocol.source
-        if protocol_id == "legacy_terminal_archive":
-            migration_source = (
-                *migration_source,
-                "docs/archive/legacy_simulation_evidence/manifests/"
-                "terminal_input_selected_designs.json",
-            )
         pitch_deg = float(package["fixed_angle_deg"])
         pattern = str(geometry["angle_pattern"])
         nx = int(geometry["nx"])
@@ -690,11 +705,8 @@ class ParameterRegistry:
             for design in self.generate_legacy_full_scan()
         }
         presets: list[TerminalPreset] = []
-        for role_id, raw in self._mapping("terminal_presets").items():
-            evidence = _evidence(raw, f"terminal_presets.{role_id}")
+        for role_id, evidence in self._evidence_sections["terminal_presets"].items():
             value = evidence.value
-            if not isinstance(value, Mapping):
-                raise TypeError(f"terminal preset {role_id} must contain a mapping")
             design_id = str(value["legacy_design_id"])
             try:
                 design = by_id[design_id]
@@ -737,14 +749,6 @@ class ParameterRegistry:
             evidence.evidence_status,
             evidence.source,
         )
-
-    def _generator(
-        self, generator_id: str
-    ) -> tuple[Mapping[str, Any], str, tuple[str, ...]]:
-        raw = self._mapping("generators")[generator_id]
-        assert isinstance(raw, Mapping)
-        status, source = _metadata(raw, f"generators.{generator_id}")
-        return raw, status, source
 
     def _installation(self, stiffness: Any) -> Installation:
         if stiffness == "rigid" or stiffness is None:
@@ -947,9 +951,9 @@ class ParameterRegistry:
 
     @staticmethod
     def _check_count(
-        generator_id: str, raw: Mapping[str, Any], observed: int
+        generator_id: str, fields: Mapping[str, Any], observed: int
     ) -> None:
-        expected = int(_field_values(raw)["expected_count"])
+        expected = int(fields["expected_count"])
         if observed != expected:
             raise ValueError(
                 f"{generator_id} generated {observed} values; expected {expected}"
@@ -978,14 +982,6 @@ def _evidence(raw: Any, name: str) -> EvidenceValue:
     return EvidenceValue(raw["value"], status, source)
 
 
-def _field_values(raw: Mapping[str, Any]) -> dict[str, Any]:
-    fields = raw["fields"]
-    assert isinstance(fields, Mapping)
-    return {
-        name: _evidence(value, name).value for name, value in fields.items()
-    }
-
-
 def load_registry(path: str | Path | None = None) -> ParameterRegistry:
     registry_path = (
         Path(__file__).with_name("registry.json")
@@ -999,24 +995,6 @@ def load_registry(path: str | Path | None = None) -> ParameterRegistry:
     if not isinstance(document, Mapping):
         raise ValueError("parameter registry root must be an object")
     return ParameterRegistry(document)
-
-
-def generate_source_defined_m3a() -> tuple[SpinePackage, ...]:
-    return load_registry().generate_source_defined_m3a()
-
-
-def generate_source_defined_m3b() -> tuple[ArrayGeometry, ...]:
-    return load_registry().generate_source_defined_m3b()
-
-
-def generate_legacy_full_scan() -> tuple[LegacyDesign, ...]:
-    return load_registry().generate_legacy_full_scan()
-
-
-def import_legacy_design(
-    value: Mapping[str, Any], *, protocol_id: str = "legacy_full_scan"
-) -> ImportedLegacyDesign:
-    return load_registry().import_legacy_design(value, protocol_id=protocol_id)
 
 
 __all__ = [
@@ -1036,10 +1014,6 @@ __all__ = [
     "TerminalPreset",
     "axis_from_pitch_yaw",
     "equal_height_length_m",
-    "generate_legacy_full_scan",
-    "generate_source_defined_m3a",
-    "generate_source_defined_m3b",
-    "import_legacy_design",
     "legacy_design_id",
     "load_registry",
 ]

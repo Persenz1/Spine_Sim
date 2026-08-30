@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import importlib
-import inspect
 import multiprocessing
 import platform
 import time
@@ -17,7 +16,7 @@ from typing import Any, Callable, Mapping
 import numpy as np
 
 from spine_sim.core.config import BaseCaseSpec, CampaignSpec
-from spine_sim.core.errors import classify_exception
+from spine_sim.core.errors import ConfigurationError, classify_exception
 from spine_sim.core.identity import stable_hash
 from spine_sim.core.versions import (
     MODEL_SCHEMA_VERSION,
@@ -26,11 +25,13 @@ from spine_sim.core.versions import (
     RESULT_SCHEMA_VERSION,
     SOLVER_SEMANTICS_VERSION,
 )
+from spine_sim.io.files import utc_now
 from spine_sim.io.results import (
     CaseRecord,
     CompactResultStore,
     ResultStore,
-    utc_now,
+    update_manifest,
+    write_campaign_index,
 )
 from spine_sim.runtime.backend import BackendCapabilities
 
@@ -59,7 +60,9 @@ class RunContext:
     parameter_registry_version: str
 
 
-def _load_callable(reference: str) -> Callable[..., CaseOutput]:
+def _load_callable(
+    reference: str,
+) -> Callable[[Mapping[str, Any], RunContext], CaseOutput]:
     module_name, function_name = reference.split(":", 1)
     function = getattr(importlib.import_module(module_name), function_name)
     if not callable(function):
@@ -118,7 +121,7 @@ def _execute(
     reference: str,
     case: BaseCaseSpec,
     backend: Mapping[str, Any],
-    profile_python_memory: bool = True,
+    profile_python_memory: bool,
 ) -> dict[str, Any]:
     started = time.perf_counter()
     if profile_python_memory:
@@ -137,12 +140,7 @@ def _execute(
             geometry_version=case.geometry_version,
             parameter_registry_version=case.parameter_registry_version,
         )
-        parameters = inspect.signature(function).parameters
-        output = (
-            function(case.parameters, context)
-            if len(parameters) >= 2
-            else function(case.parameters)
-        )
+        output = function(case.parameters, context)
         if not isinstance(output, CaseOutput):
             raise TypeError("case callable must return CaseOutput")
         peak = tracemalloc.get_traced_memory()[1] if profile_python_memory else 0
@@ -191,9 +189,9 @@ class CampaignRunner:
             if summary_only_formal
             else ResultStore(campaign_dir)
         )
-        self.backend = backend
+        self._backend_record = backend.as_dict()
 
-    def initialize(self, raw_config: Mapping[str, Any] | None = None) -> None:
+    def initialize(self, raw_config: Mapping[str, Any]) -> None:
         normalized = {
             "campaign": asdict(self.campaign),
             "campaign_id": self.campaign.campaign_id,
@@ -207,10 +205,10 @@ class CampaignRunner:
                 "parameter_registry_version": PARAMETER_REGISTRY_VERSION,
                 "campaign_id": self.campaign.campaign_id,
                 "created_at_utc": utc_now(),
-                "backend": self.backend.as_dict(),
+                "backend": self._backend_record,
                 "index_format": "pending",
             },
-            raw_config=raw_config or normalized,
+            raw_config=raw_config,
             normalized_config=normalized,
             lineage={
                 "campaign_id": self.campaign.campaign_id,
@@ -255,8 +253,10 @@ class CampaignRunner:
                     continue
             selected.append(case)
 
-        worker_count = workers or self.campaign.workers
-        backend_record = self.backend.as_dict()
+        worker_count = self.campaign.workers if workers is None else workers
+        if worker_count < 1:
+            raise ConfigurationError("workers must be at least one")
+        backend_record = self._backend_record
         selected_by_id = {case.case_id: case for case in selected}
         profile_python_memory = self.campaign.mode != "formal"
 
@@ -273,7 +273,7 @@ class CampaignRunner:
                         "peak_python_bytes": result["peak_python_bytes"],
                         "peak_vram_bytes": None,
                         "stage_times_s": output.stage_times_s,
-                        "backend": self.backend.as_dict(),
+                        "backend": backend_record,
                     }
                 )
                 self.store.write_case(
@@ -284,7 +284,6 @@ class CampaignRunner:
                     trace_rows=output.trace_rows,
                     events=output.events,
                     validation=output.validation,
-                    complete=True,
                 )
             else:
                 self.store.write_case(
@@ -298,9 +297,8 @@ class CampaignRunner:
                         "peak_vram_bytes": None,
                         "error": result["error"],
                         "diagnostic_traceback": result["traceback"],
-                        "backend": self.backend.as_dict(),
+                        "backend": backend_record,
                     },
-                    complete=False,
                 )
 
         if worker_count == 1:
@@ -353,12 +351,13 @@ class CampaignRunner:
                         submit_next()
 
         records = self.store.list_records()
-        index_format = self.store.write_campaign_index(records)
+        index_format = write_campaign_index(self.store.root, records)
         self.store.rebuild_event_index()
         counts: dict[str, int] = {}
         for record in records:
             counts[record.run_state] = counts.get(record.run_state, 0) + 1
-        self.store.update_manifest(
+        update_manifest(
+            self.store.root,
             updated_at_utc=utc_now(),
             index_format=index_format,
             status_counts=counts,

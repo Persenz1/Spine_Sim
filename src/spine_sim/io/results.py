@@ -9,56 +9,19 @@ import sqlite3
 import tempfile
 from contextlib import contextmanager
 from dataclasses import asdict, dataclass
-from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Iterable, Mapping
 
 import numpy as np
 
 from spine_sim.core.identity import canonical_json, canonicalize, stable_hash
-from spine_sim.core.states import Event
-
-
-def utc_now() -> str:
-    return datetime.now(UTC).isoformat()
-
-
-def atomic_write_bytes(path: Path, data: bytes) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    descriptor, temporary = tempfile.mkstemp(prefix=f".{path.name}.", suffix=".tmp", dir=path.parent)
-    temp_path = Path(temporary)
-    try:
-        with os.fdopen(descriptor, "wb") as handle:
-            handle.write(data)
-            handle.flush()
-            os.fsync(handle.fileno())
-        os.replace(temp_path, path)
-    finally:
-        if temp_path.exists():
-            temp_path.unlink()
-
-
-def atomic_write_json(path: Path, value: Any) -> None:
-    data = json.dumps(
-        canonicalize(value), ensure_ascii=False, indent=2, sort_keys=True, allow_nan=False
-    ).encode("utf-8")
-    atomic_write_bytes(path, data + b"\n")
-
-
-def atomic_write_npz(path: Path, arrays: Mapping[str, np.ndarray]) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    descriptor, temporary = tempfile.mkstemp(prefix=f".{path.name}.", suffix=".tmp", dir=path.parent)
-    os.close(descriptor)
-    temp_path = Path(temporary)
-    try:
-        with temp_path.open("wb") as handle:
-            np.savez_compressed(handle, **arrays)
-            handle.flush()
-            os.fsync(handle.fileno())
-        os.replace(temp_path, path)
-    finally:
-        if temp_path.exists():
-            temp_path.unlink()
+from spine_sim.io.files import (
+    atomic_write_bytes,
+    atomic_write_json,
+    atomic_write_npz,
+    sha256_file,
+    utc_now,
+)
 
 
 def atomic_write_trace_table(
@@ -155,23 +118,16 @@ def read_trace_table(path: str | Path) -> list[dict[str, Any]]:
     metadata = table.schema.metadata or {}
     if metadata.get(b"spine_sim_trace_encoding") != b"canonical-json-columns-v1":
         raise ValueError("unsupported or missing canonical trace encoding")
-    json_columns = set(
-        json.loads(metadata.get(b"spine_sim_json_columns", b"[]"))
-    )
+    encoded_json_columns = metadata.get(b"spine_sim_json_columns")
+    if encoded_json_columns is None:
+        raise ValueError("missing canonical trace JSON-column metadata")
+    json_columns = set(json.loads(encoded_json_columns))
     rows = table.to_pylist()
     for row in rows:
         for key in json_columns:
             if key in row:
                 row[key] = json.loads(row[key])
     return rows
-
-
-def sha256_file(path: Path) -> str:
-    digest = hashlib.sha256()
-    with path.open("rb") as handle:
-        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
-            digest.update(chunk)
-    return digest.hexdigest()
 
 
 _RESULT_HASH_EXCLUDED_SUMMARY_FIELDS = {
@@ -224,6 +180,78 @@ class CaseRecord:
     error_category: str | None = None
     error_type: str | None = None
     error_message: str | None = None
+
+
+def _case_record(document: Mapping[str, Any]) -> CaseRecord:
+    if "error" in document:
+        error = document["error"]
+        if not isinstance(error, Mapping):
+            raise TypeError("case error must be a mapping")
+        error_category = str(error["category"])
+        error_type = str(error["type"])
+        error_message = str(error["message"])
+    else:
+        error_category = None
+        error_type = None
+        error_message = None
+    return CaseRecord(
+        case_id=str(document["case_id"]),
+        result_hash=str(document["result_hash"]),
+        run_state=str(document["run_state"]),
+        wall_time_s=float(document["wall_time_s"]),
+        peak_ram_bytes=int(document["peak_ram_bytes"]),
+        peak_python_bytes=int(document["peak_python_bytes"]),
+        error_category=error_category,
+        error_type=error_type,
+        error_message=error_message,
+    )
+
+
+def write_campaign_index(
+    root: str | Path, records: Iterable[CaseRecord]
+) -> str:
+    campaign_root = Path(root).resolve()
+    rows = [
+        asdict(record)
+        for record in sorted(records, key=lambda row: row.case_id)
+    ]
+    try:
+        import pyarrow as pa  # type: ignore
+        import pyarrow.parquet as pq  # type: ignore
+
+        table = pa.Table.from_pylist(rows)
+        target = campaign_root / "cases.parquet"
+        descriptor, temporary = tempfile.mkstemp(
+            prefix=".cases.", suffix=".tmp", dir=campaign_root
+        )
+        os.close(descriptor)
+        temporary_path = Path(temporary)
+        try:
+            pq.write_table(table, temporary_path)
+            os.replace(temporary_path, target)
+        finally:
+            if temporary_path.exists():
+                temporary_path.unlink()
+        fallback = campaign_root / "cases.jsonl"
+        if fallback.exists():
+            fallback.unlink()
+        return "parquet"
+    except ImportError:
+        payload = "".join(
+            json.dumps(row, ensure_ascii=False, sort_keys=True) + "\n"
+            for row in rows
+        )
+        atomic_write_bytes(
+            campaign_root / "cases.jsonl", payload.encode("utf-8")
+        )
+        return "jsonl_fallback"
+
+
+def update_manifest(root: str | Path, **fields: Any) -> None:
+    path = Path(root).resolve() / "manifest.json"
+    current = json.loads(path.read_text(encoding="utf-8"))
+    current.update(fields)
+    atomic_write_json(path, current)
 
 
 class ResultStore:
@@ -347,10 +375,6 @@ class ResultStore:
         except (OSError, TypeError, ValueError):
             return False
 
-    def is_incomplete(self, case_id: str) -> bool:
-        directory = self.case_dir(case_id)
-        return directory.exists() and not self.is_complete(case_id)
-
     def write_case(
         self,
         *,
@@ -359,9 +383,8 @@ class ResultStore:
         summary: Mapping[str, Any],
         arrays: Mapping[str, np.ndarray] | None = None,
         trace_rows: Iterable[Mapping[str, Any]] = (),
-        events: Iterable[Event | Mapping[str, Any]] = (),
+        events: Iterable[Mapping[str, Any]] = (),
         validation: Mapping[str, Any] | None = None,
-        complete: bool,
     ) -> CaseRecord:
         directory = self.case_dir(case_id)
         directory.mkdir(parents=True, exist_ok=True)
@@ -382,8 +405,12 @@ class ResultStore:
         )
         event_lines = []
         for event in events:
-            value = event.as_dict() if isinstance(event, Event) else dict(event)
-            event_lines.append(json.dumps(canonicalize(value), ensure_ascii=False, sort_keys=True))
+            value = dict(event)
+            event_lines.append(
+                json.dumps(
+                    canonicalize(value), ensure_ascii=False, sort_keys=True
+                )
+            )
         event_file = directory / "events.jsonl"
         if event_lines:
             atomic_write_bytes(
@@ -415,22 +442,13 @@ class ResultStore:
             path_sha256=path_sha256,
         )
         document["path_sha256"] = path_sha256
+        record = _case_record(document)
         atomic_write_json(directory / "summary.json", document)
-        if complete:
-            atomic_write_bytes(marker, (document["result_hash"] + "\n").encode("ascii"))
-        elif marker.exists():
-            marker.unlink()
-        return CaseRecord(
-            case_id=case_id,
-            run_state=str(document.get("run_state", "execution_error")),
-            result_hash=document["result_hash"],
-            wall_time_s=float(document.get("wall_time_s", 0)),
-            peak_ram_bytes=int(document.get("peak_ram_bytes", 0)),
-            peak_python_bytes=int(document.get("peak_python_bytes", 0)),
-            error_category=document.get("error", {}).get("category"),
-            error_type=document.get("error", {}).get("type"),
-            error_message=document.get("error", {}).get("message"),
-        )
+        if record.run_state == "complete":
+            atomic_write_bytes(
+                marker, (document["result_hash"] + "\n").encode("ascii")
+            )
+        return record
 
     def load_case_summary(self, case_id: str) -> dict[str, Any]:
         path = self.case_dir(case_id) / "summary.json"
@@ -444,66 +462,8 @@ class ResultStore:
             if not directory.is_dir() or not (directory / "summary.json").is_file():
                 continue
             data = json.loads((directory / "summary.json").read_text(encoding="utf-8"))
-            records.append(
-                CaseRecord(
-                    case_id=directory.name,
-                    run_state=str(data.get("run_state", "execution_error")),
-                    result_hash=str(data.get("result_hash", "")),
-                    wall_time_s=float(data.get("wall_time_s", 0)),
-                    peak_ram_bytes=int(data.get("peak_ram_bytes", 0)),
-                    peak_python_bytes=int(data.get("peak_python_bytes", 0)),
-                    error_category=data.get("error", {}).get("category"),
-                    error_type=data.get("error", {}).get("type"),
-                    error_message=data.get("error", {}).get("message"),
-                )
-            )
+            records.append(_case_record(data))
         return records
-
-    def iter_case_summaries(
-        self, *, verify_payloads: bool = False
-    ) -> Iterable[dict[str, Any]]:
-        if not self.cases_dir.exists():
-            return
-        for directory in sorted(self.cases_dir.iterdir()):
-            if not directory.is_dir():
-                continue
-            case_id = directory.name
-            if verify_payloads and not self.is_complete(case_id):
-                raise RuntimeError(
-                    "incomplete or hash-invalid case summary: "
-                    f"{case_id}"
-                )
-            summary = directory / "summary.json"
-            if summary.is_file():
-                yield json.loads(summary.read_text(encoding="utf-8"))
-
-    def write_campaign_index(self, records: Iterable[CaseRecord]) -> str:
-        rows = [asdict(record) for record in sorted(records, key=lambda row: row.case_id)]
-        try:
-            import pyarrow as pa  # type: ignore
-            import pyarrow.parquet as pq  # type: ignore
-
-            table = pa.Table.from_pylist(rows)
-            target = self.root / "cases.parquet"
-            descriptor, temporary = tempfile.mkstemp(prefix=".cases.", suffix=".tmp", dir=self.root)
-            os.close(descriptor)
-            temp_path = Path(temporary)
-            try:
-                pq.write_table(table, temp_path)
-                os.replace(temp_path, target)
-            finally:
-                if temp_path.exists():
-                    temp_path.unlink()
-            fallback = self.root / "cases.jsonl"
-            if fallback.exists():
-                fallback.unlink()
-            return "parquet"
-        except ImportError:
-            payload = "".join(
-                json.dumps(row, ensure_ascii=False, sort_keys=True) + "\n" for row in rows
-            )
-            atomic_write_bytes(self.root / "cases.jsonl", payload.encode("utf-8"))
-            return "jsonl_fallback"
 
     def rebuild_event_index(self) -> None:
         lines: list[str] = []
@@ -522,13 +482,6 @@ class ResultStore:
             self.root / "events.jsonl",
             (("\n".join(lines) + ("\n" if lines else "")).encode("utf-8")),
         )
-
-    def update_manifest(self, **fields: Any) -> None:
-        path = self.root / "manifest.json"
-        current = json.loads(path.read_text(encoding="utf-8"))
-        current.update(fields)
-        atomic_write_json(path, current)
-
 
 class CompactResultStore:
     """Transactional summary-only storage for large formal campaign shards.
@@ -578,10 +531,8 @@ class CompactResultStore:
         atomic_write_json(
             self.root / "config" / "original.json", raw_config
         )
-        campaign_document = dict(
-            normalized_config.get("campaign", {})
-        )
-        normalized_cases = list(campaign_document.pop("cases", ()))
+        campaign_document = dict(normalized_config["campaign"])
+        normalized_cases = list(campaign_document.pop("cases"))
         compact_normalized = dict(normalized_config)
         compact_normalized["campaign"] = {
             **campaign_document,
@@ -680,16 +631,6 @@ class CompactResultStore:
         ):
             return False
 
-    def is_incomplete(self, case_id: str) -> bool:
-        if not self.database_path.is_file():
-            return False
-        with self._connect() as connection:
-            present = connection.execute(
-                "SELECT 1 FROM case_summary WHERE case_id = ?",
-                (case_id,),
-            ).fetchone()
-        return present is not None and not self.is_complete(case_id)
-
     def write_case(
         self,
         *,
@@ -698,9 +639,8 @@ class CompactResultStore:
         summary: Mapping[str, Any],
         arrays: Mapping[str, np.ndarray] | None = None,
         trace_rows: Iterable[Mapping[str, Any]] = (),
-        events: Iterable[Event | Mapping[str, Any]] = (),
+        events: Iterable[Mapping[str, Any]] = (),
         validation: Mapping[str, Any] | None = None,
-        complete: bool,
     ) -> CaseRecord:
         if arrays:
             raise ValueError(
@@ -748,7 +688,7 @@ class CompactResultStore:
         payload_sha256 = self._payload_sha256(
             summary_json, validation_json
         )
-        error = document.get("error", {})
+        record = _case_record(document)
         with self._connect() as connection:
             connection.execute(
                 """
@@ -773,36 +713,22 @@ class CompactResultStore:
                     complete = excluded.complete
                 """,
                 (
-                    case_id,
-                    str(document.get("run_state", "execution_error")),
-                    document["result_hash"],
-                    float(document.get("wall_time_s", 0)),
-                    int(document.get("peak_ram_bytes", 0)),
-                    int(document.get("peak_python_bytes", 0)),
-                    error.get("category"),
-                    error.get("type"),
-                    error.get("message"),
+                    record.case_id,
+                    record.run_state,
+                    record.result_hash,
+                    record.wall_time_s,
+                    record.peak_ram_bytes,
+                    record.peak_python_bytes,
+                    record.error_category,
+                    record.error_type,
+                    record.error_message,
                     summary_json,
                     validation_json,
                     payload_sha256,
-                    int(bool(complete)),
+                    int(record.run_state == "complete"),
                 ),
             )
-        return CaseRecord(
-            case_id=case_id,
-            run_state=str(
-                document.get("run_state", "execution_error")
-            ),
-            result_hash=document["result_hash"],
-            wall_time_s=float(document.get("wall_time_s", 0)),
-            peak_ram_bytes=int(document.get("peak_ram_bytes", 0)),
-            peak_python_bytes=int(
-                document.get("peak_python_bytes", 0)
-            ),
-            error_category=error.get("category"),
-            error_type=error.get("type"),
-            error_message=error.get("message"),
-        )
+        return record
 
     def load_case_summary(self, case_id: str) -> dict[str, Any]:
         with self._connect() as connection:
@@ -842,93 +768,28 @@ class CompactResultStore:
             for row in rows
         ]
 
-    def iter_case_summaries(
-        self, *, verify_payloads: bool = False
-    ) -> Iterable[dict[str, Any]]:
-        if not self.database_path.is_file():
-            return
-        with self._connect() as connection:
-            cursor = connection.execute(
-                """
-                SELECT case_id, summary_json, validation_json,
-                       payload_sha256, complete
-                FROM case_summary
-                ORDER BY case_id
-                """
-            )
-            for (
-                case_id,
-                summary_json,
-                validation_json,
-                payload_sha256,
-                complete,
-            ) in cursor:
-                if verify_payloads and (
-                    int(complete) != 1
-                    or self._payload_sha256(
-                        summary_json, validation_json
-                    )
-                    != payload_sha256
-                ):
-                    raise RuntimeError(
-                        "incomplete or hash-invalid compact case "
-                        f"summary: {case_id}"
-                    )
-                yield json.loads(summary_json)
-
-    def write_campaign_index(
-        self, records: Iterable[CaseRecord]
-    ) -> str:
-        rows = [
-            asdict(record)
-            for record in sorted(records, key=lambda row: row.case_id)
-        ]
-        try:
-            import pyarrow as pa  # type: ignore
-            import pyarrow.parquet as pq  # type: ignore
-
-            table = pa.Table.from_pylist(rows)
-            target = self.root / "cases.parquet"
-            descriptor, temporary = tempfile.mkstemp(
-                prefix=".cases.", suffix=".tmp", dir=self.root
-            )
-            os.close(descriptor)
-            temp_path = Path(temporary)
-            try:
-                pq.write_table(table, temp_path)
-                os.replace(temp_path, target)
-            finally:
-                if temp_path.exists():
-                    temp_path.unlink()
-            fallback = self.root / "cases.jsonl"
-            if fallback.exists():
-                fallback.unlink()
-            return "parquet"
-        except ImportError:
-            payload = "".join(
-                json.dumps(row, ensure_ascii=False, sort_keys=True)
-                + "\n"
-                for row in rows
-            )
-            atomic_write_bytes(
-                self.root / "cases.jsonl", payload.encode("utf-8")
-            )
-            return "jsonl_fallback"
-
     def rebuild_event_index(self) -> None:
         atomic_write_bytes(self.root / "events.jsonl", b"")
-
-    def update_manifest(self, **fields: Any) -> None:
-        path = self.root / "manifest.json"
-        current = json.loads(path.read_text(encoding="utf-8"))
-        current.update(fields)
-        atomic_write_json(path, current)
 
 
 def open_result_store(
     campaign_dir: str | Path,
 ) -> ResultStore | CompactResultStore:
     root = Path(campaign_dir).resolve()
-    if (root / CompactResultStore.DATABASE_NAME).is_file():
+    manifest_path = root / "manifest.json"
+    result_storage = None
+    if manifest_path.is_file():
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        if not isinstance(manifest, Mapping):
+            raise ValueError("result manifest must be a mapping")
+        result_storage = manifest.get("result_storage")
+    if result_storage == "sqlite_transactional_summary_v1":
+        if not (root / CompactResultStore.DATABASE_NAME).is_file():
+            raise ValueError(
+                "compact result storage is declared but its SQLite database "
+                "is missing"
+            )
         return CompactResultStore(root)
+    if result_storage is not None:
+        raise ValueError(f"unsupported result storage: {result_storage}")
     return ResultStore(root)

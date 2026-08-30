@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from dataclasses import replace
+
 import numpy as np
 import pytest
 
@@ -8,7 +10,6 @@ from spine_sim.geometry import (
     SpinePath,
     SpinePose,
     SurfaceState,
-    drive_candidate_path,
     query_next_candidate,
 )
 from spine_sim.terrain.envelope import compute_track_geometry
@@ -45,7 +46,7 @@ def _two_feature_track():
     return region, height, track, column
 
 
-def test_first_encounter_cursor_and_driver_preserve_feature_order() -> None:
+def test_first_encounter_cursor_preserves_feature_order() -> None:
     _region_spec, _height, track, column = _two_feature_track()
     indices = np.array([column - 4, column - 3, column, column + 3])
     z = track.envelope_height_m[indices] - 1e-6
@@ -64,6 +65,10 @@ def test_first_encounter_cursor_and_driver_preserve_feature_order() -> None:
         state, path, CandidateCursor(), pose
     )
     assert first is not None
+    assert not first.near_tie
+    assert first.surface_normal.shape == (3,)
+    assert first.contact_normal.shape == (3,)
+    assert first.envelope_normal.shape == (3,)
     assert np.isclose(first.path_position_m, 5e-6)
     assert first.signed_gap_m == 0.0
     assert first.search_cursor == cursor
@@ -77,14 +82,48 @@ def test_first_encounter_cursor_and_driver_preserve_feature_order() -> None:
     )
     assert independent_first is not None
     assert independent_first.candidate_id == first.candidate_id
-    remaining = list(drive_candidate_path(state, path, pose, cursor))
-    all_candidates = [first, second, *remaining]
+    with pytest.raises(ValueError, match="normal representation"):
+        replace(first, contact_normal=first.contact_normal[None, :])
+    all_candidates = [first, second]
+    while not cursor.exhausted:
+        candidate, cursor = query_next_candidate(state, path, cursor, pose)
+        if candidate is None:
+            break
+        all_candidates.append(candidate)
     assert [item.candidate_index for item in all_candidates] == list(
         range(len(all_candidates))
     )
     assert [item.path_position_m for item in all_candidates] == sorted(
         item.path_position_m for item in all_candidates
     )
+
+
+@pytest.mark.parametrize(
+    ("field", "value", "message"),
+    (
+        ("rod_radius_m", 0.0, "rod_radius_m"),
+        ("cone_length_m", np.inf, "cone_length_m"),
+        ("clearance_axial_samples", 2, "clearance_axial_samples"),
+        ("clearance_perimeter_samples", 7, "clearance_perimeter_samples"),
+    ),
+)
+def test_pose_normalizes_axis_and_validates_optional_body_geometry(
+    field: str,
+    value: float,
+    message: str,
+) -> None:
+    pose = SpinePose(tip_axis=np.array([0.0, 0.0, -2.0]))
+    np.testing.assert_array_equal(pose.tip_axis, np.array([0.0, 0.0, -1.0]))
+    partial_pose = SpinePose(
+        tip_axis=np.array([0.0, 0.0, -1.0]),
+        rod_radius_m=30e-6,
+    )
+    assert not partial_pose.has_complete_body_geometry
+    with pytest.raises(ValueError, match=message):
+        SpinePose(
+            tip_axis=np.array([0.0, 0.0, -1.0]),
+            **{field: value},
+        )
 
 
 def test_near_tie_keeps_support_set_and_has_no_selected_physical_normal() -> None:
@@ -104,6 +143,9 @@ def test_near_tie_keeps_support_set_and_has_no_selected_physical_normal() -> Non
     assert cursor.candidate_index == 1
     assert candidate.near_tie
     assert candidate.support_points_m.shape == (2, 3)
+    assert candidate.surface_normal.shape == (2, 3)
+    assert candidate.contact_normal.shape == (2, 3)
+    assert candidate.envelope_normal is None
     assert candidate.selected_normal is None
     assert candidate.tangent_basis is None
     assert candidate.forward_cap_valid is False
@@ -276,6 +318,7 @@ def test_complete_pose_runs_segmented_clearance_inside_candidate_query() -> None
         rod_radius_m=30e-6,
         exposed_rod_length_m=100e-6,
     )
+    assert pose.has_complete_body_geometry
     candidate, _ = query_next_candidate(
         SurfaceState(track, region, height, source_valid),
         path,

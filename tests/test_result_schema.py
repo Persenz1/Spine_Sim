@@ -29,7 +29,6 @@ def test_array_schema_requires_rank_range_and_stability_separately() -> None:
         "physical_state": "STICK",
         "numerical_state": "CONVERGED",
         "model_state": "CLOSED",
-        "run_state": "COMPLETE",
         "residuals": {"scaled_norm": 0.0},
         "tolerances": {"scaled_residual": 1e-8},
         "per_spine": [],
