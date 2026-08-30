@@ -10,6 +10,7 @@ from pathlib import Path
 
 import numpy as np
 
+from spine_sim.geometry import SurfaceState
 from spine_sim.terrain.errors import GeometryOutOfDomainError
 from spine_sim.terrain.errors import TerrainConfigurationError
 from spine_sim.terrain.heightmap import (
@@ -80,6 +81,21 @@ class TerrainLibraryTests(unittest.TestCase):
                 50e-6,
                 track.track_id,
             )
+            SurfaceState(
+                loaded,
+                self.region,
+                np.array(mapped, copy=True),
+                np.ones(self.region.shape, dtype=np.bool_),
+            )
+            with self.assertRaisesRegex(
+                ValueError, "height_m does not match track.source_data_sha256"
+            ):
+                SurfaceState(
+                    loaded,
+                    self.region,
+                    mapped[::-1],
+                    np.ones(self.region.shape, dtype=np.bool_),
+                )
             np.testing.assert_array_equal(
                 loaded.envelope_height_m, track.envelope_height_m
             )
@@ -225,6 +241,37 @@ class TerrainLibraryTests(unittest.TestCase):
                     self.region,
                     radius_m=50e-6,
                     y_global_m=0.0,
+                )
+
+    def test_obsolete_envelope_algorithm_requires_explicit_rebuild(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            library = TerrainLibrary(temporary)
+            library.generate_region(self.recipe, self.region)
+            track = library.cache_track(
+                self.recipe,
+                self.region,
+                radius_m=50e-6,
+                y_global_m=0.0,
+            )
+            sidecar = library.track_path(
+                self.recipe.terrain_recipe_id,
+                self.region.region_id,
+                50e-6,
+                track.track_id,
+            ).with_suffix(".json")
+            metadata = json.loads(sidecar.read_text(encoding="utf-8"))
+            metadata["envelope_algorithm_version"] = (
+                "finite-sphere-envelope-v2-footprint-support2"
+            )
+            sidecar.write_text(json.dumps(metadata), encoding="utf-8")
+            with self.assertRaisesRegex(
+                TerrainConfigurationError, "algorithm is obsolete.*rebuild"
+            ):
+                library.load_track(
+                    self.recipe.terrain_recipe_id,
+                    self.region.region_id,
+                    50e-6,
+                    track.track_id,
                 )
 
     @unittest.skipUnless(importlib.util.find_spec("cupy"), "CuPy/GPU is unavailable")

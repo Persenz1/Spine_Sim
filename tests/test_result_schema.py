@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from spine_sim.core.versions import ARRAY_MODEL_LEVEL
+from spine_sim.core.versions import ARRAY_MODEL_LEVEL, PROJECT_SCHEMA_VERSION
 from spine_sim.io.schema import CanonicalResultMetadata, validate_canonical_summary
 
 
@@ -40,6 +40,14 @@ def test_array_schema_requires_rank_range_and_stability_separately() -> None:
         "dynamic_stability": "OUT_OF_SCOPE",
     }
     validate_canonical_summary(summary)
+    summary["project_schema_version"] = "bogus-project-schema"
+    with pytest.raises(ValueError, match="project schema version"):
+        validate_canonical_summary(summary)
+    summary["project_schema_version"] = PROJECT_SCHEMA_VERSION
+    summary["parameter_registry_version"] = "bogus-parameter-registry"
+    with pytest.raises(ValueError, match="parameter registry version"):
+        validate_canonical_summary(summary)
+    summary["parameter_registry_version"] = metadata().parameter_registry_version
     del summary["range_status"]
     with pytest.raises(ValueError, match="range_status"):
         validate_canonical_summary(summary)

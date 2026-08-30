@@ -13,6 +13,7 @@ from .units import require_range, to_si
 from .versions import (
     GEOMETRY_SCHEMA_VERSION,
     MODEL_SCHEMA_VERSION,
+    PARAMETER_REGISTRY_VERSION,
     PROJECT_SCHEMA_VERSION,
     RESULT_SCHEMA_VERSION,
     SOLVER_SEMANTICS_VERSION,
@@ -114,6 +115,7 @@ class BaseCaseSpec:
     solver_semantics_version: str = SOLVER_SEMANTICS_VERSION
     terrain_version: str = ""
     geometry_version: str = GEOMETRY_SCHEMA_VERSION
+    parameter_registry_version: str = PARAMETER_REGISTRY_VERSION
 
     def __post_init__(self) -> None:
         if not self.module:
@@ -126,6 +128,7 @@ class BaseCaseSpec:
             "result_schema_version",
             "solver_semantics_version",
             "geometry_version",
+            "parameter_registry_version",
         ):
             if not getattr(self, name):
                 raise ConfigurationError(f"{name} cannot be empty")
@@ -146,6 +149,7 @@ class BaseCaseSpec:
                 "solver_semantics_version": self.solver_semantics_version,
                 "terrain_version": self.terrain_version,
                 "geometry_version": self.geometry_version,
+                "parameter_registry_version": self.parameter_registry_version,
                 "normalized_input_hash": self.normalized_input_hash,
                 "upstream_hash": self.upstream_hash,
             },
@@ -170,6 +174,7 @@ class BaseCaseSpec:
             "solver_semantics_version",
             "terrain_version",
             "geometry_version",
+            "parameter_registry_version",
         }
         _unknown(data, allowed, "case")
         normalized = dict(data)
@@ -205,7 +210,12 @@ class CampaignSpec:
     def campaign_id(self) -> str:
         return identity(
             "campaign",
-            {"name": self.name, "case_ids": [case.case_id for case in self.cases]},
+            {
+                "name": self.name,
+                "callable": self.callable,
+                "mode": self.mode,
+                "case_ids": [case.case_id for case in self.cases],
+            },
             module_version=self.module_version,
         )
 

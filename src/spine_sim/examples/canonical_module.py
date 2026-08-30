@@ -321,6 +321,7 @@ def run_case(parameters: Mapping[str, Any], context: RunContext) -> CaseOutput:
         model_schema_version=context.model_schema_version,
         result_schema_version=context.result_schema_version,
         solver_semantics_version=context.solver_semantics_version,
+        parameter_registry_version=context.parameter_registry_version,
     )
     summary: dict[str, Any] = {
         **metadata.as_dict(),

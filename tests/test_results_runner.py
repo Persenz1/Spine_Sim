@@ -89,6 +89,36 @@ class ResultTests(unittest.TestCase):
             event_file = store.case_dir("case_hash") / "events.jsonl"
             self.assertTrue(event_file.is_file())
             self.assertTrue(store.is_complete("case_hash"))
+            summary_file = store.case_dir("case_hash") / "summary.json"
+            atomic_write_json(summary_file, [])
+            self.assertFalse(store.is_complete("case_hash"))
+            store.write_case(
+                case_id="case_hash",
+                config={"x": 1},
+                summary={"run_state": "complete"},
+                events=({"label": "diagnostic"},),
+                complete=True,
+            )
+            summary = json.loads(summary_file.read_text(encoding="utf-8"))
+            summary["numerical_state"] = "tampered"
+            atomic_write_json(summary_file, summary)
+            self.assertFalse(store.is_complete("case_hash"))
+            store.write_case(
+                case_id="case_hash",
+                config={"x": 1},
+                summary={"run_state": "complete"},
+                events=({"label": "diagnostic"},),
+                complete=True,
+            )
+            atomic_write_json(store.case_dir("case_hash") / "config.json", {"x": 2})
+            self.assertFalse(store.is_complete("case_hash"))
+            store.write_case(
+                case_id="case_hash",
+                config={"x": 1},
+                summary={"run_state": "complete"},
+                events=({"label": "diagnostic"},),
+                complete=True,
+            )
             event_file.write_text("tampered\n", encoding="utf-8")
             self.assertFalse(store.is_complete("case_hash"))
             store.write_case(
@@ -96,10 +126,34 @@ class ResultTests(unittest.TestCase):
                 config={"x": 1},
                 summary={"run_state": "complete"},
                 events=(),
+                validation={"status": "passed"},
                 complete=True,
             )
             self.assertFalse(event_file.exists())
             self.assertTrue(store.is_complete("case_hash"))
+            atomic_write_json(
+                store.case_dir("case_hash") / "validation.json",
+                {"status": "tampered"},
+            )
+            self.assertFalse(store.is_complete("case_hash"))
+            store.write_case(
+                case_id="case_hash",
+                config={"x": 1},
+                summary={"run_state": "complete"},
+                events=(),
+                validation={"status": "passed"},
+                complete=True,
+            )
+            (store.case_dir("case_hash") / "validation.json").unlink()
+            self.assertFalse(store.is_complete("case_hash"))
+            store.write_case(
+                case_id="case_hash",
+                config={"x": 1},
+                summary={"run_state": "complete"},
+                events=(),
+                validation={"status": "passed"},
+                complete=True,
+            )
             marker = store.case_dir("case_hash") / "COMPLETE"
             marker.write_text("tampered\n", encoding="ascii")
             self.assertFalse(store.is_complete("case_hash"))
@@ -204,6 +258,7 @@ class RunnerTests(unittest.TestCase):
                 ["complete", "complete"],
             )
             self.assertFalse((Path(temporary) / "paths").exists())
+            self.assertIs(runner.store.is_complete(records[0].case_id), True)
             reopened = open_result_store(temporary)
             self.assertIsInstance(reopened, CompactResultStore)
             self.assertEqual(len(reopened.list_records()), 2)

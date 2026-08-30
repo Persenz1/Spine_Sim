@@ -8,6 +8,7 @@ from typing import Any, Mapping
 from spine_sim.core.versions import (
     ARRAY_MODEL_LEVEL,
     MODEL_SCHEMA_VERSION,
+    PARAMETER_REGISTRY_VERSION,
     PROJECT_SCHEMA_VERSION,
     RESULT_SCHEMA_VERSION,
     SINGLE_SPINE_MODEL_LEVEL,
@@ -33,6 +34,7 @@ class CanonicalResultMetadata:
     model_schema_version: str = MODEL_SCHEMA_VERSION
     result_schema_version: str = RESULT_SCHEMA_VERSION
     solver_semantics_version: str = SOLVER_SEMANTICS_VERSION
+    parameter_registry_version: str = PARAMETER_REGISTRY_VERSION
 
     def __post_init__(self) -> None:
         if self.model_level not in {
@@ -60,6 +62,7 @@ _COMMON_REQUIRED = {
     "model_schema_version",
     "result_schema_version",
     "solver_semantics_version",
+    "parameter_registry_version",
     "model_level",
     "case_id",
     "normalized_input_hash",
@@ -93,12 +96,16 @@ def validate_canonical_summary(summary: Mapping[str, Any]) -> None:
             if name in summary
         }
     )
+    if metadata.project_schema_version != PROJECT_SCHEMA_VERSION:
+        raise ValueError("project schema version does not match this writer")
     if metadata.result_schema_version != RESULT_SCHEMA_VERSION:
         raise ValueError("result schema version does not match this writer")
     if metadata.model_schema_version != MODEL_SCHEMA_VERSION:
         raise ValueError("model schema version does not match this writer")
     if metadata.solver_semantics_version != SOLVER_SEMANTICS_VERSION:
         raise ValueError("solver semantics version does not match this writer")
+    if metadata.parameter_registry_version != PARAMETER_REGISTRY_VERSION:
+        raise ValueError("parameter registry version does not match this writer")
     if metadata.model_level == ARRAY_MODEL_LEVEL:
         array_required = {
             "rank_status",

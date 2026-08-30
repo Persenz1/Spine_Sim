@@ -13,7 +13,10 @@ from spine_sim.core.config import (
 from spine_sim.core.errors import ConfigurationError
 from spine_sim.core.identity import identity, stable_hash, track_id
 from spine_sim.core.states import StateBundle
-from spine_sim.core.versions import PROJECT_SCHEMA_VERSION
+from spine_sim.core.versions import (
+    PARAMETER_REGISTRY_VERSION,
+    PROJECT_SCHEMA_VERSION,
+)
 
 
 class IdentityTests(unittest.TestCase):
@@ -86,6 +89,14 @@ class ConfigTests(unittest.TestCase):
             {**raw, "solver_semantics_version": "different"}
         )
         self.assertNotEqual(one.case_id, changed_semantics.case_id)
+        self.assertEqual(
+            one.parameter_registry_version,
+            PARAMETER_REGISTRY_VERSION,
+        )
+        changed_registry = BaseCaseSpec.from_mapping(
+            {**raw, "parameter_registry_version": "different"}
+        )
+        self.assertNotEqual(one.case_id, changed_registry.case_id)
         campaign = CampaignSpec("x", "1", "spine_sim.examples.fake_module:run_case", (one,))
         self.assertTrue(campaign.campaign_id.startswith("campaign_"))
 

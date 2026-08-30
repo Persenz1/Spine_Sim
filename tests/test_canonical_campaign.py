@@ -13,6 +13,7 @@ from spine_sim.core.versions import (
     ARRAY_MODEL_LEVEL,
     GEOMETRY_SCHEMA_VERSION,
     MODEL_SCHEMA_VERSION,
+    PARAMETER_REGISTRY_VERSION,
     PROJECT_SCHEMA_VERSION,
     RESULT_SCHEMA_VERSION,
     SOLVER_SEMANTICS_VERSION,
@@ -123,6 +124,7 @@ def _write_catalog(path: Path, campaign: CampaignSpec) -> None:
                 "solver_semantics_version": case.solver_semantics_version,
                 "terrain_version": case.terrain_version,
                 "geometry_version": case.geometry_version,
+                "parameter_registry_version": case.parameter_registry_version,
             }
             for case in campaign.cases
         ],
@@ -166,6 +168,7 @@ def _assert_versioned_campaign_metadata(
     assert manifest["model_schema_version"] == MODEL_SCHEMA_VERSION
     assert manifest["result_schema_version"] == RESULT_SCHEMA_VERSION
     assert manifest["solver_semantics_version"] == SOLVER_SEMANTICS_VERSION
+    assert manifest["parameter_registry_version"] == PARAMETER_REGISTRY_VERSION
     assert manifest["index_format"] == "parquet"
     case_index = pq.read_table(campaign_dir / "cases.parquet").to_pylist()
     assert {row["case_id"] for row in case_index} == {
@@ -187,6 +190,10 @@ def _assert_versioned_campaign_metadata(
         assert item["solver_semantics_version"] == SOLVER_SEMANTICS_VERSION
         assert item["terrain_version"] == TERRAIN_VERSION
         assert item["geometry_version"] == GEOMETRY_SCHEMA_VERSION
+        assert (
+            item["parameter_registry_version"]
+            == PARAMETER_REGISTRY_VERSION
+        )
         assert item["normalized_input_hash"] == case.normalized_input_hash
 
 
@@ -210,6 +217,7 @@ def _assert_canonical_case_round_trip(
     assert summary["model_schema_version"] == MODEL_SCHEMA_VERSION
     assert summary["result_schema_version"] == RESULT_SCHEMA_VERSION
     assert summary["solver_semantics_version"] == SOLVER_SEMANTICS_VERSION
+    assert summary["parameter_registry_version"] == PARAMETER_REGISTRY_VERSION
     assert summary["trace_file"] == "trace.parquet"
     assert summary["trace_format"] == "parquet"
 
@@ -247,9 +255,19 @@ def test_case_identity_changes_with_input_and_every_semantic_version() -> None:
         "model_schema_version",
         "result_schema_version",
         "solver_semantics_version",
+        "parameter_registry_version",
     ):
         changed = replace(case, **{field_name: f"{field_name}-changed"})
         assert changed.case_id != case.case_id
+
+
+def test_campaign_identity_includes_callable_and_storage_mode() -> None:
+    campaign = _campaign(17, 29)
+    assert replace(
+        campaign,
+        callable="spine_sim.examples.fake_module:run_case",
+    ).campaign_id != campaign.campaign_id
+    assert replace(campaign, mode="formal").campaign_id != campaign.campaign_id
 
 
 def test_generic_cli_runs_one_canonical_case_with_parquet_trace(

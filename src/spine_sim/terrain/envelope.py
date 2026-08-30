@@ -119,7 +119,7 @@ def _update_candidates(
     support_y_index[:] = np.where(greater, source_y_indices, support_y_index)
 
 
-def _array_sha256(array: NDArray[np.generic]) -> str:
+def array_sha256(array: NDArray[np.generic]) -> str:
     contiguous = np.ascontiguousarray(array)
     digest = hashlib.sha256()
     digest.update(str(contiguous.dtype).encode("ascii"))
@@ -503,14 +503,22 @@ def compute_sphere_envelope_2d(
         y_global[:, None],
     )
     envelope_normals = _normal_from_slopes(slope_x, slope_y, valid, near_tie)
-    geometry_uncertain = footprint_uncertain | ~footprint_valid
+    point_uncertain = footprint_uncertain | ~footprint_valid
     if best_lower is not None and best_upper is not None:
         best_lower[~np.isfinite(best_lower)] = np.nan
         best_upper[~np.isfinite(best_upper)] = np.nan
-        geometry_uncertain |= (
+        point_uncertain |= (
             np.isfinite(best_lower)
             & np.isfinite(best_upper)
             & (best_upper > best_lower)
+        )
+    geometry_uncertain = point_uncertain | ~valid
+    if min(point_uncertain.shape) >= 3:
+        geometry_uncertain[1:-1, 1:-1] |= (
+            point_uncertain[1:-1, :-2]
+            | point_uncertain[1:-1, 2:]
+            | point_uncertain[:-2, 1:-1]
+            | point_uncertain[2:, 1:-1]
         )
     return SphereEnvelope2D(
         envelope_height_m=best,
@@ -546,6 +554,17 @@ class _TrackSlice:
     footprint_uncertain: NDArray[np.bool_]
     lower: NDArray[np.float64] | None
     upper: NDArray[np.float64] | None
+
+
+def _track_slice_uncertainty(value: _TrackSlice) -> NDArray[np.bool_]:
+    uncertain = value.footprint_uncertain | ~value.footprint_valid
+    if value.lower is not None and value.upper is not None:
+        uncertain |= (
+            np.isfinite(value.lower)
+            & np.isfinite(value.upper)
+            & (value.upper > value.lower)
+        )
+    return uncertain
 
 
 def _compute_track_slice(
@@ -779,28 +798,30 @@ def compute_track_geometry(
         np.asarray(y_global_m),
     )
     envelope_normals = _normal_from_slopes(slope_x, slope_y, valid, near_tie)
-    geometry_uncertain = (
-        center.footprint_uncertain | ~center.footprint_valid
-    )
-    if center.lower is not None and center.upper is not None:
-        geometry_uncertain |= (
-            np.isfinite(center.lower)
-            & np.isfinite(center.upper)
-            & (center.upper > center.lower)
+    center_uncertain = _track_slice_uncertainty(center)
+    below_uncertain = _track_slice_uncertainty(below)
+    above_uncertain = _track_slice_uncertainty(above)
+    geometry_uncertain = center_uncertain | ~valid
+    if nx >= 3:
+        geometry_uncertain[1:-1] |= (
+            center_uncertain[:-2]
+            | center_uncertain[2:]
+            | below_uncertain[1:-1]
+            | above_uncertain[1:-1]
         )
-    data_digest = source_data_sha256 or _array_sha256(
+    data_digest = source_data_sha256 or array_sha256(
         np.asarray(height)
     )
-    mask_digest = source_valid_mask_sha256 or _array_sha256(source_valid)
+    mask_digest = source_valid_mask_sha256 or array_sha256(source_valid)
     measurement_digest = measurement_semantics_hash or stable_hash(
         {
-            "source_uncertain_mask_sha256": _array_sha256(source_uncertain),
+            "source_uncertain_mask_sha256": array_sha256(source_uncertain),
             "has_height_bounds": lower is not None,
             "height_lower_sha256": (
-                None if lower is None else _array_sha256(np.asarray(lower))
+                None if lower is None else array_sha256(np.asarray(lower))
             ),
             "height_upper_sha256": (
-                None if upper is None else _array_sha256(np.asarray(upper))
+                None if upper is None else array_sha256(np.asarray(upper))
             ),
         }
     )

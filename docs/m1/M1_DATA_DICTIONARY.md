@@ -75,8 +75,8 @@ recipe 的始终是已经解析后的 `measured` 或 `synthetic`。
 ## TrackGeometry v2
 
 `track_schema_version="2"`，包络算法为
-`finite-sphere-envelope-v2-footprint-support2`。旧 v1 cache 不双读，加载时明确要求
-`rebuild-required`。
+`finite-sphere-envelope-v3-footprint-support2-uncertainty-stencil`。旧算法 cache 不双读，
+加载时明确要求 `rebuild-required`。
 
 | 字段 | 类型/单位 | 含义 |
 |---|---|---|

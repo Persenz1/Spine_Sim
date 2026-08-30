@@ -18,7 +18,7 @@ from numpy.typing import NDArray
 from spine_sim.io.results import atomic_write_bytes, atomic_write_json, atomic_write_npz, utc_now
 from spine_sim.core.identity import stable_hash
 
-from .envelope import compute_track_geometry
+from .envelope import array_sha256, compute_track_geometry
 from .errors import TerrainConfigurationError
 from .models import (
     ENVELOPE_ALGORITHM_VERSION,
@@ -790,7 +790,7 @@ class TerrainLibrary:
             )
         else:
             source_valid = mask_map
-            valid_mask_sha256 = str(region_metadata["valid_mask_sha256"])
+            valid_mask_sha256 = array_sha256(source_valid)
 
         material_metadata = region_metadata.get("material_metadata")
         resolved_mode = (
@@ -873,13 +873,7 @@ class TerrainLibrary:
             )
             optional_maps.extend((lower_map, upper_map))
 
-        source_data_sha256 = str(region_metadata.get("data_sha256", ""))
-        if len(source_data_sha256) != 64:
-            _close_memmap(height)
-            _close_memmap(mask_map)
-            for mapped in optional_maps:
-                _close_memmap(mapped)
-            raise TerrainConfigurationError("region has an invalid raw-height identity")
+        source_data_sha256 = array_sha256(height)
         track_id = TrackGeometry.make_id(
             terrain_recipe_id=recipe.terrain_recipe_id,
             region_id=region.region_id,

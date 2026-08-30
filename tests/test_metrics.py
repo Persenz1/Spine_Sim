@@ -50,7 +50,7 @@ def test_path_integral_does_not_bridge_invalid_gap_or_fill_it_with_zero() -> Non
     x = np.arange(5, dtype=float)
     result = integrate_path_resistance(
         x,
-        np.array([2.0, 2.0, 100.0, -2.0, -2.0]),
+        np.array([2.0, 2.0, np.nan, -2.0, -2.0]),
         external_normal_preload_N=2.0,
         accepted=np.ones(5, dtype=bool),
         valid=np.array([True, True, False, True, True]),

@@ -1624,7 +1624,10 @@ def _locate_earliest_event(
     )
     if previous_mode is PhysicalState.STICK:
         active_keys.append("friction")
-    if accepted.spring_branch is SpringBranch.HARDSTOP:
+    if (
+        accepted.physical_state is PhysicalState.HARDSTOP
+        and accepted.spring_branch is SpringBranch.HARDSTOP
+    ):
         active_keys.append("hardstop_release")
     else:
         active_keys.append("hardstop")
@@ -1803,41 +1806,40 @@ def solve_single_spine(
         normal,
         tolerances,
     )
-    if accepted.physical_state is not PhysicalState.SEARCH:
-        located = _locate_earliest_event(
+    located = _locate_earliest_event(
+        geometry,
+        material,
+        friction,
+        suspension,
+        accepted,
+        motion,
+        candidate,
+        normal,
+        contact_point,
+        tolerances,
+    )
+    if located is not None:
+        event_key, event_fraction, event_motion = located
+        if event_key in {"hardstop", "hardstop_release"}:
+            post_fraction = min(
+                1.0,
+                event_fraction + 64.0 * tolerances.event_fraction,
+            )
+            motion = _interpolate_motion(accepted, motion, post_fraction)
+        else:
+            motion = event_motion
+        located_event = (event_key, event_fraction)
+        mechanical = _mechanical_response(
             geometry,
             material,
             friction,
             suspension,
             accepted,
             motion,
-            candidate,
             normal,
-            contact_point,
             tolerances,
+            force_slip=event_key == "friction",
         )
-        if located is not None:
-            event_key, event_fraction, event_motion = located
-            if event_key in {"hardstop", "hardstop_release"}:
-                post_fraction = min(
-                    1.0,
-                    event_fraction + 64.0 * tolerances.event_fraction,
-                )
-                motion = _interpolate_motion(accepted, motion, post_fraction)
-            else:
-                motion = event_motion
-            located_event = (event_key, event_fraction)
-            mechanical = _mechanical_response(
-                geometry,
-                material,
-                friction,
-                suspension,
-                accepted,
-                motion,
-                normal,
-                tolerances,
-                force_slip=event_key == "friction",
-            )
     if mechanical is None:
         result = _zero_result(
             geometry,
@@ -1935,6 +1937,26 @@ def solve_single_spine(
                 target,
             )
             current = target
+        elif (
+            accepted.contact_submode is PhysicalState.STICK
+            and mechanical.contact_mode is PhysicalState.SLIP
+        ):
+            append_event(
+                EventType.SLIP_START,
+                PhysicalState.STICK,
+                PhysicalState.SLIP,
+                {"resident_state": PhysicalState.HARDSTOP.value},
+            )
+        elif (
+            accepted.contact_submode is PhysicalState.SLIP
+            and mechanical.contact_mode is PhysicalState.STICK
+        ):
+            append_event(
+                EventType.RESTICK,
+                PhysicalState.SLIP,
+                PhysicalState.STICK,
+                {"resident_state": PhysicalState.HARDSTOP.value},
+            )
     elif current is PhysicalState.STICK and mechanical.contact_mode is PhysicalState.SLIP:
         append_event(
             EventType.SLIP_START,
@@ -2079,7 +2101,14 @@ def solve_single_spine(
         if residuals_closed
         else NumericalState.INVALID_RESIDUAL
     )
-    committable = numerical_state is NumericalState.CONVERGED
+    stopped_at_model_limit = (
+        failure is not None
+        and failure.continuation_action is ContinuationAction.STOP_MODEL_LIMIT
+    )
+    committable = (
+        numerical_state is NumericalState.CONVERGED
+        and not stopped_at_model_limit
+    )
     result_wrench = _root_wrench(geometry, contact_point, force)
     result = SingleSpineResult(
         wall_force_N=_tuple3(force),
@@ -2164,7 +2193,9 @@ def commit_single_spine_trial(
         raise ConfigurationError("trial and accepted state spine_id do not match")
     if trial.base_revision != accepted.revision:
         raise ConfigurationError("stale single-spine trial cannot be committed")
-    if not trial.committable or trial.result.numerical_state is not NumericalState.CONVERGED:
+    if not trial.committable:
+        raise ConfigurationError("noncommittable single-spine trial cannot be committed")
+    if trial.result.numerical_state is not NumericalState.CONVERGED:
         raise ConfigurationError("nonconverged single-spine trial cannot be committed")
     if trial.proposed_state.physical_state is PhysicalState.CONTACT:
         raise ConfigurationError("CONTACT cannot be committed as a resident state")

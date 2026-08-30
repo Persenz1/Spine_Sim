@@ -139,6 +139,83 @@ def test_query_rejects_support_interpolation_between_track_nodes() -> None:
         )
 
 
+def test_gap_crossing_does_not_interpolate_across_a_feature_switch() -> None:
+    _region_spec, _height, track, column = _two_feature_track()
+    indices = np.array([column, column + 1])
+    assert np.all(track.feature_switch_flag[indices])
+    assert not np.array_equal(
+        track.support_feature_indices_yx[indices[0], 0],
+        track.support_feature_indices_yx[indices[1], 0],
+    )
+    center_z = track.envelope_height_m[indices] + np.array([1e-6, -1e-6])
+    path = SpinePath.from_track(
+        track,
+        center_z,
+        track_indices=indices,
+        path_position_m=np.array([0.0, 10e-6]),
+    )
+
+    candidate, _ = query_next_candidate(
+        SurfaceState(track),
+        path,
+        CandidateCursor(),
+        SpinePose(tip_axis=np.array([0.0, 0.0, -1.0])),
+    )
+
+    assert candidate is not None
+    assert candidate.path_position_m == pytest.approx(10e-6)
+    assert candidate.signed_gap_m == pytest.approx(-1e-6)
+    np.testing.assert_allclose(candidate.sphere_center_m, path.sphere_centers_m[1])
+
+
+def test_gap_crossing_interpolates_on_same_feature_next_to_switch() -> None:
+    _region_spec, _height, track, column = _two_feature_track()
+    indices = np.array([column + 1, column + 2])
+    assert track.feature_switch_flag[indices[0]]
+    assert not track.feature_switch_flag[indices[1]]
+    np.testing.assert_array_equal(
+        track.support_feature_indices_yx[indices[0], 0],
+        track.support_feature_indices_yx[indices[1], 0],
+    )
+    assert not np.any(track.near_tie_flag[indices])
+    center_z = track.envelope_height_m[indices] + np.array([1e-6, -1e-6])
+    path = SpinePath.from_track(
+        track,
+        center_z,
+        track_indices=indices,
+        path_position_m=np.array([0.0, 10e-6]),
+    )
+
+    candidate, _ = query_next_candidate(
+        SurfaceState(track),
+        path,
+        CandidateCursor(),
+        SpinePose(tip_axis=np.array([0.0, 0.0, -1.0])),
+    )
+
+    assert candidate is not None
+    assert candidate.path_position_m == pytest.approx(5e-6)
+    assert candidate.signed_gap_m == pytest.approx(0.0)
+    np.testing.assert_allclose(
+        candidate.sphere_center_m,
+        0.5 * (path.sphere_centers_m[0] + path.sphere_centers_m[1]),
+    )
+
+
+def test_surface_state_rejects_raw_clearance_inputs_from_another_source() -> None:
+    region, height, track, _column = _two_feature_track()
+    source_valid = np.ones(region.shape, dtype=np.bool_)
+
+    SurfaceState(track, region, height, source_valid)
+    with pytest.raises(ValueError, match="source_data_sha256"):
+        SurfaceState(track, region, height + 1e-6, source_valid)
+
+    mismatched_mask = source_valid.copy()
+    mismatched_mask[0, 0] = False
+    with pytest.raises(ValueError, match="source_valid_mask_sha256"):
+        SurfaceState(track, region, height, mismatched_mask)
+
+
 def test_candidate_reports_gap_bounds_and_unknown_incomplete_body() -> None:
     region = _region()
     height = np.zeros(region.shape, dtype=np.float64)

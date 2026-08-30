@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Any, Mapping, Sequence
 
 from spine_sim.core.identity import identity
+from spine_sim.core.versions import PARAMETER_REGISTRY_VERSION
 
 
 REGISTRY_SCHEMA_VERSION = "spine-parameter-registry-v1"
@@ -437,8 +438,11 @@ class ParameterRegistry:
         if self._document.get("schema_version") != REGISTRY_SCHEMA_VERSION:
             raise ValueError("unsupported parameter registry schema")
         self.registry_version = str(self._document.get("registry_version", ""))
-        if not self.registry_version:
-            raise ValueError("parameter registry version cannot be empty")
+        if self.registry_version != PARAMETER_REGISTRY_VERSION:
+            raise ValueError(
+                "parameter registry version must be "
+                f"{PARAMETER_REGISTRY_VERSION!r}"
+            )
         self._validate_evidence()
 
     def _validate_evidence(self) -> None:

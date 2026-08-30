@@ -22,7 +22,9 @@ M1_MODULE_VERSION = "m1.0.0"
 DEFINED_GEOMETRY_VERSION = "defined-geometry-v1-canonical5um-stride2-nodal"
 MATERIAL_TERRAIN_VERSION = "material-terrain-v2"
 TRACK_SCHEMA_VERSION = "2"
-ENVELOPE_ALGORITHM_VERSION = "finite-sphere-envelope-v2-footprint-support2"
+ENVELOPE_ALGORITHM_VERSION = (
+    "finite-sphere-envelope-v3-footprint-support2-uncertainty-stencil"
+)
 CANONICAL_SPACING_M = 5e-6
 PRODUCTION_SPACING_M = 10e-6
 _ALIGNMENT_ATOL = 1e-9

@@ -277,6 +277,33 @@ class EnvelopeTests(unittest.TestCase):
             2e-6,
         )
 
+    def test_uncertainty_propagates_through_the_normal_difference_stencil(self) -> None:
+        region = fixture_region()
+        height = np.zeros(region.shape, dtype=np.float64)
+        source_uncertain = np.zeros(region.shape, dtype=np.bool_)
+        row = region.shape[0] // 2
+        column = region.shape[1] // 2
+        source_uncertain[row, column + 2] = True
+
+        full = compute_sphere_envelope_2d(
+            height,
+            region,
+            radius_m=region.resolution_x_m,
+            source_uncertain_mask=source_uncertain,
+        )
+        track = compute_track_geometry(
+            height,
+            region,
+            radius_m=region.resolution_x_m,
+            y_global_m=0.0,
+            source_uncertain_mask=source_uncertain,
+        )
+
+        self.assertTrue(full.valid_mask[row, column])
+        self.assertTrue(track.valid_mask[column])
+        self.assertTrue(full.geometry_uncertain_mask[row, column])
+        self.assertTrue(track.geometry_uncertain_mask[column])
+
 
 class GateTests(unittest.TestCase):
     def test_forward_cap_gate(self) -> None:

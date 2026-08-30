@@ -260,6 +260,9 @@ def test_coupled_spring_branch_closes_and_hardstop_releases_through_contact() ->
     )
     assert hard_trial.result.physical_state is PhysicalState.HARDSTOP
     assert hard_trial.result.contact_submode is PhysicalState.STICK
+    assert hard_trial.result.events[-1].event_type is EventType.HARDSTOP
+    assert hard_trial.result.events[-1].details["located_event"] == "hardstop"
+    assert 0.0 < hard_trial.result.events[-1].details["event_fraction"] < 1.0
     hard = commit_single_spine_trial(initial, hard_trial)
     released = solve(
         hard,
@@ -272,6 +275,54 @@ def test_coupled_spring_branch_closes_and_hardstop_releases_through_contact() ->
         EventType.HARDSTOP_RELEASE,
         EventType.STICK_START,
     ]
+
+
+def test_hardstop_contact_submode_transitions_are_visible_events() -> None:
+    initial = SpineAcceptedState.initial("spine-1")
+    hard_trial = solve(
+        initial,
+        motion((0.0, 0.0, 0.0040001), load_parameter=0.1),
+        suspension=spring_suspension(),
+    )
+    hard = commit_single_spine_trial(initial, hard_trial)
+    hard_z = hard.relative_displacement_m[2]
+
+    slipping = solve(
+        hard,
+        motion(
+            (1e-5, 0.0, hard_z),
+            velocity=(1e-3, 0.0, 0.0),
+            load_parameter=1.0,
+        ),
+        suspension=spring_suspension(),
+    )
+    assert slipping.result.physical_state is PhysicalState.HARDSTOP
+    assert slipping.result.contact_submode is PhysicalState.SLIP
+    assert [event.event_type for event in slipping.result.events] == [
+        EventType.SLIP_START
+    ]
+    slip_event = slipping.result.events[0]
+    assert slip_event.from_state is PhysicalState.STICK
+    assert slip_event.to_state is PhysicalState.SLIP
+    assert slip_event.details["resident_state"] == PhysicalState.HARDSTOP.value
+    assert slip_event.details["located_event"] == "friction"
+    assert slipping.result.evaluated_motion.relative_displacement_m[0] < 1e-5
+
+    slipped = commit_single_spine_trial(hard, slipping)
+    resticking = solve(
+        slipped,
+        motion((0.0, 0.0, hard_z), load_parameter=2.0),
+        suspension=spring_suspension(),
+    )
+    assert resticking.result.physical_state is PhysicalState.HARDSTOP
+    assert resticking.result.contact_submode is PhysicalState.STICK
+    assert [event.event_type for event in resticking.result.events] == [
+        EventType.RESTICK
+    ]
+    restick_event = resticking.result.events[0]
+    assert restick_event.from_state is PhysicalState.SLIP
+    assert restick_event.to_state is PhysicalState.STICK
+    assert restick_event.details["resident_state"] == PhysicalState.HARDSTOP.value
 
 
 def test_trial_is_immutable_until_explicit_commit() -> None:
@@ -517,11 +568,8 @@ def test_surface_boundary_stops_at_model_limit_instead_of_deleting_spine() -> No
             "surface_allowable_tensile_stress_Pa": "test fixture",
         },
     )
-    trial = solve(
-        SpineAcceptedState.initial("spine-1"),
-        motion(),
-        selected_material=selected,
-    )
+    accepted = SpineAcceptedState.initial("spine-1")
+    trial = solve(accepted, motion(), selected_material=selected)
     assert trial.result.failure is not None
     assert trial.result.failure.failure_object == "surface"
     assert (
@@ -530,6 +578,9 @@ def test_surface_boundary_stops_at_model_limit_instead_of_deleting_spine() -> No
     )
     assert trial.result.physical_state is PhysicalState.STICK
     assert trial.result.model_state is ModelState.OUT_OF_SCOPE
+    assert not trial.committable
+    with pytest.raises(ConfigurationError, match="noncommittable"):
+        commit_single_spine_trial(accepted, trial)
 
 
 def test_detach_rebound_search_then_reengage_updates_only_on_commit() -> None:
@@ -606,4 +657,42 @@ def test_earliest_friction_event_is_independent_of_trial_step_size() -> None:
     )
     assert np.linalg.norm(before.result.tangential_force_N) > np.linalg.norm(
         short.result.tangential_force_N
+    )
+
+
+def test_search_first_contact_locates_capacity_before_target_load() -> None:
+    selected = material(
+        shaft_allowable_stress_Pa=1e6,
+        shaft_failure_is_catastrophic_disconnect=True,
+    )
+    initial = SpineAcceptedState.initial("spine-1")
+    one_step = solve(
+        initial,
+        motion((0.0, 0.0, 1e-6), load_parameter=1.0),
+        selected_material=selected,
+    )
+    one_step_failure = one_step.result.events[-1]
+    assert one_step_failure.event_type is EventType.MATERIAL_FAILURE
+    assert one_step_failure.details["located_event"] == "capacity:shaft"
+    assert one_step_failure.load_parameter == pytest.approx(0.02, abs=2e-10)
+    assert one_step_failure.details["event_fraction"] == pytest.approx(
+        0.02, abs=2e-10
+    )
+
+    contact = solve(
+        initial,
+        motion((0.0, 0.0, 1e-8), load_parameter=0.01),
+        selected_material=selected,
+    )
+    assert contact.result.failure is None
+    attached = commit_single_spine_trial(initial, contact)
+    two_step = solve(
+        attached,
+        motion((0.0, 0.0, 1e-6), load_parameter=1.0),
+        selected_material=selected,
+    )
+    two_step_failure = two_step.result.events[-1]
+    assert two_step_failure.event_type is EventType.MATERIAL_FAILURE
+    assert two_step_failure.load_parameter == pytest.approx(
+        one_step_failure.load_parameter, abs=2e-10
     )

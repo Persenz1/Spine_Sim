@@ -8,10 +8,11 @@ from typing import Iterator, Literal
 import numpy as np
 from numpy.typing import ArrayLike, NDArray
 
-from spine_sim.core.identity import identity, lineage_hash
+from spine_sim.core.identity import identity, lineage_hash, stable_hash
 from spine_sim.core.versions import GEOMETRY_SCHEMA_VERSION
 from spine_sim.terrain.envelope import (
     RodClearanceResult,
+    array_sha256,
     check_segmented_tip_rod_clearance,
     forward_cap_gate,
 )
@@ -30,6 +31,10 @@ def _unit_vector(value: ArrayLike, name: str) -> NDArray[np.float64]:
     if norm <= 0.0:
         raise ValueError(f"{name} must be non-zero")
     return vector / norm
+
+
+def _matches_source_identity(value: ArrayLike, expected_sha256: str) -> bool:
+    return array_sha256(np.asarray(value)) == expected_sha256
 
 
 def _tangent_basis(
@@ -71,9 +76,19 @@ class SurfaceState:
         if (self.region is None) != (self.height_m is None):
             raise ValueError("region and height_m must be supplied together")
         if self.height_m is not None:
+            assert self.region is not None
             height = np.asarray(self.height_m)
             if height.shape != self.region.shape or not np.all(np.isfinite(height)):
                 raise ValueError("height_m must be finite with the RegionSpec shape")
+            if (
+                self.region.terrain_recipe_id != self.track.terrain_recipe_id
+                or self.region.region_id != self.track.region_id
+            ):
+                raise ValueError("raw clearance region does not match the track identity")
+            if not _matches_source_identity(
+                self.height_m, self.track.source_data_sha256
+            ):
+                raise ValueError("height_m does not match track.source_data_sha256")
             if self.source_valid_mask is None:
                 raise ValueError(
                     "raw height clearance requires its explicit source_valid_mask"
@@ -82,6 +97,25 @@ class SurfaceState:
             if mask.shape != height.shape or mask.dtype != np.bool_:
                 raise ValueError(
                     "source_valid_mask must be boolean with the height shape"
+                )
+            implicit_all_valid_sha256 = stable_hash(
+                {
+                    "kind": "implicit_all_valid",
+                    "shape": list(self.region.shape),
+                    "region_id": self.region.region_id,
+                }
+            )
+            if not _matches_source_identity(
+                self.source_valid_mask,
+                self.track.source_valid_mask_sha256,
+            ) and not (
+                bool(np.all(mask))
+                and self.track.source_valid_mask_sha256
+                == implicit_all_valid_sha256
+            ):
+                raise ValueError(
+                    "source_valid_mask does not match "
+                    "track.source_valid_mask_sha256"
                 )
 
 
@@ -244,6 +278,14 @@ def _feature_id(track: TrackGeometry, index: int, support_count: int) -> str:
     return "+".join(f"node:{int(y)}:{int(x)}" for y, x in indices)
 
 
+def _node_feature_id(track: TrackGeometry, index: int) -> str | None:
+    support_count = 2 if bool(track.near_tie_flag[index]) else 1
+    indices = track.support_feature_indices_yx[index, :support_count]
+    if np.any(indices < 0):
+        return None
+    return _feature_id(track, index, support_count)
+
+
 def _candidate_normals(
     track: TrackGeometry,
     track_index: int,
@@ -319,6 +361,8 @@ def query_next_candidate(
     previous_gap: float | None = None
     previous_center: NDArray[np.float64] | None = None
     previous_position: float | None = None
+    previous_track_index: int | None = None
+    previous_feature_id: str | None = None
     for path_index in range(cursor.next_path_index, spine_path.path_position_m.size):
         track_index = int(spine_path.track_indices[path_index])
         if not 0 <= track_index < track.x_global_m.size:
@@ -334,10 +378,13 @@ def query_next_candidate(
                 "path centres must query exact track nodes; support interpolation is forbidden"
             )
         gap = float(center[2] - track.envelope_height_m[track_index])
+        node_feature_id = _node_feature_id(track, track_index)
         if not np.isfinite(gap) or gap > spine_pose.gap_tolerance_m:
             previous_gap = gap
             previous_center = center
             previous_position = float(spine_path.path_position_m[path_index])
+            previous_track_index = track_index
+            previous_feature_id = node_feature_id
             continue
         near_tie = bool(track.near_tie_flag[track_index])
         support_count = 2 if near_tie else 1
@@ -348,23 +395,42 @@ def query_next_candidate(
         support_points = support_points[finite_support]
         support_count = int(support_points.shape[0])
         if support_count == 0:
+            previous_gap = gap
+            previous_center = center
+            previous_position = float(spine_path.path_position_m[path_index])
+            previous_track_index = track_index
+            previous_feature_id = None
             continue
         feature_id = _feature_id(track, track_index, support_count)
         if feature_id == cursor.last_feature_id:
             previous_gap = gap
             previous_center = center
             previous_position = float(spine_path.path_position_m[path_index])
+            previous_track_index = track_index
+            previous_feature_id = feature_id
             continue
 
         path_position = float(spine_path.path_position_m[path_index])
         signed_gap = gap
         candidate_center = center
+        same_feature_segment = (
+            previous_track_index is not None
+            and previous_feature_id == feature_id
+        )
+        if same_feature_segment and previous_track_index != track_index:
+            first_index = min(previous_track_index, track_index)
+            last_index = max(previous_track_index, track_index)
+            same_feature_segment = all(
+                _node_feature_id(track, index) == feature_id
+                for index in range(first_index, last_index + 1)
+            )
         if (
             previous_gap is not None
             and previous_gap > spine_pose.gap_tolerance_m
             and previous_center is not None
             and previous_position is not None
             and np.isfinite(previous_gap)
+            and same_feature_segment
         ):
             denominator = previous_gap - gap
             if denominator > 0.0:

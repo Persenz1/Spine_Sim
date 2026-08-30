@@ -21,6 +21,7 @@ from spine_sim.core.errors import classify_exception
 from spine_sim.core.identity import stable_hash
 from spine_sim.core.versions import (
     MODEL_SCHEMA_VERSION,
+    PARAMETER_REGISTRY_VERSION,
     PROJECT_SCHEMA_VERSION,
     RESULT_SCHEMA_VERSION,
     SOLVER_SEMANTICS_VERSION,
@@ -55,6 +56,7 @@ class RunContext:
     solver_semantics_version: str
     terrain_version: str
     geometry_version: str
+    parameter_registry_version: str
 
 
 def _load_callable(reference: str) -> Callable[..., CaseOutput]:
@@ -133,6 +135,7 @@ def _execute(
             solver_semantics_version=case.solver_semantics_version,
             terrain_version=case.terrain_version,
             geometry_version=case.geometry_version,
+            parameter_registry_version=case.parameter_registry_version,
         )
         parameters = inspect.signature(function).parameters
         output = (
@@ -201,6 +204,7 @@ class CampaignRunner:
                 "model_schema_version": MODEL_SCHEMA_VERSION,
                 "result_schema_version": RESULT_SCHEMA_VERSION,
                 "solver_semantics_version": SOLVER_SEMANTICS_VERSION,
+                "parameter_registry_version": PARAMETER_REGISTRY_VERSION,
                 "campaign_id": self.campaign.campaign_id,
                 "created_at_utc": utc_now(),
                 "backend": self.backend.as_dict(),
@@ -222,6 +226,9 @@ class CampaignRunner:
                         "solver_semantics_version": case.solver_semantics_version,
                         "terrain_version": case.terrain_version,
                         "geometry_version": case.geometry_version,
+                        "parameter_registry_version": (
+                            case.parameter_registry_version
+                        ),
                         "normalized_input_hash": case.normalized_input_hash,
                     }
                     for case in self.campaign.cases

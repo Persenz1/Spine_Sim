@@ -174,6 +174,45 @@ def sha256_file(path: Path) -> str:
     return digest.hexdigest()
 
 
+_RESULT_HASH_EXCLUDED_SUMMARY_FIELDS = {
+    "completed_at_utc",
+    "wall_time_s",
+    "peak_ram_bytes",
+    "peak_python_bytes",
+    "peak_vram_bytes",
+    "stage_times_s",
+    "diagnostic_traceback",
+    "result_hash",
+    "path_sha256",
+}
+
+
+def _result_hash(
+    config: Mapping[str, Any],
+    document: Mapping[str, Any],
+    *,
+    event_lines: list[str],
+    path_sha256: str | None,
+) -> str:
+    stable_summary = {
+        key: value
+        for key, value in document.items()
+        if key not in _RESULT_HASH_EXCLUDED_SUMMARY_FIELDS
+    }
+    return stable_hash(
+        {
+            "config": config,
+            "summary": stable_summary,
+            "events": event_lines,
+            "events_sha256": document.get("events_sha256"),
+            "path_sha256": path_sha256,
+            "trace_file": document.get("trace_file"),
+            "trace_format": document.get("trace_format"),
+            "trace_sha256": document.get("trace_sha256"),
+        }
+    )
+
+
 @dataclass(frozen=True)
 class CaseRecord:
     case_id: str
@@ -225,6 +264,8 @@ class ResultStore:
             return False
         try:
             document = json.loads(summary.read_text(encoding="utf-8"))
+            if not isinstance(document, Mapping):
+                return False
             marker_hash = marker.read_text(encoding="ascii").strip()
             if (
                 document.get("case_id") != case_id
@@ -259,15 +300,51 @@ class ResultStore:
                 return False
             event_file = directory / "events.jsonl"
             if "events_sha256" not in document:
-                return True
+                return False
             events_sha256 = document["events_sha256"]
             if events_sha256 is None:
-                return not event_file.exists()
-            return (
-                event_file.is_file()
-                and sha256_file(event_file) == events_sha256
+                if event_file.exists():
+                    return False
+                event_lines: list[str] = []
+            else:
+                if (
+                    not event_file.is_file()
+                    or sha256_file(event_file) != events_sha256
+                ):
+                    return False
+                event_lines = [
+                    line
+                    for line in event_file.read_text(encoding="utf-8").splitlines()
+                    if line
+                ]
+            config_file = directory / "config.json"
+            if not config_file.is_file():
+                return False
+            config = json.loads(config_file.read_text(encoding="utf-8"))
+            if not isinstance(config, Mapping):
+                return False
+            validation_file = directory / "validation.json"
+            if (
+                "validation_sha256" not in document
+                or not validation_file.is_file()
+            ):
+                return False
+            validation_document = json.loads(
+                validation_file.read_text(encoding="utf-8")
             )
-        except (OSError, json.JSONDecodeError):
+            if (
+                not isinstance(validation_document, Mapping)
+                or document["validation_sha256"]
+                != stable_hash(validation_document)
+            ):
+                return False
+            return marker_hash == _result_hash(
+                config,
+                document,
+                event_lines=event_lines,
+                path_sha256=path_sha256,
+            )
+        except (OSError, TypeError, ValueError):
             return False
 
     def is_incomplete(self, case_id: str) -> bool:
@@ -319,7 +396,10 @@ class ResultStore:
             events_sha256 = None
         else:
             events_sha256 = None
-        atomic_write_json(directory / "validation.json", validation or {})
+        validation_document = dict(validation or {})
+        atomic_write_json(
+            directory / "validation.json", validation_document
+        )
         document = dict(summary)
         document["case_id"] = case_id
         document["completed_at_utc"] = utc_now()
@@ -327,31 +407,12 @@ class ResultStore:
         document["trace_file"] = trace_file
         document["trace_format"] = trace_format
         document["trace_sha256"] = trace_sha256
-        stable_summary = {
-            key: value
-            for key, value in document.items()
-            if key
-            not in {
-                "completed_at_utc",
-                "wall_time_s",
-                "peak_ram_bytes",
-                "peak_python_bytes",
-                "peak_vram_bytes",
-                "stage_times_s",
-                "diagnostic_traceback",
-            }
-        }
-        document["result_hash"] = stable_hash(
-            {
-                "config": config,
-                "summary": stable_summary,
-                "events": event_lines,
-                "events_sha256": events_sha256,
-                "path_sha256": path_sha256,
-                "trace_file": trace_file,
-                "trace_format": trace_format,
-                "trace_sha256": trace_sha256,
-            }
+        document["validation_sha256"] = stable_hash(validation_document)
+        document["result_hash"] = _result_hash(
+            config,
+            document,
+            event_lines=event_lines,
+            path_sha256=path_sha256,
         )
         document["path_sha256"] = path_sha256
         atomic_write_json(directory / "summary.json", document)
@@ -599,12 +660,24 @@ class CompactResultStore:
             ):
                 return False
             document = json.loads(summary_json)
-            return (
+            validation_document = json.loads(validation_json)
+            if not isinstance(document, Mapping) or not isinstance(
+                validation_document, Mapping
+            ):
+                return False
+            return bool(
                 document.get("case_id") == case_id
                 and document.get("run_state") == "complete"
+                and document.get("validation_sha256")
+                == stable_hash(validation_document)
                 and document.get("result_hash")
             )
-        except (OSError, sqlite3.Error, json.JSONDecodeError):
+        except (
+            OSError,
+            TypeError,
+            ValueError,
+            sqlite3.Error,
+        ):
             return False
 
     def is_incomplete(self, case_id: str) -> bool:
@@ -649,34 +722,15 @@ class CompactResultStore:
         document["trace_file"] = None
         document["trace_format"] = None
         document["trace_sha256"] = None
-        stable_summary = {
-            key: value
-            for key, value in document.items()
-            if key
-            not in {
-                "completed_at_utc",
-                "wall_time_s",
-                "peak_ram_bytes",
-                "peak_python_bytes",
-                "peak_vram_bytes",
-                "stage_times_s",
-                "diagnostic_traceback",
-            }
-        }
-        document["result_hash"] = stable_hash(
-            {
-                "config": config,
-                "summary": stable_summary,
-                "events": [],
-                "events_sha256": None,
-                "path_sha256": None,
-                "trace_file": None,
-                "trace_format": None,
-                "trace_sha256": None,
-            }
+        validation_document = dict(validation or {})
+        document["validation_sha256"] = stable_hash(validation_document)
+        document["result_hash"] = _result_hash(
+            config,
+            document,
+            event_lines=[],
+            path_sha256=None,
         )
         document["path_sha256"] = None
-        validation_document = dict(validation or {})
         summary_json = json.dumps(
             canonicalize(document),
             ensure_ascii=False,

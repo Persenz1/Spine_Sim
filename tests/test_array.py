@@ -231,6 +231,19 @@ def _install_linear_single_solver(
         if accepted.physical_state is resident_state:
             tangent = np.asarray(law["resident_tangent"], dtype=float)
         displacement = np.asarray(motion.relative_displacement_m, dtype=float)
+        event_threshold_x_m = law.get("event_threshold_x_m")
+        event_on_call = law.get("event_on_call")
+        event_active = (
+            (
+                event_threshold_x_m is None
+                or displacement[0] >= float(event_threshold_x_m) - 1e-15
+            )
+            and (
+                event_on_call is None
+                or per_spine_count[geometry.spine_id]
+                == int(event_on_call)
+            )
+        )
         open_contact = bool(
             law.get("unilateral", False)
             and candidate is not None
@@ -245,8 +258,10 @@ def _install_linear_single_solver(
         scripted_reject = per_spine_count[geometry.spine_id] == law.get(
             "reject_on_call"
         )
-        result_events = tuple(law.get("events", ()))
-        result_failure = law.get("failure")
+        result_events = (
+            tuple(law.get("events", ())) if event_active else ()
+        )
+        result_failure = law.get("failure") if event_active else None
         if accepted.physical_state is PhysicalState.FAILED:
             effective_tangent = np.zeros((3, 3), dtype=float)
             force = np.zeros(3, dtype=float)
@@ -344,15 +359,27 @@ def _install_linear_single_solver(
                 tangent @ displacement
             )
             physical_state = (
-                resident_state
-                if accepted.physical_state is resident_state
-                else law.get("physical_state", PhysicalState.STICK)
+                law["event_physical_state"]
+                if (
+                    event_active
+                    and result_events
+                    and "event_physical_state" in law
+                )
+                else (
+                    resident_state
+                    if accepted.physical_state is resident_state
+                    else law.get("physical_state", PhysicalState.STICK)
+                )
             )
         numerical_state = law.get(
             "numerical_state", NumericalState.CONVERGED
         )
         model_state = law.get("model_state", ModelState.CLOSED)
-        committable = bool(law.get("committable", True))
+        committable = bool(
+            law.get("committable", True)
+            if event_active
+            else law.get("committable_before_event", True)
+        )
         normal = np.asarray(
             (
                 candidate.selected_normal
@@ -716,6 +743,166 @@ def test_partly_engaged_array_can_seed_a_remaining_open_candidate(
         for item in trial.result.per_spine
     ] == pytest.approx([2.5, 0.5])
     assert trial.result.per_spine[1].signed_gap_m == pytest.approx(0.0)
+    assert trial.committable
+
+
+def test_contact_seed_signature_tracks_hardstop_mode_and_spring_branch() -> None:
+    spine = _spine("signature")
+    candidate = spine.candidate
+    assert candidate is not None
+    contact = {
+        "candidate_id": candidate.candidate_id,
+        "contact_point_m": candidate.support_points_m[0],
+        "contact_normal": candidate.selected_normal,
+    }
+    hard_stick = replace(
+        SpineAcceptedState.initial(spine.spine_id),
+        physical_state=PhysicalState.HARDSTOP,
+        contact_submode=PhysicalState.STICK,
+        spring_branch=SpringBranch.HARDSTOP,
+        **contact,
+    )
+    hard_slip = replace(
+        hard_stick, contact_submode=PhysicalState.SLIP
+    )
+    assert array_module._active_set_signature(
+        [spine], [hard_stick]
+    ) != array_module._active_set_signature([spine], [hard_slip])
+
+    stick_rigid = replace(
+        hard_stick,
+        physical_state=PhysicalState.STICK,
+        contact_submode=None,
+        spring_branch=SpringBranch.RIGID,
+    )
+    stick_interior = replace(
+        stick_rigid, spring_branch=SpringBranch.INTERIOR
+    )
+    assert array_module._active_set_signature(
+        [spine], [stick_rigid]
+    ) != array_module._active_set_signature([spine], [stick_interior])
+
+
+def test_open_contact_seed_selects_the_wall_side_for_a_required_moment() -> None:
+    spines = [
+        _spine(
+            "upper",
+            root=(0.0, 0.01, 0.0),
+            normal=(1.0, 0.0, 0.0),
+            initial_gap_m=0.0001,
+        ),
+        _spine(
+            "lower",
+            root=(0.0, -0.01, 0.0),
+            normal=(1.0, 0.0, 0.0),
+            initial_gap_m=0.0001,
+        ),
+    ]
+
+    trial = solve_array_equilibrium(
+        spines,
+        ArrayAcceptedState.initial(spines),
+        _control(required={5: -0.001}, F_ref_N=0.1, L_ref_m=0.01),
+        load_parameter=1.0,
+    )
+
+    assert trial.result.equilibrium_status is EquilibriumStatus.SOLVED
+    assert trial.result.q_C[5] < 0.0
+    assert trial.result.total_wrench.moment_Nm[2] == pytest.approx(-0.001)
+    assert trial.result.per_spine[0].signed_gap_m == pytest.approx(0.0)
+    assert trial.result.per_spine[1].signed_gap_m > 0.0
+    assert trial.committable
+
+
+def test_open_contact_seed_is_built_inside_the_equality_subspace() -> None:
+    spines = [
+        _spine(
+            "upper-equality",
+            root=(0.0, 0.01, 0.0),
+            normal=(1.0, 0.0, 0.0),
+            initial_gap_m=0.0001,
+        ),
+        _spine(
+            "lower-equality",
+            root=(0.0, -0.01, 0.0),
+            normal=(1.0, 0.0, 0.0),
+            initial_gap_m=0.0001,
+        ),
+    ]
+    equality = ((1.0, 0.0, 0.0, 0.0, 0.0, 0.0),)
+
+    trial = solve_array_equilibrium(
+        spines,
+        ArrayAcceptedState.initial(spines),
+        _control(
+            required={0: 0.0, 5: -0.001},
+            F_ref_N=0.1,
+            L_ref_m=0.01,
+            equality_matrix=equality,
+        ),
+        load_parameter=1.0,
+    )
+
+    assert trial.result.equilibrium_status is EquilibriumStatus.SOLVED
+    assert np.asarray(equality) @ np.asarray(trial.result.q_C) == pytest.approx(
+        (0.0,)
+    )
+    assert trial.result.q_C[5] < 0.0
+    assert trial.result.total_wrench.moment_Nm[2] == pytest.approx(-0.001)
+    assert trial.result.per_spine[0].signed_gap_m == pytest.approx(0.0)
+    assert trial.result.per_spine[1].signed_gap_m > 0.0
+    assert trial.committable
+
+
+def test_rank_deficient_search_state_can_seed_another_open_candidate(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    spines = [
+        _spine("upper-reseed", root=(0.0, 0.01, 0.0), initial_gap_m=0.0001),
+        _spine("lower-reseed", root=(0.0, -0.01, 0.0), initial_gap_m=0.0001),
+    ]
+    calls: list[dict[str, Any]] = []
+    _install_linear_single_solver(
+        monkeypatch,
+        {
+            spine.spine_id: {
+                "tangent": np.diag([1000.0, 0.0, 0.0]),
+                "unilateral": True,
+            }
+            for spine in spines
+        },
+        calls,
+    )
+
+    trial = solve_array_equilibrium(
+        spines,
+        ArrayAcceptedState.initial(spines),
+        _control(
+            required={0: 2.0, 5: 0.0},
+            F_ref_N=2.0,
+            L_ref_m=0.01,
+        ),
+        load_parameter=1.0,
+    )
+
+    gap_pairs = [
+        tuple(call["candidate"].signed_gap_m for call in calls[index : index + 2])
+        for index in range(0, len(calls), 2)
+    ]
+    gap_tolerance = spines[0].tolerances.gap_m
+    one_closed_index = next(
+        index
+        for index, (upper_gap, lower_gap) in enumerate(gap_pairs)
+        if upper_gap <= gap_tolerance and lower_gap > gap_tolerance
+    )
+    assert any(
+        upper_gap <= gap_tolerance and lower_gap <= gap_tolerance
+        for upper_gap, lower_gap in gap_pairs[one_closed_index + 1 :]
+    )
+    assert trial.result.equilibrium_status is EquilibriumStatus.SOLVED
+    assert trial.result.total_wrench.vector == pytest.approx(
+        (2.0, 0.0, 0.0, 0.0, 0.0, 0.0)
+    )
     assert trial.committable
 
 
@@ -1530,17 +1717,296 @@ def test_model_limit_trial_cannot_commit_or_mutate_accepted_state(
     assert accepted == ArrayAcceptedState.initial([spine])
 
 
+def test_model_limit_reassembles_every_spine_at_global_earliest_boundary(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    early = _spine("early-limit")
+    late = _spine("late-slip")
+    spines = [early, late]
+    tangent = np.diag([1000.0, 0.0, 0.0])
+    failure = FailurePayload(
+        failure_object="surface",
+        failure_mode="unclosed topology",
+        criterion="test boundary",
+        demand=2.0,
+        capacity=1.0,
+        margin=-1.0,
+        parameter_sources={"capacity": "array test"},
+        continuation_action=ContinuationAction.STOP_MODEL_LIMIT,
+    )
+    early_event = Event(
+        event_type=EventType.MATERIAL_FAILURE,
+        sequence=1,
+        from_state=PhysicalState.STICK,
+        to_state=None,
+        spine_id=early.spine_id,
+        load_parameter=0.2,
+        details={"event_fraction": 0.2},
+    )
+    late_event = Event(
+        event_type=EventType.SLIP_START,
+        sequence=1,
+        from_state=PhysicalState.STICK,
+        to_state=PhysicalState.SLIP,
+        spine_id=late.spine_id,
+        load_parameter=0.8,
+        details={"event_fraction": 0.8},
+    )
+    _install_linear_single_solver(
+        monkeypatch,
+        {
+            early.spine_id: {
+                "tangent": tangent,
+                "failure": failure,
+                "events": (early_event,),
+                "committable": False,
+                "event_threshold_x_m": 0.2e-3,
+            },
+            late.spine_id: {
+                "tangent": tangent,
+                "events": (late_event,),
+                "event_physical_state": PhysicalState.SLIP,
+                "event_threshold_x_m": 0.8e-3,
+            },
+        },
+    )
+    accepted = ArrayAcceptedState.initial(spines)
+    trial = solve_array_equilibrium(
+        spines,
+        accepted,
+        _control(q=(1e-3, 0.0, 0.0, 0.0, 0.0, 0.0)),
+        load_parameter=1.0,
+    )
+
+    assert trial.result.q_C[0] == pytest.approx(0.2e-3)
+    assert [
+        item.single_result.evaluated_motion.relative_displacement_m[0]
+        for item in trial.result.per_spine
+    ] == pytest.approx([0.2e-3, 0.2e-3])
+    assert [
+        item.single_result.physical_state
+        for item in trial.result.per_spine
+    ] == [PhysicalState.STICK, PhysicalState.STICK]
+    assert trial.result.total_wrench.force_N[0] == pytest.approx(0.4)
+    assert trial.result.events == (early_event,)
+    assert trial.result.equilibrium_status is EquilibriumStatus.MODEL_LIMIT
+    assert trial.result.model_state is ModelState.OUT_OF_SCOPE
+    assert (
+        trial.result.quasistatic_stability
+        is QuasistaticStability.NOT_EVALUATED
+    )
+    assert trial.result.numerical_state is NumericalState.NONCONVERGED
+    assert not trial.committable
+    assert trial.proposed_state == accepted
+
+
+def test_model_limit_fraction_uses_the_latest_same_load_event_pose(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    spine = _spine("same-load-limit")
+    failure = FailurePayload(
+        failure_object="surface",
+        failure_mode="unclosed topology",
+        criterion="same-load boundary",
+        demand=2.0,
+        capacity=1.0,
+        margin=-1.0,
+        parameter_sources={"capacity": "array test"},
+        continuation_action=ContinuationAction.STOP_MODEL_LIMIT,
+    )
+    limit_event = Event(
+        event_type=EventType.MATERIAL_FAILURE,
+        sequence=2,
+        from_state=PhysicalState.SLIP,
+        to_state=None,
+        spine_id=spine.spine_id,
+        load_parameter=1.0,
+        details={"event_fraction": 0.5},
+    )
+    calls: list[dict[str, Any]] = []
+    _install_linear_single_solver(
+        monkeypatch,
+        {
+            spine.spine_id: {
+                "tangent": np.diag([1000.0, 0.0, 0.0]),
+                "transition_on_call": 2,
+                "transition_tangent": np.diag([500.0, 0.0, 0.0]),
+                "transition_state": PhysicalState.SLIP,
+                "transition_event": EventType.SLIP_START,
+                "transition_from_state": PhysicalState.STICK,
+                "transition_fraction": 1.0,
+                "resident_state": PhysicalState.SLIP,
+                "resident_tangent": np.diag([500.0, 0.0, 0.0]),
+                "failure": failure,
+                "events": (limit_event,),
+                "event_on_call": 4,
+                "committable": False,
+                "committable_before_event": True,
+            }
+        },
+        calls,
+    )
+    accepted = ArrayAcceptedState.initial([spine])
+    trial = solve_array_equilibrium(
+        [spine],
+        accepted,
+        _control(required={0: 1.0}),
+        load_parameter=1.0,
+    )
+
+    assert [
+        call["motion"].relative_displacement_m[0] for call in calls
+    ] == pytest.approx([0.0, 1e-3, 1e-3, 2e-3, 1.5e-3])
+    assert trial.result.q_C[0] == pytest.approx(1.5e-3)
+    assert (
+        trial.result.per_spine[0]
+        .single_result.evaluated_motion.relative_displacement_m[0]
+        == pytest.approx(1.5e-3)
+    )
+    assert [event.event_type for event in trial.result.events] == [
+        EventType.SLIP_START,
+        EventType.MATERIAL_FAILURE,
+    ]
+    assert trial.result.events[1] == limit_event
+    assert trial.result.equilibrium_status is EquilibriumStatus.MODEL_LIMIT
+    assert trial.proposed_state == accepted
+    assert not trial.committable
+
+
+def test_same_load_event_order_uses_global_q_not_local_fraction(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def run_case(
+        a_fraction: float, b_fraction: float
+    ) -> tuple[Any, dict[str, list[float]]]:
+        a = _spine("a")
+        b = _spine("b")
+        spines = [a, b]
+        failure_a = FailurePayload(
+            failure_object="surface",
+            failure_mode="a boundary",
+            criterion="global event order",
+            demand=2.0,
+            capacity=1.0,
+            margin=-1.0,
+            parameter_sources={"capacity": "array test"},
+            continuation_action=ContinuationAction.STOP_MODEL_LIMIT,
+        )
+        failure_b = replace(failure_a, failure_mode="b boundary")
+        event_a = Event(
+            event_type=EventType.MATERIAL_FAILURE,
+            sequence=2,
+            from_state=PhysicalState.SLIP,
+            to_state=None,
+            spine_id=a.spine_id,
+            load_parameter=1.0,
+            details={"event_fraction": a_fraction},
+        )
+        event_b = Event(
+            event_type=EventType.MATERIAL_FAILURE,
+            sequence=1,
+            from_state=PhysicalState.STICK,
+            to_state=None,
+            spine_id=b.spine_id,
+            load_parameter=1.0,
+            details={"event_fraction": b_fraction},
+        )
+        calls: list[dict[str, Any]] = []
+        _install_linear_single_solver(
+            monkeypatch,
+            {
+                a.spine_id: {
+                    "tangent": np.diag([750.0, 0.0, 0.0]),
+                    "transition_on_call": 2,
+                    "transition_tangent": np.diag([250.0, 0.0, 0.0]),
+                    "transition_state": PhysicalState.SLIP,
+                    "transition_event": EventType.SLIP_START,
+                    "transition_from_state": PhysicalState.STICK,
+                    "transition_fraction": 1.0,
+                    "resident_state": PhysicalState.SLIP,
+                    "resident_tangent": np.diag([250.0, 0.0, 0.0]),
+                    "failure": failure_a,
+                    "events": (event_a,),
+                    "event_on_call": 4,
+                    "committable": False,
+                    "committable_before_event": True,
+                },
+                b.spine_id: {
+                    "tangent": np.diag([250.0, 0.0, 0.0]),
+                    "failure": failure_b,
+                    "events": (event_b,),
+                    "event_on_call": 4,
+                    "committable": False,
+                    "committable_before_event": True,
+                },
+            },
+            calls,
+        )
+        accepted = ArrayAcceptedState.initial(spines)
+        trial = solve_array_equilibrium(
+            spines,
+            accepted,
+            _control(required={0: 1.0}),
+            load_parameter=1.0,
+        )
+        motions = {
+            spine_id: [
+                call["motion"].relative_displacement_m[0]
+                for call in calls
+                if call["spine_id"] == spine_id
+            ]
+            for spine_id in (a.spine_id, b.spine_id)
+        }
+        return trial, motions
+
+    simultaneous, simultaneous_motions = run_case(0.5, 0.75)
+    assert simultaneous.result.q_C[0] == pytest.approx(1.5e-3)
+    assert simultaneous_motions == {
+        "a": pytest.approx([0.0, 1e-3, 1e-3, 2e-3, 1.5e-3]),
+        "b": pytest.approx([0.0, 1e-3, 1e-3, 2e-3, 1.5e-3]),
+    }
+    assert [
+        (event.spine_id, event.event_type)
+        for event in simultaneous.result.events
+    ] == [
+        ("a", EventType.SLIP_START),
+        ("a", EventType.MATERIAL_FAILURE),
+        ("b", EventType.MATERIAL_FAILURE),
+    ]
+
+    b_first, _motions = run_case(0.4, 0.6)
+    assert b_first.result.q_C[0] == pytest.approx(1.2e-3)
+    assert [
+        (event.spine_id, event.event_type)
+        for event in b_first.result.events
+    ] == [
+        ("a", EventType.SLIP_START),
+        ("b", EventType.MATERIAL_FAILURE),
+    ]
+
+
 def test_nonconverged_iteration_limit_returns_one_self_consistent_snapshot(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     spine = _spine("iteration-limit")
     _install_linear_single_solver(
         monkeypatch,
-        {"iteration-limit": {"tangent": np.diag([1000.0, 0.0, 0.0])}},
+        {
+            "iteration-limit": {
+                "tangent": np.diag([1000.0, 0.0, 0.0]),
+                "transition_on_call": 2,
+                "transition_tangent": np.diag([500.0, 0.0, 0.0]),
+                "transition_state": PhysicalState.SLIP,
+                "transition_event": EventType.SLIP_START,
+                "transition_from_state": PhysicalState.STICK,
+                "transition_fraction": 0.5,
+            }
+        },
     )
+    accepted = ArrayAcceptedState.initial([spine])
     trial = solve_array_equilibrium(
         [spine],
-        ArrayAcceptedState.initial([spine]),
+        accepted,
         _control(required={0: 1.0}),
         load_parameter=1.0,
         tolerances=ArrayTolerances(maximum_iterations=1),
@@ -1555,6 +2021,106 @@ def test_nonconverged_iteration_limit_returns_one_self_consistent_snapshot(
     assert evaluated_x == pytest.approx(q_x)
     assert force_x == pytest.approx(1000.0 * q_x)
     assert trial.result.total_wrench.force_N[0] == pytest.approx(force_x)
+    assert trial.result.events == ()
+    assert item.single_result.events == ()
+    assert item.single_result.physical_state is PhysicalState.STICK
+    assert trial.proposed_state == accepted
+    assert not trial.committable
+
+
+def test_final_newton_update_still_stops_at_the_first_model_limit(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    spine = _spine("final-limit")
+    failure = FailurePayload(
+        failure_object="surface",
+        failure_mode="unclosed topology",
+        criterion="final Newton boundary",
+        demand=2.0,
+        capacity=1.0,
+        margin=-1.0,
+        parameter_sources={"capacity": "array test"},
+        continuation_action=ContinuationAction.STOP_MODEL_LIMIT,
+    )
+    event = Event(
+        event_type=EventType.MATERIAL_FAILURE,
+        sequence=1,
+        from_state=PhysicalState.STICK,
+        to_state=None,
+        spine_id=spine.spine_id,
+        load_parameter=1.0,
+        details={"event_fraction": 0.5},
+    )
+    calls: list[dict[str, Any]] = []
+    _install_linear_single_solver(
+        monkeypatch,
+        {
+            spine.spine_id: {
+                "tangent": np.diag([1000.0, 0.0, 0.0]),
+                "failure": failure,
+                "events": (event,),
+                "event_threshold_x_m": 0.5e-3,
+                "committable": False,
+                "committable_before_event": True,
+            }
+        },
+        calls,
+    )
+    accepted = ArrayAcceptedState.initial([spine])
+    trial = solve_array_equilibrium(
+        [spine],
+        accepted,
+        _control(required={0: 1.0}),
+        load_parameter=1.0,
+        tolerances=ArrayTolerances(maximum_iterations=1),
+    )
+
+    assert [
+        call["motion"].relative_displacement_m[0] for call in calls
+    ] == pytest.approx([0.0, 1e-3, 0.5e-3])
+    assert trial.result.q_C[0] == pytest.approx(0.5e-3)
+    assert trial.result.equilibrium_status is EquilibriumStatus.MODEL_LIMIT
+    assert trial.result.model_state is ModelState.OUT_OF_SCOPE
+    assert trial.result.events == (event,)
+    assert trial.proposed_state == accepted
+    assert not trial.committable
+
+
+def test_iteration_exhaustion_does_not_duplicate_the_last_selected_event(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    spine = _spine("last-event")
+    event = Event(
+        event_type=EventType.SLIP_START,
+        sequence=1,
+        from_state=PhysicalState.STICK,
+        to_state=PhysicalState.SLIP,
+        spine_id=spine.spine_id,
+        load_parameter=1.0,
+        details={"event_fraction": 0.5},
+    )
+    _install_linear_single_solver(
+        monkeypatch,
+        {
+            spine.spine_id: {
+                "tangent": np.diag([1000.0, 0.0, 0.0]),
+                "events": (event,),
+                "event_physical_state": PhysicalState.SLIP,
+            }
+        },
+    )
+    accepted = ArrayAcceptedState.initial([spine])
+    trial = solve_array_equilibrium(
+        [spine],
+        accepted,
+        _control(q=(1e-3, 0.0, 0.0, 0.0, 0.0, 0.0)),
+        load_parameter=1.0,
+        tolerances=ArrayTolerances(maximum_iterations=1),
+    )
+
+    assert trial.result.equilibrium_status is EquilibriumStatus.NONCONVERGED
+    assert trial.result.events == (event,)
+    assert trial.proposed_state == accepted
     assert not trial.committable
 
 

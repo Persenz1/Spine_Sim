@@ -176,10 +176,18 @@ def integrate_path_resistance(
     positive = np.maximum(normalized, 0.0)
     negative = np.maximum(-normalized, 0.0)
     positive_integral = float(
-        np.sum(0.5 * (positive[:-1] + positive[1:]) * dx * interval_valid)
+        np.sum(
+            0.5
+            * (positive[:-1][interval_valid] + positive[1:][interval_valid])
+            * dx[interval_valid]
+        )
     )
     negative_integral = float(
-        np.sum(0.5 * (negative[:-1] + negative[1:]) * dx * interval_valid)
+        np.sum(
+            0.5
+            * (negative[:-1][interval_valid] + negative[1:][interval_valid])
+            * dx[interval_valid]
+        )
     )
     J_positive = positive_integral / effective_length
     J_negative = negative_integral / effective_length

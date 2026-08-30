@@ -17,7 +17,7 @@
 
 | 文件 | 合同 |
 |---|---|
-| `manifest.json` | schema/model/result/solver 版本、campaign ID、backend、索引格式、状态计数和 result-set hash |
+| `manifest.json` | schema/model/result/solver/registry 版本、campaign ID、backend、索引格式、状态计数和 result-set hash |
 | `config/original.json` | 用户提供的原始 campaign |
 | `config/normalized.json` | 完整规范化 `CampaignSpec`、case IDs 和 campaign ID |
 | `lineage.json` | 每 case 的 module/version、config/upstream/input hash、全部语义版本与 terrain/geometry 版本 |
@@ -46,7 +46,7 @@
 
 公共字段：
 
-- `project_schema_version/model_schema_version/result_schema_version/solver_semantics_version`
+- `project_schema_version/model_schema_version/result_schema_version/solver_semantics_version/parameter_registry_version`
 - `case_id/normalized_input_hash/terrain_version/geometry_version`
 - `model_level`：仅 `single_spine_quasistatic` 或 `array_rigid_backplate_event`
 - `parameter_provenance/units/frames`

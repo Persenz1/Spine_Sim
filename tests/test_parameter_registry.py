@@ -7,6 +7,7 @@ from pathlib import Path
 
 import pytest
 
+from spine_sim.core.versions import PARAMETER_REGISTRY_VERSION
 from spine_sim.parameters import (
     Installation,
     equal_height_length_m,
@@ -46,7 +47,8 @@ def test_registry_is_one_valid_machine_readable_source_with_evidence() -> None:
     document = json.loads(path.read_text(encoding="utf-8"))
 
     assert document["schema_version"] == "spine-parameter-registry-v1"
-    assert document["registry_version"] == "1"
+    assert document["registry_version"] == PARAMETER_REGISTRY_VERSION
+    assert load_registry().registry_version == PARAMETER_REGISTRY_VERSION
 
     for section_name in (
         "coordinate_contract",
