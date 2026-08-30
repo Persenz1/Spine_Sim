@@ -1,4 +1,4 @@
-"""Atomic, rebuildable local terrain library with read-only memory maps."""
+"""原子、可重建并通过只读 memory map 访问的本地地形库。"""
 
 from __future__ import annotations
 
@@ -40,6 +40,8 @@ if TYPE_CHECKING:
 
 
 def _close_memmap(array: np.ndarray | None) -> None:
+    """显式释放 NumPy memmap 句柄，尤其用于 Windows 删除/替换前。"""
+
     if isinstance(array, np.memmap):
         array._mmap.close()
 
@@ -51,6 +53,8 @@ def _load_checked_npy(
     expected_shape: tuple[int, int],
     expected_dtype: np.dtype[Any],
 ) -> np.memmap:
+    """在复核文件哈希、shape 和 dtype 后以只读 memmap 打开 NPY。"""
+
     if not path.is_file():
         raise TerrainConfigurationError(
             f"region geometry input is missing: {path.name}"
@@ -73,6 +77,8 @@ def _load_checked_npy(
 
 
 def _safe_id(value: str, name: str) -> str:
+    """拒绝可逃逸库目录的空值、点目录和路径分隔符。"""
+
     if (
         not value
         or value in {".", ".."}
@@ -83,7 +89,7 @@ def _safe_id(value: str, name: str) -> str:
 
 
 class TerrainLibrary:
-    """Manage recipes, raw regions, tracks, manifests and validation artifacts."""
+    """管理 recipe、原始 region、track、manifest 和验证产物。"""
 
     DIRECTORIES = (
         "recipes",
@@ -95,14 +101,20 @@ class TerrainLibrary:
     )
 
     def __init__(self, root: str | Path):
+        """解析库根目录并创建固定目录骨架。"""
+
         self.root = Path(root).resolve()
         for name in self.DIRECTORIES:
             (self.root / name).mkdir(parents=True, exist_ok=True)
 
     def recipe_path(self, terrain_recipe_id: str) -> Path:
+        """返回安全的 recipe JSON 路径。"""
+
         return self.root / "recipes" / f"{_safe_id(terrain_recipe_id, 'terrain_recipe_id')}.json"
 
     def region_dir(self, terrain_recipe_id: str, region_id: str) -> Path:
+        """返回一个 recipe/region 的缓存目录。"""
+
         return (
             self.root
             / "regions"
@@ -111,9 +123,13 @@ class TerrainLibrary:
         )
 
     def region_data_path(self, terrain_recipe_id: str, region_id: str) -> Path:
+        """返回 region 主高度 NPY 路径。"""
+
         return self.region_dir(terrain_recipe_id, region_id) / "raw_height.npy"
 
     def region_manifest_path(self, terrain_recipe_id: str, region_id: str) -> Path:
+        """返回独立于可删除缓存目录的 region manifest 路径。"""
+
         return (
             self.root
             / "manifests"
@@ -129,6 +145,8 @@ class TerrainLibrary:
         radius_m: float,
         track_id: str,
     ) -> Path:
+        """按 recipe、region、球半径和 track ID 构造缓存路径。"""
+
         radius_um = int(round(radius_m * 1e6))
         return (
             self.root
@@ -140,6 +158,8 @@ class TerrainLibrary:
         )
 
     def save_recipe(self, recipe: TerrainRecipe) -> Path:
+        """原子保存 recipe；同一 ID 已存在不同内容时拒绝覆盖。"""
+
         path = self.recipe_path(recipe.terrain_recipe_id)
         document = {
             "schema_version": "1",
@@ -161,6 +181,8 @@ class TerrainLibrary:
         return path
 
     def load_recipe(self, terrain_recipe_id: str) -> TerrainRecipe:
+        """读取 recipe 并复核其内容 identity 和 recipe hash。"""
+
         document = json.loads(
             self.recipe_path(terrain_recipe_id).read_text(encoding="utf-8")
         )
@@ -180,6 +202,8 @@ class TerrainLibrary:
         tile_rows: int,
         backend: Literal["cpu", "cuda"],
     ) -> dict[str, Any]:
+        """按 y tile 流式生成 defined geometry 到临时 NPY，并原子发布。"""
+
         if tile_rows < 1:
             raise TerrainConfigurationError("tile_rows must be positive")
         target.parent.mkdir(parents=True, exist_ok=True)
@@ -241,6 +265,7 @@ class TerrainLibrary:
                 recipe.canonical_dy_m,
                 recipe.kernel_truncate_sigma,
             )
+            # 每个 tile 都按全局 canonical 索引重建；相邻 tile 不依赖前一 tile 状态。
             for row_start in range(0, ny, tile_rows):
                 row_stop = min(ny, row_start + tile_rows)
                 output_rows = row_stop - row_start
@@ -278,6 +303,7 @@ class TerrainLibrary:
                     * nx
                     * float32_bytes
                 )
+                # 估计各滤波阶段同时存活数组的峰值，而不是简单累加整个运行期分配。
                 working_bytes = max(
                     noise_bytes + 2 * horizontal_bytes,
                     horizontal_bytes + 2 * filtered_bytes,
@@ -310,9 +336,10 @@ class TerrainLibrary:
         backend: Literal["cpu", "cuda"] = "cpu",
         overwrite: bool = False,
     ) -> dict[str, Any]:
-        """Atomically generate a raw region; the COMPLETE marker is written last."""
+        """原子生成原始 region；所有数据和 metadata 完成后才写 ``COMPLETE``。"""
 
         region.validate_against(recipe)
+        # 材料 recipe 由统一 API 生成后注册；defined geometry 才走坐标可寻址 tile 路径。
         if recipe.generator_name == "material_hybrid":
             from .api import generate_terrain
 
@@ -343,6 +370,7 @@ class TerrainLibrary:
             return json.loads(metadata_path.read_text(encoding="utf-8"))
         if complete_path.exists():
             complete_path.unlink()
+        # 移除旧 marker 后，任何中断都会留下“不完整”而非可被误读的旧完整缓存。
 
         if backend == "cuda":
             try:
@@ -403,6 +431,7 @@ class TerrainLibrary:
             self.region_manifest_path(recipe.terrain_recipe_id, region.region_id),
             metadata,
         )
+        # COMPLETE 最后写，并携带主高度文件哈希以绑定本次发布。
         atomic_write_bytes(
             complete_path, (metadata["data_sha256"] + "\n").encode("ascii")
         )
@@ -416,13 +445,14 @@ class TerrainLibrary:
         *,
         overwrite: bool = False,
     ) -> dict[str, Any]:
-        """Atomically store a material terrain using the M1 mmap contract."""
+        """按 M1 mmap 契约原子保存材料 Terrain 及全部可选 mask/几何界。"""
 
         if recipe.generator_name != "material_hybrid":
             raise TerrainConfigurationError(
                 "register_material_region requires a material_hybrid recipe"
             )
         region.validate_against(recipe)
+        # 内存 Terrain 必须与 recipe 的材料、seed、实际模式和 profile hash 完全一致。
         if (
             terrain.material != recipe.material
             or terrain.subtype != recipe.subtype
@@ -586,6 +616,8 @@ class TerrainLibrary:
         *,
         verify_hash: bool = False,
     ) -> np.memmap:
+        """完整性复核后以只读 memmap 打开 region 高度。"""
+
         directory = self.region_dir(terrain_recipe_id, region_id)
         complete = directory / "COMPLETE"
         metadata_path = directory / "metadata.json"
@@ -619,7 +651,7 @@ class TerrainLibrary:
         *,
         verify_hash: bool = True,
     ) -> np.memmap | None:
-        """Open a material mask, or return None for defined all-valid geometry."""
+        """打开材料 valid mask；defined 全有效几何返回 ``None``。"""
 
         directory = self.region_dir(terrain_recipe_id, region_id)
         metadata_path = directory / "metadata.json"
@@ -655,6 +687,8 @@ class TerrainLibrary:
         )
 
     def load_region_spec(self, terrain_recipe_id: str, region_id: str) -> RegionSpec:
+        """从独立 manifest 读取并复核 RegionSpec identity。"""
+
         manifest = json.loads(
             self.region_manifest_path(terrain_recipe_id, region_id).read_text(
                 encoding="utf-8"
@@ -673,6 +707,8 @@ class TerrainLibrary:
         tile_rows: int = 64,
         backend: Literal["cpu", "cuda"] = "cpu",
     ) -> dict[str, Any]:
+        """从已保存 recipe/manifest 重建 region。"""
+
         recipe = self.load_recipe(terrain_recipe_id)
         region = self.load_region_spec(terrain_recipe_id, region_id)
         return self.generate_region(
@@ -690,7 +726,7 @@ class TerrainLibrary:
         *,
         include_tracks: bool = True,
     ) -> dict[str, Any]:
-        """Delete rebuildable data while retaining the recipe and region manifest."""
+        """删除可重建 region 数据，但保留 recipe 和 region manifest。"""
 
         region_directory = self.region_dir(terrain_recipe_id, region_id)
         tracks_directory = (
@@ -729,7 +765,7 @@ class TerrainLibrary:
     def delete_track_caches(
         self, terrain_recipe_id: str, region_id: str
     ) -> dict[str, Any]:
-        """Delete only rebuildable tracks for one region."""
+        """只删除指定 region 的可重建 track 缓存。"""
 
         tracks_directory = (
             self.root
@@ -758,6 +794,8 @@ class TerrainLibrary:
         near_tie_tolerance_m: float = 1e-10,
         overwrite: bool = False,
     ) -> TrackGeometry:
+        """从已验证 region 计算/复用一条 track，并以锁保护并发发布。"""
+
         region.validate_against(recipe)
         directory = self.region_dir(recipe.terrain_recipe_id, region.region_id)
         metadata_path_region = directory / "metadata.json"
@@ -907,6 +945,7 @@ class TerrainLibrary:
                     _close_memmap(mapped)
         path.parent.mkdir(parents=True, exist_ok=True)
         lock_path = path.with_suffix(".lock")
+        # O_EXCL 锁保证同一 track 只有一个 writer；读者仍只认最后发布的 .complete。
         lock_started = time.monotonic()
         owns_lock = False
         while not owns_lock:
@@ -936,6 +975,7 @@ class TerrainLibrary:
                 except FileNotFoundError:
                     continue
                 if lock_age_s > 3600.0:
+                    # 超过一小时的锁视为崩溃 writer 遗留；活跃锁最多等待五分钟。
                     try:
                         lock_path.unlink()
                     except FileNotFoundError:
@@ -1044,6 +1084,7 @@ class TerrainLibrary:
                 "created_at_utc": utc_now(),
             }
             atomic_write_json(metadata_path, metadata)
+            # 与 region 相同，数据和 metadata 均完成后才发布携带数据哈希的 marker。
             atomic_write_bytes(
                 complete_path,
                 (metadata["data_sha256"] + "\n").encode("ascii"),
@@ -1067,6 +1108,8 @@ class TerrainLibrary:
         radius_m: float,
         track_id: str,
     ) -> TrackGeometry:
+        """复核 marker、文件哈希、schema 和 cache-key identity 后加载 track。"""
+
         path = self.track_path(
             terrain_recipe_id, region_id, radius_m, track_id
         )
@@ -1116,6 +1159,7 @@ class TerrainLibrary:
             raise TerrainConfigurationError(
                 "track path identity does not match metadata/cache key"
             )
+        # NPZ 关闭前复制全部数组，返回的 TrackGeometry 不依赖 archive 文件句柄。
         with np.load(path, allow_pickle=False) as arrays:
             copied = {name: arrays[name] for name in arrays.files}
         required = {

@@ -1,4 +1,8 @@
-"""Canonical physical states and independent diagnostic state dimensions."""
+"""仿真的标准状态维度和物理事件图。
+
+物理状态、数值收敛状态、模型闭合状态和任务运行状态彼此独立；例如“数值收敛”
+不能替代“参数已闭合”，物理不可行也不应被包装成执行异常。
+"""
 
 from __future__ import annotations
 
@@ -10,6 +14,8 @@ from .errors import ConfigurationError
 
 
 class PhysicalState(StrEnum):
+    """单刺在搜索、承载、脱离和失效过程中的离散物理状态。"""
+
     SEARCH = "search"
     CONTACT = "contact"
     STICK = "stick"
@@ -21,6 +27,8 @@ class PhysicalState(StrEnum):
 
 
 class NumericalState(StrEnum):
+    """非线性/平衡求解器的数值结论。"""
+
     NOT_RUN = "not_run"
     CONVERGED = "converged"
     NONCONVERGED = "nonconverged"
@@ -28,12 +36,16 @@ class NumericalState(StrEnum):
 
 
 class ModelState(StrEnum):
+    """当前结论是否被已有参数和模型适用范围支撑。"""
+
     CLOSED = "closed"
     PARAMETER_UNCLOSED = "parameter_unclosed"
     OUT_OF_SCOPE = "out_of_scope"
 
 
 class RunState(StrEnum):
+    """campaign case 的调度与执行状态。"""
+
     PENDING = "pending"
     RUNNING = "running"
     COMPLETE = "complete"
@@ -42,6 +54,8 @@ class RunState(StrEnum):
 
 
 class SpringBranch(StrEnum):
+    """单边轴向弹簧的互补分支。"""
+
     RIGID = "rigid"
     LOWER_STOP = "lower_stop"
     INTERIOR = "interior"
@@ -49,12 +63,14 @@ class SpringBranch(StrEnum):
 
 
 class ContinuationAction(StrEnum):
+    """发生材料失效后，阵列层应采取的延续策略。"""
+
     PERMANENT_REMOVE = "permanent_remove"
     STOP_MODEL_LIMIT = "stop_model_limit"
 
 
 class EventType(StrEnum):
-    """Physical event kinds emitted by the solver."""
+    """求解器可发出的物理事件类型。"""
 
     CONTACT = "contact"
     CONTACT_REJECT = "contact_reject"
@@ -80,6 +96,7 @@ _CONTACT_BEARING_STATES = (
 ALLOWED_PHYSICAL_TRANSITIONS: Mapping[
     EventType, frozenset[tuple[PhysicalState, PhysicalState | None]]
 ] = {
+    # 这是冻结的状态图；CONTACT 是 trial 内的瞬时状态，必须继续进入承载或返回搜索。
     EventType.CONTACT: frozenset(
         {(PhysicalState.SEARCH, PhysicalState.CONTACT)}
     ),
@@ -134,7 +151,7 @@ def validate_physical_transition(
     from_state: PhysicalState,
     to_state: PhysicalState | None,
 ) -> None:
-    """Reject any physical transition outside the frozen state graph."""
+    """拒绝冻结状态图之外的物理跃迁。"""
 
     if (from_state, to_state) not in ALLOWED_PHYSICAL_TRANSITIONS[event_type]:
         target = "MODEL_LIMIT" if to_state is None else to_state.value
@@ -146,7 +163,7 @@ def validate_physical_transition(
 
 @dataclass(frozen=True)
 class Event:
-    """One validated physical event."""
+    """一条已经过状态图校验、可持久化的物理事件。"""
 
     event_type: EventType
     sequence: int
@@ -160,6 +177,8 @@ class Event:
     details: Mapping[str, Any] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
+        """检查序号、归属对象和前后状态是否合法。"""
+
         if self.sequence < 0:
             raise ConfigurationError("event sequence must be non-negative")
         if not self.case_id and not self.spine_id:
@@ -169,6 +188,8 @@ class Event:
         )
 
     def as_dict(self) -> dict[str, Any]:
+        """转换为 JSON 友好的事件记录。"""
+
         return {
             "event_type": self.event_type.value,
             "sequence": self.sequence,

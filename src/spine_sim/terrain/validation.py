@@ -1,4 +1,8 @@
-"""Statistical comparison and visual QA for material topographies."""
+"""材料表面形貌的统计比较和可视化 QA。
+
+本模块输出描述性证据与相对误差，不内置统一材料验收阈值；单个实测样本的拟合也不
+等价于群体级材料验证。
+"""
 
 from __future__ import annotations
 
@@ -16,6 +20,8 @@ from .errors import TerrainConfigurationError
 
 
 def _relative_error(value: float, reference: float) -> float:
+    """计算相对参考值的有符号误差，并稳定处理零参考值。"""
+
     if not math.isfinite(value) or not math.isfinite(reference):
         return float("nan")
     return (value - reference) / max(abs(reference), np.finfo(float).eps)
@@ -32,7 +38,7 @@ def compare_topographies(
     reference_valid_mask: NDArray[np.bool_] | None = None,
     synthetic_valid_mask: NDArray[np.bool_] | None = None,
 ) -> dict[str, Any]:
-    """Compare the required height, spatial, slope, peak, and pit metrics."""
+    """比较实测与合成地形的高度、空间、坡度、峰和坑指标。"""
 
     reference = compute_descriptors(
         reference_height_m,
@@ -48,6 +54,7 @@ def compare_topographies(
         valid_mask=synthetic_valid_mask,
         include_curves=True,
     )
+    # 明确列出跨样本可直接比较的标量；完整描述量和曲线仍分别保留在报告中。
     pairs = {
         "rms_height": (
             synthetic["height"]["rms_about_mean_m"],
@@ -101,6 +108,8 @@ def compare_topographies(
 
 
 def _sample(values: NDArray[np.floating], maximum: int = 200_000) -> NDArray[np.float64]:
+    """按固定步长下采样一维视图，限制绘图开销且保持确定性。"""
+
     flat = np.asarray(values, dtype=np.float64).ravel()
     return flat[:: max(1, math.ceil(flat.size / maximum))]
 
@@ -116,7 +125,7 @@ def render_comparison(
     reference_label: str = "measured reference",
     dpi: int = 170,
 ) -> Path:
-    """Render height maps, section, distribution, PSD, and slope comparison."""
+    """绘制高度图、截面、CDF、PSD 和坡度分布对比。"""
 
     try:
         import matplotlib
@@ -128,6 +137,7 @@ def render_comparison(
             "validation plots require the optional plot dependency"
         ) from exc
 
+    # 没有实测参考时仍生成明确标注的 synthetic-only 图，避免视觉上暗示已验证。
     reference_available = reference_height_m is not None
     if reference_available and (reference_dx_m is None or reference_dy_m is None):
         raise TerrainConfigurationError(
@@ -362,7 +372,7 @@ def render_comparison(
 
 
 def summarize_seed_ensemble(terrains: Sequence[Terrain]) -> dict[str, Any]:
-    """Summarize multiple seeds and prove material/parameter consistency."""
+    """汇总多个 seed，并确认它们属于同一材料/subtype 参数族。"""
 
     if not terrains:
         raise TerrainConfigurationError("seed ensemble cannot be empty")
@@ -371,6 +381,7 @@ def summarize_seed_ensemble(terrains: Sequence[Terrain]) -> dict[str, Any]:
         raise TerrainConfigurationError(
             "seed ensemble cannot mix material/subtype profiles"
         )
+    # 保留逐 seed 描述量，同时计算跨 seed 均值和离散度，避免只展示“最好看”的样本。
     descriptors = [
         compute_descriptors(
             item.height,
@@ -423,6 +434,8 @@ def summarize_seed_ensemble(terrains: Sequence[Terrain]) -> dict[str, Any]:
 
 
 def write_validation_json(path: str | Path, report: Mapping[str, Any]) -> Path:
+    """以 UTF-8、排序缩进 JSON 写入验证报告并返回绝对路径。"""
+
     target = Path(path).resolve()
     target.parent.mkdir(parents=True, exist_ok=True)
     target.write_text(

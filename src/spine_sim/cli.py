@@ -1,4 +1,4 @@
-"""Command line entry points for environment, case, campaign and recovery."""
+"""``spine-sim`` 命令行入口：环境检查、case/campaign 运行与恢复。"""
 
 from __future__ import annotations
 
@@ -14,9 +14,12 @@ from spine_sim.runtime.runner import CampaignRunner
 
 
 def _runner(args: argparse.Namespace) -> CampaignRunner:
+    """读取配置、按子命令裁剪 case，并创建或恢复对应 runner。"""
+
     raw = json.loads(args.config.read_text(encoding="utf-8"))
     campaign = CampaignSpec.from_mapping(raw)
     if args.command == "run-case":
+        # run-case 始终退化为单 case、单进程 small 模式，确保命令语义明确。
         if args.case_id:
             cases = tuple(case for case in campaign.cases if case.case_id == args.case_id)
             if not cases:
@@ -40,6 +43,8 @@ def _runner(args: argparse.Namespace) -> CampaignRunner:
 
 
 def build_parser() -> argparse.ArgumentParser:
+    """声明所有子命令和参数，不在解析阶段执行文件或后端操作。"""
+
     parser = argparse.ArgumentParser(prog="spine-sim")
     sub = parser.add_subparsers(dest="command", required=True)
     validate = sub.add_parser("validate-env")
@@ -60,6 +65,8 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main(argv: Sequence[str] | None = None) -> int:
+    """分派子命令，并用退出码区分成功、case 错误和环境错误。"""
+
     args = build_parser().parse_args(argv)
     if args.command == "validate-env":
         report = validate_environment(writable_path=args.output)

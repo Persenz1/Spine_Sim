@@ -1,4 +1,7 @@
-"""Canonical array counts, load sharing, and path-integral metrics."""
+"""阵列物理计数、载荷分担和路径阻力积分指标。
+
+这些函数只从已求得的逐刺/路径数据计算描述指标，不参与接触状态或阵列平衡求解。
+"""
 
 from __future__ import annotations
 
@@ -11,6 +14,8 @@ from numpy.typing import ArrayLike
 
 @dataclass(frozen=True)
 class SpineMetricInput:
+    """一根刺用于计数和载荷分担统计的最小状态。"""
+
     geometric: bool
     signed_gap_m: float | None
     engagement: bool | None
@@ -21,6 +26,8 @@ class SpineMetricInput:
 
 @dataclass(frozen=True)
 class ArrayCounts:
+    """名义、几何、接触、挂接、承载数量及载荷分担指标。"""
+
     n_nominal: int
     n_geometric: int
     n_contact: int
@@ -38,6 +45,8 @@ class ArrayCounts:
 
 @dataclass(frozen=True)
 class PathResistanceMetrics:
+    """正/负/净归一化路径阻力及有效覆盖范围。"""
+
     J_positive: float
     J_negative: float
     J_net: float
@@ -48,6 +57,8 @@ class PathResistanceMetrics:
 
 
 def _inverse_simpson(values: Sequence[float]) -> float | None:
+    """计算 ``(Σp)²/Σp²`` 的有效分担根数；总量为零时未定义。"""
+
     array = np.asarray(values, dtype=float)
     total = float(np.sum(array))
     if total <= 0.0:
@@ -61,7 +72,7 @@ def _inverse_simpson(values: Sequence[float]) -> float | None:
 def compute_array_counts(
     spines: Iterable[SpineMetricInput], *, gap_tolerance_m: float
 ) -> ArrayCounts:
-    """Evaluate physical counts without coercing unknown engagement to false."""
+    """计算分层物理计数，且不把未知挂接状态强制当作 false。"""
 
     if not np.isfinite(gap_tolerance_m) or gap_tolerance_m < 0.0:
         raise ValueError("gap_tolerance_m must be finite and non-negative")
@@ -78,6 +89,7 @@ def compute_array_counts(
     n_evaluable = sum(value is not None for value in engagement_values)
     n_engaged_lower = sum(value is True for value in engagement_values)
     unknown = sum(value is None for value in engagement_values)
+    # 存在未知项时只报告上下界，精确 n_engaged 保持 None。
     n_engaged = n_engaged_lower if unknown == 0 else None
 
     normal_values: list[float] = []
@@ -99,6 +111,7 @@ def compute_array_counts(
         P_avg = None
         n_share_normal = None
 
+    # 有效分担根数只看正向抗力；load_sharing_index 则看所有 active 刺的载荷幅值。
     tangent_positive = [
         float(item.tangent_resistance_N)
         for item in items
@@ -144,7 +157,7 @@ def integrate_path_resistance(
     accepted: ArrayLike,
     valid: ArrayLike,
 ) -> PathResistanceMetrics:
-    """Integrate J+/J-/Jnet only across adjacent accepted valid samples."""
+    """仅在相邻两站都 accepted 且 valid 的区间积分 ``J+``、``J-`` 和 ``Jnet``。"""
 
     x = np.asarray(path_position_m, dtype=float)
     force = np.asarray(resistance_force_N, dtype=float)
@@ -165,12 +178,14 @@ def integrate_path_resistance(
     ):
         raise ValueError("external_normal_preload_N must be finite and positive")
 
+    # 无效点不补零，也不跨越缺口连接；只保留两个端点均有效的真实区间。
     point_valid = accepted_mask & valid_mask & np.isfinite(force)
     interval_valid = point_valid[:-1] & point_valid[1:]
     effective_length = float(np.sum(dx[interval_valid]))
     full_length = float(x[-1] - x[0])
     if effective_length <= 0.0:
         raise ValueError("no accepted valid path interval is available")
+    # 先用外部法向预载归一化，再分别积分正向抗力和反向助力的非负部分。
     normalized = force / external_normal_preload_N
     positive = np.maximum(normalized, 0.0)
     negative = np.maximum(-normalized, 0.0)

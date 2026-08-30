@@ -1,8 +1,7 @@
-"""Generate the formal full-size 3-family x 100-condition M1 catalog.
+"""生成正式的全尺寸“3 个材料族 × 100 个条件”M1 地形目录。
 
-The batch is deterministic and resumable.  Sandpaper subtypes cycle through
-P40/P60/P100/P180/P240 in a frozen order while all three material families use
-the same 100 seeds, preserving the paired downstream condition design.
+批处理是确定且可断点续跑的。砂纸粒度按 P40/P60/P100/P180/P240 的冻结顺序
+循环；三个材料族共用同一组 100 个种子，从而保留下游材料比较的配对设计。
 """
 
 from __future__ import annotations
@@ -43,11 +42,14 @@ SCHEMA_VERSION = "m1-material-formal-batch-v1"
 
 
 def formal_condition_design() -> tuple[dict[str, Any], ...]:
+    """生成冻结顺序的 300 条形式化条件，不执行地形计算。"""
+
     rows: list[dict[str, Any]] = []
     index = 0
     for family in FAMILIES:
         for seed_offset in range(SEED_COUNT):
             seed = SEED_START + seed_offset
+            # 砂纸五种粒度各出现 20 次；砖和混凝土使用各自固定子型。
             subtype = (
                 SANDPAPER_SUBTYPES[
                     seed_offset % len(SANDPAPER_SUBTYPES)
@@ -70,6 +72,8 @@ def formal_condition_design() -> tuple[dict[str, Any], ...]:
 
 
 def _safe_output(path: Path) -> Path:
+    """拒绝把磁盘根目录或含糊路径用作批处理输出目录。"""
+
     resolved = path.resolve()
     if resolved == Path(resolved.anchor) or resolved.name in {"", ".", ".."}:
         raise ValueError("output must be a specific directory")
@@ -77,6 +81,8 @@ def _safe_output(path: Path) -> Path:
 
 
 def _release_cuda_memory() -> None:
+    """若使用 CuPy，则在工况之间同步设备并释放缓存内存池。"""
+
     try:
         import cupy as cp  # type: ignore
     except ImportError:
@@ -87,6 +93,8 @@ def _release_cuda_memory() -> None:
 
 
 def _realization_id(recipe) -> str:
+    """按生成器、材料、种子和剖面计算与分辨率无关的实现身份。"""
+
     return identity(
         "material_realization",
         {
@@ -107,6 +115,8 @@ def _load_checkpoint(
     design_hash: str,
     overwrite: bool,
 ) -> dict[int, dict[str, Any]]:
+    """读取兼容的进度报告，并按条件序号建立断点索引。"""
+
     if overwrite or not report_path.is_file():
         return {}
     report = json.loads(report_path.read_text(encoding="utf-8"))
@@ -128,6 +138,8 @@ def _verify_checkpoint_condition(
     expected: dict[str, Any],
     condition: dict[str, Any],
 ) -> None:
+    """重新核对断点条件的设计字段、文件哈希和数组形状。"""
+
     for key in ("index", "terrain_family", "material", "subtype", "seed"):
         if condition.get(key) != expected[key]:
             raise ValueError(
@@ -148,6 +160,8 @@ def _verify_checkpoint_condition(
 
 
 def main(argv: Sequence[str] | None = None) -> int:
+    """生成或验证 300 个条件，持续写进度，并最终发布正式目录。"""
+
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "--output",
@@ -166,6 +180,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     )
     args = parser.parse_args(argv)
 
+    # 设计哈希覆盖条件和空间采样范围，是判断旧 checkpoint 能否复用的依据。
     output = _safe_output(args.output)
     output.mkdir(parents=True, exist_ok=True)
     library_root = output / "terrain_library"
@@ -196,6 +211,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         *,
         failure: BaseException | None = None,
     ) -> None:
+        """原子更新批处理状态；异常时同时记录类型和消息。"""
+
         report: dict[str, Any] = {
             "schema_version": SCHEMA_VERSION,
             "status": status,
@@ -230,6 +247,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         for expected in design:
             index = int(expected["index"])
             if index in completed and not args.overwrite:
+                # checkpoint 不能直接跳过：必须重开数据并验证全文件哈希和形状。
                 condition = completed[index]
                 _verify_checkpoint_condition(library, expected, condition)
                 conditions.append(condition)
@@ -247,6 +265,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 )
                 continue
 
+            # 1. 由冻结条件生成全尺寸合成表面，并单独记录生成耗时。
             generation_started = time.perf_counter()
             terrain = generate_terrain(
                 material=str(expected["material"]),
@@ -259,6 +278,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 backend=args.backend,
             )
             generation_time_s = time.perf_counter() - generation_started
+            # 2. 经 TerrainLibrary 公共入口注册，获得规范配方、区域和内容哈希。
             registration_started = time.perf_counter()
             recipe, region, metadata = register_terrain(
                 library_root,
@@ -269,6 +289,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 overwrite=args.overwrite,
             )
             registration_time_s = time.perf_counter() - registration_started
+            # 3. 从磁盘重开且校验哈希，再基于已注册数据计算目录统计量。
             mapped = library.open_region(
                 recipe.terrain_recipe_id,
                 region.region_id,
@@ -309,6 +330,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 "registration_time_s": registration_time_s,
             }
             conditions.append(condition)
+            # 每个工况完成后原子刷新报告，因此进程中断最多损失当前工况。
             write_report("running")
             print(
                 json.dumps(
@@ -326,14 +348,17 @@ def main(argv: Sequence[str] | None = None) -> int:
                 ),
                 flush=True,
             )
+            # 大型地形逐条件释放，尤其避免 CUDA 内存池在 300 次循环中累积。
             del mapped
             del terrain
             gc.collect()
             _release_cuda_memory()
     except BaseException as exc:
+        # KeyboardInterrupt 等非 Exception 异常也应留下可恢复的 interrupted 报告。
         write_report("interrupted", failure=exc)
         raise
 
+    # 正式目录身份取决于每一条件的实现、配方、区域及最终数据内容。
     catalog_id = stable_hash(
         [
             {
@@ -376,6 +401,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             round(SIZE_X_M / RESOLUTION_M) + 1,
         ],
         "formal_300_complete": len(conditions) == 300,
+        # 地形生成完成不等于材料已标定，也不自动开放下游正式排名。
         "formal_ranking_eligible": False,
         "limitations": [
             "Red-brick and concrete profiles remain provisional pending "
@@ -387,6 +413,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         ],
         "conditions": conditions,
     }
+    # 先发布完整目录，再把进度报告切为 complete；两个文件都采用原子替换。
     atomic_write_json(catalog_path, catalog)
     write_report("complete")
     print(

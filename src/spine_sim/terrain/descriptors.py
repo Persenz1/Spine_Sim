@@ -1,4 +1,4 @@
-"""Geometry descriptors used to calibrate and validate height fields."""
+"""用于标定和验证高度场的分布、空间、坡度与形貌描述量。"""
 
 from __future__ import annotations
 
@@ -15,6 +15,8 @@ _PERCENTILES = (1, 5, 25, 50, 75, 95, 99)
 
 
 def _moments(values: NDArray[np.float64]) -> tuple[float, float]:
+    """计算标准化三阶矩（偏度）和四阶矩（峰度）。"""
+
     centered = values - float(np.mean(values))
     standard_deviation = float(np.std(centered))
     if standard_deviation == 0.0:
@@ -30,7 +32,7 @@ def _axis_acf(
     *,
     axis: int,
 ) -> tuple[NDArray[np.float64], NDArray[np.float64]]:
-    """Average normalized ACFs over representative valid lines."""
+    """在代表性有效扫描线上平均归一化自相关函数。"""
 
     lines = height if axis == 1 else height.T
     line_masks = mask if axis == 1 else mask.T
@@ -44,6 +46,7 @@ def _axis_acf(
         mean = float(np.nanmean(line))
         line = np.where(valid, line - mean, 0.0)
         weights = valid.astype(np.float64)
+        # 零填充 FFT 计算线性自相关；mask 自相关给出每个 lag 的有效配对数。
         spectrum = np.fft.rfft(line, n=2 * line.size)
         weight_spectrum = np.fft.rfft(weights, n=2 * weights.size)
         numerator = np.fft.irfft(spectrum * np.conj(spectrum))[: line.size]
@@ -70,7 +73,7 @@ def _axis_acf(
 def _correlation_length(
     lags_m: NDArray[np.float64], acf: NDArray[np.float64]
 ) -> float:
-    """Return the first 1/e ACF crossing."""
+    """返回 ACF 首次下降到 ``1/e`` 的 lag，未交叉时取最大可用 lag。"""
 
     if not np.any(np.isfinite(acf)):
         return float("nan")
@@ -85,6 +88,8 @@ def _axis_psd(
     *,
     axis: int,
 ) -> tuple[NDArray[np.float64], NDArray[np.float64]]:
+    """平均代表性有效扫描线的 Hann 窗一维功率谱密度。"""
+
     lines = height if axis == 1 else height.T
     line_masks = mask if axis == 1 else mask.T
     indices = np.linspace(0, lines.shape[0] - 1, min(64, lines.shape[0]), dtype=int)
@@ -113,8 +118,9 @@ def _radial_two_dimensional_psd(
     *,
     maximum_axis_samples: int = 512,
 ) -> tuple[NDArray[np.float64], NDArray[np.float64], list[int]]:
-    """Compute a radially averaged 2-D PSD on a bounded representative grid."""
+    """在受限代表网格上计算径向平均二维 PSD，控制大图内存开销。"""
 
+    # 每轴最多保留 maximum_axis_samples 个样本；metadata 会记录实际分析 shape。
     stride_y = max(1, math.ceil(height.shape[0] / maximum_axis_samples))
     stride_x = max(1, math.ceil(height.shape[1] / maximum_axis_samples))
     sampled = np.asarray(height[::stride_y, ::stride_x], dtype=np.float64)
@@ -174,6 +180,8 @@ def _radial_two_dimensional_psd(
 def _local_extrema(
     height: NDArray[np.float64], mask: NDArray[np.bool_]
 ) -> tuple[NDArray[np.bool_], NDArray[np.bool_]]:
+    """在 8 邻域和有效 mask 内寻找至少一侧严格的局部峰/坑。"""
+
     center = height[1:-1, 1:-1]
     center_mask = mask[1:-1, 1:-1]
     peak = center_mask.copy()
@@ -207,6 +215,8 @@ def _typical_feature_size(
     dy_m: float,
     peak: bool,
 ) -> float:
+    """用峰/坑到半高背景阈值的 x/y 半径估计典型等效尺寸。"""
+
     positions = np.argwhere(extrema)
     if positions.size == 0:
         return float("nan")
@@ -255,7 +265,7 @@ def compute_descriptors(
     valid_mask: NDArray[np.bool_] | None = None,
     include_curves: bool = False,
 ) -> dict[str, Any]:
-    """Compute distribution, spatial, slope, peak, and pit descriptors."""
+    """计算高度分布、相关性、PSD、坡度、峰/坑和伪影描述量。"""
 
     height = np.asarray(height_m, dtype=np.float64)
     if height.ndim != 2 or min(height.shape) < 3:
@@ -269,6 +279,7 @@ def compute_descriptors(
     )
     if mask.shape != height.shape:
         raise TerrainConfigurationError("descriptor mask shape mismatch")
+    # 用户 mask 与有限性共同决定可用于统计的点，原数组不作填补或改写。
     mask &= np.isfinite(height)
     values = height[mask]
     if values.size < 9:
@@ -355,6 +366,7 @@ def compute_descriptors(
         "artifact_checks": artifact_checks(height, mask),
     }
     if include_curves:
+        # 曲线数据体积较大，只在比较/绘图明确需要时附加。
         radial_frequency, radial_psd, psd_2d_shape = _radial_two_dimensional_psd(
             height, mask, dx_m, dy_m
         )
@@ -377,7 +389,7 @@ def compute_descriptors(
 def artifact_checks(
     height_m: NDArray[np.float64], valid_mask: NDArray[np.bool_]
 ) -> dict[str, Any]:
-    """Return lightweight, threshold-free evidence for common synthesis artifacts."""
+    """返回常见合成伪影的轻量、无固定 pass 阈值证据。"""
 
     height = np.asarray(height_m, dtype=np.float64)
     valid = np.asarray(valid_mask, dtype=np.bool_)

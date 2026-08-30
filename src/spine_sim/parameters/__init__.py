@@ -1,4 +1,4 @@
-"""Canonical engineering parameter registry."""
+"""带证据来源的规范工程参数注册表。"""
 
 from .registry import (
     ArrayGeometry,

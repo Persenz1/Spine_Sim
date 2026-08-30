@@ -1,4 +1,4 @@
-"""Command-line tools for M1 region, track, cache and benchmark workflows."""
+"""M1 region、track、缓存、材料生成、绘图和 benchmark 的命令行工具。"""
 
 from __future__ import annotations
 
@@ -33,10 +33,14 @@ from .validation import (
 
 
 def _read_json(path: Path) -> dict[str, Any]:
+    """读取 UTF-8 JSON 映射。"""
+
     return json.loads(path.read_text(encoding="utf-8"))
 
 
 def _load_recipe(path: Path | None) -> TerrainRecipe:
+    """加载裸 recipe 或含 ``recipe`` 包装的文档；无路径时使用默认配方。"""
+
     if path is None:
         return TerrainRecipe()
     document = _read_json(path)
@@ -44,11 +48,15 @@ def _load_recipe(path: Path | None) -> TerrainRecipe:
 
 
 def _load_region(path: Path) -> RegionSpec:
+    """加载裸 region 或含 ``region`` 包装的文档。"""
+
     document = _read_json(path)
     return RegionSpec.from_mapping(document.get("region", document))
 
 
 def build_parser() -> argparse.ArgumentParser:
+    """声明 ``spine-terrain`` 的全部子命令与显式单位参数。"""
+
     parser = argparse.ArgumentParser(prog="spine-terrain")
     sub = parser.add_subparsers(dest="command", required=True)
 
@@ -156,6 +164,8 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def _benchmark(library_root: Path, *, tile_rows: int) -> dict[str, Any]:
+    """运行小 region 的生成、mmap、track、删除/重建与容量投影 benchmark。"""
+
     library = TerrainLibrary(library_root)
     recipe = TerrainRecipe(seed=20260727)
     region = RegionSpec(
@@ -188,6 +198,7 @@ def _benchmark(library_root: Path, *, tile_rows: int) -> dict[str, Any]:
         overwrite=True,
     )
     track_seconds = time.perf_counter() - track_started
+    # 删除后从 retained recipe/manifest 重建，并用数据哈希验证字节级可复现性。
     original_hash = generated["data_sha256"]
     deletion = library.delete_region_cache(
         recipe.terrain_recipe_id, region.region_id, include_tracks=False
@@ -227,6 +238,8 @@ def _benchmark(library_root: Path, *, tile_rows: int) -> dict[str, Any]:
 
 
 def main(argv: Sequence[str] | None = None) -> int:
+    """解析子命令、统一换算 CLI 单位并输出 JSON 结果。"""
+
     args = build_parser().parse_args(argv)
     if args.command == "list-materials":
         print(json.dumps(available_profiles(), ensure_ascii=False, indent=2))
@@ -271,6 +284,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         print(json.dumps(result, ensure_ascii=False, indent=2))
         return 0
     if args.command == "validate-material":
+        # 多 seed 描述统计与单一实测参考是两类证据；实测不可用时明确生成 synthetic-only 图。
         seeds = args.seeds or [1101, 1102, 1103]
         terrains = [
             generate_terrain(

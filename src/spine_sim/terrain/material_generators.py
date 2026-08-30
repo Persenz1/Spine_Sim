@@ -1,9 +1,8 @@
-"""Material-specific synthetic terrain algorithms.
+"""材料专用的合成地形算法。
 
-These are intentionally separate models.  Sandpaper uses measured-patch
-quilting when a calibrated Hirox source is present and a granular fallback for
-provisional grits.  Brick uses base/directional/pore/fired-grain layers.
-Concrete uses mortar/aggregate/air-void/finish layers.
+三类材料刻意使用不同模型：砂纸优先拼接已标定 Hirox patch，无来源时走 provisional
+颗粒模型；红砖由基底、方向纹理、孔洞和烧结颗粒组成；混凝土由砂浆、骨料、气孔、
+表面 finish 与细糙层组成。它们不能互换 profile 或被视为一个通用随机面。
 """
 
 from __future__ import annotations
@@ -35,6 +34,8 @@ def _normalize_rms(
     *,
     backend: MaterialBackend = "cpu",
 ) -> NDArray[np.float32]:
+    """去均值并把场的 RMS 缩放到目标值，支持 CPU/CUDA。"""
+
     if backend == "cuda":
         try:
             import cupy as cp  # type: ignore
@@ -70,7 +71,7 @@ def _normalize_rms(
 
 
 def _smooth_latent(field: NDArray[np.float32], *, passes: int = 2) -> None:
-    """Apply a compact non-periodic binomial smoother in place."""
+    """用反射边界的紧凑二项核就地平滑 latent 场，避免周期接缝。"""
 
     for _ in range(passes):
         padded_x = np.pad(field, ((0, 0), (2, 2)), mode="reflect")
@@ -103,15 +104,16 @@ def correlated_field(
     backend: MaterialBackend = "cpu",
     cuda_tile_rows: int = 512,
 ) -> NDArray[np.float32]:
-    """Generate an overscanned, non-periodic anisotropic random field.
+    """生成 overscan、非周期、各向异性的相关随机场。
 
-    A smoothed latent grid is bilinearly expanded.  Unlike a bare FFT field,
-    opposite output edges do not share periodic boundary values.
+    先平滑低分辨率 latent 网格，再双线性扩展；与裸 FFT 随机场不同，对边不会共享
+    周期边界值。
     """
 
     ny, nx = shape
     step_x = max(1, int(round(correlation_x_m / max(3.0 * dx_m, 1e-30))))
     step_y = max(1, int(round(correlation_y_m / max(3.0 * dy_m, 1e-30))))
+    # 两侧各保留 3 个 latent 节点 overscan，输出从内部取样以消除边界锁定。
     latent_nx = math.ceil((nx - 1) / step_x) + 7
     latent_ny = math.ceil((ny - 1) / step_y) + 7
     latent = rng.standard_normal((latent_ny, latent_nx), dtype=np.float32)
@@ -157,12 +159,10 @@ def _correlated_field_cuda(
     target_rms_m: float,
     tile_rows: int,
 ) -> NDArray[np.float32]:
-    """Expand and normalize one latent field on CUDA with bounded memory.
+    """在有界显存内用 CUDA 扩展并归一化一个 latent 场。
 
-    Random draws remain on NumPy's PCG64 stream so the seed semantics do not
-    depend on the installed CuPy version.  Interpolation is tiled in Y and
-    copied directly into the final host array, which keeps large campaign
-    regions within an 8 GB device.
+    随机抽样仍来自 NumPy PCG64，使 seed 语义不依赖 CuPy 版本；插值按 y 分 tile 并
+    直接复制到最终 host 数组，使大型 campaign 区域可在有限显存中生成。
     """
 
     if tile_rows < 1:
@@ -207,6 +207,7 @@ def _correlated_field_cuda(
     total = 0.0
     total_squares = 0.0
     sample_count = ny * nx
+    # 第一遍输出 tile 并累计全局一、二阶矩；第二遍在 host 端统一去均值/缩放。
     for start in range(0, ny, tile_rows):
         stop = min(ny, start + tile_rows)
         y_index = cp.arange(start, stop, dtype=cp.int64)
@@ -247,6 +248,8 @@ def _non_gaussian(
     skew_bias: float = 0.0,
     backend: MaterialBackend = "cpu",
 ) -> NDArray[np.float32]:
+    """用有符号幂和可选偏斜项改变分布形状，同时保持原 RMS。"""
+
     if backend == "cuda":
         try:
             import cupy as cp  # type: ignore
@@ -289,6 +292,8 @@ def _feature_count(
     dy_m: float,
     rng: np.random.Generator,
 ) -> int:
+    """按物理面积和面密度从 Poisson 分布抽取 feature 数。"""
+
     area = max(dx_m * dy_m, (shape[1] - 1) * dx_m * (shape[0] - 1) * dy_m)
     return int(rng.poisson(max(0.0, density_per_m2 * area)))
 
@@ -313,7 +318,7 @@ def add_irregular_features(
     cluster_probability: float = 0.0,
     backend: MaterialBackend = "cpu",
 ) -> dict[str, Any]:
-    """Stamp randomized, rough-edged, rotated features onto ``height_m``."""
+    """在 ``height_m`` 上盖印随机旋转、粗糙边界的椭圆 feature。"""
 
     if backend == "cuda":
         return _add_irregular_features_cuda(
@@ -338,6 +343,7 @@ def add_irregular_features(
         raise TerrainConfigurationError(
             f"material backend must be 'cpu' or 'cuda', got {backend!r}"
         )
+    # 所有 feature 参数先从同一 PCG64 顺序抽取，CPU/CUDA 路径共享 seed 语义。
     count = _feature_count(density_per_m2, height_m.shape, dx_m, dy_m, rng)
     ny, nx = height_m.shape
     previous_center: tuple[float, float] | None = None
@@ -429,6 +435,8 @@ def add_irregular_features(
 
 @lru_cache(maxsize=1)
 def _cuda_irregular_feature_kernel() -> Any:
+    """惰性编译并缓存 irregular-feature CUDA RawKernel。"""
+
     try:
         import cupy as cp  # type: ignore
     except ImportError as exc:
@@ -524,7 +532,7 @@ def _add_irregular_features_cuda(
     positive_probability: float,
     cluster_probability: float,
 ) -> dict[str, Any]:
-    """Stamp features on CUDA while preserving the CPU RNG draw sequence."""
+    """在 CUDA 上盖印 feature，同时保持与 CPU 相同的 RNG 抽样顺序。"""
 
     try:
         import cupy as cp  # type: ignore
@@ -654,6 +662,8 @@ def _add_irregular_features_cuda(
 
 
 def _source_candidates(relative_path: str) -> list[Path]:
+    """把 profile 相对路径解析为当前工作目录和仓库根下的候选位置。"""
+
     candidate = Path(relative_path)
     if candidate.is_absolute():
         return [candidate]
@@ -667,11 +677,13 @@ def _source_candidates(relative_path: str) -> list[Path]:
 def resolve_profile_source(
     profile: Mapping[str, Any], explicit_path: str | Path | None
 ) -> tuple[Path | None, Mapping[str, Any] | None]:
+    """优先返回显式用户来源，否则查找 profile 已登记的本地实测文件。"""
+
     sources = list(profile.get("source_data", ()))
     if explicit_path is not None:
         path = Path(explicit_path).resolve()
-        # An explicit user path is new evidence, not an alias for the profile's
-        # first calibrated source.  Do not apply another file's hash/label.
+        # 显式用户路径是新的证据，不是 profile 首个已标定来源的别名；不能套用别的
+        # 文件哈希或标签。
         return path, None
     for record in sources:
         relative_path = record.get("relative_path")
@@ -690,6 +702,8 @@ def _load_profile_surface_cached(
     modified_time_ns: int,
     source_record_json: str,
 ) -> MeasuredSurface:
+    """验证 profile 来源哈希并缓存已预处理表面。"""
+
     del file_size, modified_time_ns
     path = Path(path_text)
     source_record = (
@@ -732,7 +746,7 @@ def _load_profile_surface_cached(
 def _load_profile_surface(
     path: Path, source_record: Mapping[str, Any] | None
 ) -> MeasuredSurface:
-    """Load and retain verified sources for efficient multi-terrain batches."""
+    """加载并复用已验证来源，提高批量生成多地形时的效率。"""
 
     stat = path.stat()
     source_record_json = (
@@ -751,6 +765,8 @@ def _load_profile_surface(
 def _full_resampled_source(
     surface: MeasuredSurface, resolution_m: float
 ) -> tuple[NDArray[np.float32], NDArray[np.bool_], dict[str, Any]]:
+    """将整个实测源抗混叠重采样到目标材料网格。"""
+
     size_x = math.floor(surface.size_x_m / resolution_m) * resolution_m
     size_y = math.floor(surface.size_y_m / resolution_m) * resolution_m
     return resample_measured_patch(
@@ -769,6 +785,8 @@ def _full_resampled_source(
 def _valid_patch_origins(
     valid_mask: NDArray[np.bool_], patch_shape: tuple[int, int]
 ) -> tuple[NDArray[np.intp], NDArray[np.intp]]:
+    """用积分图列出 mask 全有效的候选 patch 左上角索引。"""
+
     py, px = patch_shape
     invalid = (~valid_mask).astype(np.int32)
     integral = np.pad(
@@ -783,8 +801,7 @@ def _valid_patch_origins(
     )
     origins = np.nonzero(counts == 0)
     if origins[0].size == 0:
-        # A tiny controlled tolerance is allowed, but patch data are repaired
-        # only after retaining the source mask/provenance.
+        # 若没有全有效 patch，只允许极小且受控的缺失比例；来源 mask/provenance 仍保留。
         origins = np.nonzero(counts <= max(1, int(0.0025 * py * px)))
     return (
         np.asarray(origins[0], dtype=np.intp),
@@ -793,6 +810,8 @@ def _valid_patch_origins(
 
 
 def _tile_starts(length: int, patch: int, overlap: int) -> list[int]:
+    """生成覆盖输出轴且末端精确贴边的 patch 起点。"""
+
     if patch >= length:
         return [0]
     step = patch - overlap
@@ -812,7 +831,7 @@ def quilt_measured_patches(
     candidate_count: int,
     rng: np.random.Generator,
 ) -> tuple[NDArray[np.float32], dict[str, Any]]:
-    """Texture-quilt measured patches with overlap-error selection and blending."""
+    """用重叠误差选择和 raised-cosine 融合拼接实测纹理 patch。"""
 
     ny, nx = output_shape
     patch_y = min(patch_size_samples, source_height_m.shape[0], ny)
@@ -859,6 +878,8 @@ def quilt_measured_patches(
             blend_cache[(has_top_overlap, has_left_overlap)] = blend
     for destination_y in starts_y:
         for destination_x in starts_x:
+            # 从随机候选中选已铺重叠区 MSE 最小者；近期来源位置加轻微惩罚以减少重复。
+            # 不旋转 patch，从而保留实测表面的原始方向性。
             draw_count = max(1, min(candidate_count, origin_y.size))
             indices = rng.integers(0, origin_y.size, size=draw_count)
             candidate_y = origin_y[indices]
@@ -935,6 +956,8 @@ def quantile_match(
     *,
     backend: MaterialBackend = "cpu",
 ) -> NDArray[np.float32]:
+    """用单调分段线性映射匹配 profile 给定的高度分位点。"""
+
     percentiles = np.asarray(sorted(float(key) for key in target_quantiles))
     target = np.asarray(
         [float(target_quantiles[str(int(item))]) for item in percentiles],
@@ -985,6 +1008,8 @@ def _granular_fallback(
     rng: np.random.Generator,
     backend: MaterialBackend = "cpu",
 ) -> tuple[NDArray[np.float32], dict[str, Any]]:
+    """在无适用实测来源时生成明确标记为 provisional 的砂纸颗粒面。"""
+
     generation = profile["generation"]
     grain = float(generation["grain_diameter_m"])
     target_rms = float(generation["rms_height_m"])
@@ -1008,8 +1033,7 @@ def _granular_fallback(
         target_rms_m=target_rms,
         backend=backend,
     )
-    # Max-composition creates angular protrusions and deep inter-grain valleys;
-    # it is structurally different from a single Gaussian/fractal surface.
+    # max 复合形成棱角凸粒和深颗粒间谷，结构上不同于单一高斯/分形表面。
     normalized_a = field_a / max(target_rms, np.finfo(np.float32).eps)
     normalized_b = field_b / max(target_rms, np.finfo(np.float32).eps)
     granular = np.maximum(normalized_a, 0.72 * normalized_b)
@@ -1054,11 +1078,12 @@ def generate_sandpaper(
     source_path: str | Path | None = None,
     backend: MaterialBackend = "cpu",
 ) -> tuple[NDArray[np.float32], dict[str, Any]]:
-    """Generate sandpaper from measured patches or an explicit provisional model."""
+    """由实测 patch 或显式 provisional 颗粒模型生成砂纸。"""
 
     resolved_source, source_record = resolve_profile_source(profile, source_path)
     generation = profile["generation"]
     if resolved_source is None:
+        # 无来源时不假装是实测重建，直接返回 metadata 明确的 granular fallback。
         return _granular_fallback(
             profile,
             shape=shape,
@@ -1073,6 +1098,7 @@ def generate_sandpaper(
     patch_samples = max(
         8, int(round(float(generation["patch_size_m"]) / resolution_m)) + 1
     )
+    # 实测 patch 负责大/中尺度形貌；有界相关残差补充小尺度但不主导分布。
     height, quilting = quilt_measured_patches(
         source_height,
         source_mask,
@@ -1124,7 +1150,7 @@ def generate_red_brick(
     rng: np.random.Generator,
     backend: MaterialBackend = "cpu",
 ) -> tuple[NDArray[np.float32], dict[str, Any]]:
-    """Generate fired brick as base + directional + pores + fired grains."""
+    """按“基底 + 方向纹理 + 孔洞 + 烧结细颗粒”生成红砖。"""
 
     generation = profile["generation"]
     base_config = generation["base_field"]
@@ -1154,6 +1180,7 @@ def generate_red_brick(
     height = np.asarray(base + secondary, dtype=np.float32)
     del base, secondary
 
+    # 各层分开生成和记录，使方向纹理、孔洞与细糙度的作用可审计。
     directional_config = generation["directional_texture"]
     if directional_config["enabled"]:
         directional = correlated_field(
@@ -1228,7 +1255,7 @@ def generate_concrete(
     rng: np.random.Generator,
     backend: MaterialBackend = "cpu",
 ) -> tuple[NDArray[np.float32], dict[str, Any]]:
-    """Generate concrete as mortar + aggregate + void + finish + fine layers."""
+    """按“砂浆 + 骨料 + 气孔 + finish + 细糙度”生成混凝土。"""
 
     generation = profile["generation"]
     mortar_config = generation["mortar"]
@@ -1263,6 +1290,7 @@ def generate_concrete(
     )
     del mortar_primary, mortar_secondary
 
+    # 骨料允许正负混合（露出/埋入），气孔则始终为负 feature。
     aggregate_config = generation["aggregate"]
     aggregate_record = add_irregular_features(
         height,

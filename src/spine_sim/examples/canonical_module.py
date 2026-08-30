@@ -1,9 +1,9 @@
-"""Named analytic catalog used to exercise the canonical production chain.
+"""用于贯通规范生产链的命名解析测试目录。
 
-This module is intentionally a smoke catalog, not a calibrated hardware model.
-Every physical value is tagged as an analytic test fixture in the result
-provenance; production studies should construct the public geometry,
-single-spine, and array inputs from measured/sourced records.
+该模块有意采用平面壁面和人工参数，只用于验证“几何候选 → 单杆接触 → 阵列
+平衡 → 结果持久化”的接口闭环，不代表经过标定的硬件模型。所有物理值都会在
+结果来源中标为 ``analytic_test_fixture``；正式研究应从实测或有出处的记录构造
+公开的几何、单杆和阵列输入。
 """
 
 from __future__ import annotations
@@ -42,6 +42,8 @@ CATALOG_VERSION = "canonical-analytic-catalog-1"
 
 
 def _float_tuple(values: Any, length: int, name: str) -> tuple[float, ...]:
+    """把序列转为定长有限浮点元组，并给出面向字段的错误信息。"""
+
     result = tuple(float(value) for value in values)
     if len(result) != length or not np.all(np.isfinite(result)):
         raise ValueError(f"{name} must contain {length} finite values")
@@ -49,9 +51,13 @@ def _float_tuple(values: Any, length: int, name: str) -> tuple[float, ...]:
 
 
 def _fixture_candidate(spine_id: str, x_m: float, terrain_version: str) -> ContactCandidate:
+    """为一根测试 spine 构造位于水平解析平面上的确定性接触候选。"""
+
+    # 接触法向沿 +z，球心和支持点略有高度差，以形成一个无歧义的平面候选。
     normal = np.array([0.0, 0.0, 1.0], dtype=np.float64)
     sphere_center = np.array([x_m, 0.0, -0.004], dtype=np.float64)
     support = np.array([[x_m, 0.0, -0.00405]], dtype=np.float64)
+    # 身份载荷只含决定该候选几何的稳定字段，不能包含运行时对象地址。
     payload = {
         "catalog": CATALOG_NAME,
         "spine_id": spine_id,
@@ -97,6 +103,8 @@ def _fixture_candidate(spine_id: str, x_m: float, terrain_version: str) -> Conta
 
 
 def _fixture_spines(parameters: Mapping[str, Any], terrain_version: str) -> tuple[SpineInstance, ...]:
+    """从测试目录参数构造一排材料和容差相同、初始间隙可不同的 spine。"""
+
     gaps = _float_tuple(parameters["initial_gaps_m"], len(parameters["initial_gaps_m"]), "initial_gaps_m")
     spacing_m = float(parameters["spacing_m"])
     additional_compliance = float(parameters["additional_compliance_m_per_N"])
@@ -107,6 +115,7 @@ def _fixture_spines(parameters: Mapping[str, Any], terrain_version: str) -> tupl
     count = len(gaps)
     if count < 1:
         raise ValueError("analytic catalog requires at least one spine")
+    # 所有参数来源均明确标为解析夹具，防止测试结果被误解为实验标定值。
     material = SpineMaterial(
         young_modulus_Pa=float(parameters["young_modulus_Pa"]),
         poisson_ratio=float(parameters["poisson_ratio"]),
@@ -156,6 +165,7 @@ def _fixture_spines(parameters: Mapping[str, Any], terrain_version: str) -> tupl
             parameters["single_tolerances"]["event_fraction"]
         ),
     )
+    # 将一排 spine 关于 x=0 对称布置；奇偶数量都使用同一中心化公式。
     offset = 0.5 * (count - 1)
     spines: list[SpineInstance] = []
     for index, gap in enumerate(gaps):
@@ -188,8 +198,11 @@ def _fixture_spines(parameters: Mapping[str, Any], terrain_version: str) -> tupl
 
 
 def _control(parameters: Mapping[str, Any]) -> MixedControl:
+    """构造只在 z 向求力平衡、其余自由度固定位姿的混合控制。"""
+
     required_force = float(parameters["required_normal_force_N"])
     loader_stiffness = float(parameters["loader_stiffness_N_per_m"])
+    # 加载器仅提供 z 向平移刚度，避免给其它五个规定自由度引入虚假耦合。
     loader = np.zeros((6, 6), dtype=np.float64)
     loader[2, 2] = loader_stiffness
     return MixedControl(
@@ -217,6 +230,8 @@ def _control(parameters: Mapping[str, Any]) -> MixedControl:
 
 
 def _per_spine_rows(result: Any) -> list[dict[str, Any]]:
+    """把阵列结果展开成可直接写入 JSON/JSONL 的逐杆记录。"""
+
     rows: list[dict[str, Any]] = []
     for item in result.per_spine:
         single = item.single_result
@@ -255,17 +270,19 @@ def _per_spine_rows(result: Any) -> list[dict[str, Any]]:
 
 
 def run_case(parameters: Mapping[str, Any], context: RunContext) -> CaseOutput:
-    """Run one explicitly named analytic canonical array case."""
+    """运行一个命名解析阵列案例，并返回规范的摘要、数组和轨迹。"""
 
     if parameters.get("catalog") != CATALOG_NAME:
         raise ValueError(f"only the named smoke catalog {CATALOG_NAME!r} is supported")
     if not context.terrain_version:
         raise ValueError("canonical cases require a non-empty terrain_version")
+    # 1. 构造输入并从 revision=0 的空接受状态开始求解。
     spines = _fixture_spines(parameters, context.terrain_version)
     accepted = ArrayAcceptedState.initial(spines)
     array_tolerances = ArrayTolerances(
         **{name: value for name, value in parameters["array_tolerances"].items()}
     )
+    # 2. 求解产生 trial；只有数值收敛、物理可接受且准静态稳定时才允许提交。
     trial = solve_array_equilibrium(
         spines,
         accepted,
@@ -279,9 +296,11 @@ def run_case(parameters: Mapping[str, Any], context: RunContext) -> CaseOutput:
             f"{trial.result.equilibrium_status.value}/"
             f"{trial.result.quasistatic_stability.value}"
         )
+    # 3. 提交只推进接受态修订号，不会重新求解或改变 trial 中的力学结果。
     committed = commit_array_trial(accepted, trial)
     result = trial.result
     per_spine = _per_spine_rows(result)
+    # 4. 把版本、坐标系、假设与适用边界随结果保存，保证结果可解释。
     metadata = CanonicalResultMetadata(
         case_id=context.case_id,
         normalized_input_hash=context.normalized_input_hash,
@@ -323,6 +342,7 @@ def run_case(parameters: Mapping[str, Any], context: RunContext) -> CaseOutput:
         solver_semantics_version=context.solver_semantics_version,
         parameter_registry_version=context.parameter_registry_version,
     )
+    # 5. summary 保留复核平衡和状态转换所需的数据；大数组单独写入 NPZ。
     summary: dict[str, Any] = {
         **metadata.as_dict(),
         "physical_state": [
@@ -351,7 +371,9 @@ def run_case(parameters: Mapping[str, Any], context: RunContext) -> CaseOutput:
         "equilibrium_diagnostics": asdict(result.diagnostics),
         "accepted_revision": committed.revision,
     }
+    # 在返回给通用运行器之前先执行模式校验，尽早暴露缺字段或单位漂移。
     validate_canonical_summary(summary)
+    # 当前夹具只有一个接受增量，因此轨迹恰好包含一行。
     trace_row = {
         "case_id": context.case_id,
         "load_parameter": committed.load_parameter,

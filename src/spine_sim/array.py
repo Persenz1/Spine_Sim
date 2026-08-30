@@ -1,4 +1,8 @@
-"""Canonical O(N) rigid-backplate array equilibrium and event trial solver."""
+"""刚性共同背板阵列的 O(N) 装配、六自由度平衡与事件 trial 求解器。
+
+每根刺仍由唯一的标准单刺求解器计算；阵列层只负责刚性运动映射、广义 wrench/
+切线装配、混合控制、活动集事件级联、失效后重平衡和准静态稳定性。
+"""
 
 from __future__ import annotations
 
@@ -41,21 +45,29 @@ Matrix6 = NDArray[np.float64]
 
 
 class ControlMode(StrEnum):
+    """每个广义分量选择位姿控制或 wrench 控制。"""
+
     PRESCRIBED_POSE = "prescribed_pose"
     REQUIRED_WRENCH = "required_wrench"
 
 
 class RankStatus(StrEnum):
+    """自由子空间内缩放切线矩阵的秩状态。"""
+
     FULL_RANK = "full_rank"
     RANK_DEFICIENT = "rank_deficient"
 
 
 class RangeStatus(StrEnum):
+    """当前残差是否位于缩放切线的可解值域。"""
+
     COMPATIBLE = "compatible"
     INCOMPATIBLE = "incompatible"
 
 
 class EquilibriumStatus(StrEnum):
+    """阵列平衡求解的终止原因。"""
+
     SOLVED = "solved"
     RANK_DEFICIENT = "rank_deficient"
     RANGE_INCOMPATIBLE = "range_incompatible"
@@ -64,6 +76,8 @@ class EquilibriumStatus(StrEnum):
 
 
 class QuasistaticStability(StrEnum):
+    """保守自由模态或有滑移方向时的准静态稳定性结论。"""
+
     STABLE_CONSERVATIVE = "stable_conservative"
     MARGINAL_CONSERVATIVE = "marginal_conservative"
     UNSTABLE_CONSERVATIVE = "unstable_conservative"
@@ -75,6 +89,8 @@ class QuasistaticStability(StrEnum):
 
 
 def _vector(value: ArrayLike, length: int, name: str) -> NDArray[np.float64]:
+    """校验指定长度的有限向量。"""
+
     result = np.asarray(value, dtype=np.float64)
     if result.shape != (length,) or not np.all(np.isfinite(result)):
         raise ConfigurationError(f"{name} must be a finite {length}-vector")
@@ -82,6 +98,8 @@ def _vector(value: ArrayLike, length: int, name: str) -> NDArray[np.float64]:
 
 
 def _matrix(value: ArrayLike, size: int, name: str) -> NDArray[np.float64]:
+    """校验指定阶数的有限方阵。"""
+
     result = np.asarray(value, dtype=np.float64)
     if result.shape != (size, size) or not np.all(np.isfinite(result)):
         raise ConfigurationError(f"{name} must be a finite {size}x{size} matrix")
@@ -89,10 +107,14 @@ def _matrix(value: ArrayLike, size: int, name: str) -> NDArray[np.float64]:
 
 
 def _tuple_vector(value: ArrayLike) -> tuple[float, ...]:
+    """把 NumPy 向量转换为冻结结果可保存的标量元组。"""
+
     return tuple(float(item) for item in np.asarray(value, dtype=np.float64))
 
 
 def _tuple_matrix(value: ArrayLike) -> tuple[tuple[float, ...], ...]:
+    """把 NumPy 矩阵转换为嵌套元组。"""
+
     return tuple(
         tuple(float(item) for item in row)
         for row in np.asarray(value, dtype=np.float64)
@@ -100,6 +122,8 @@ def _tuple_matrix(value: ArrayLike) -> tuple[tuple[float, ...], ...]:
 
 
 def _skew(value: NDArray[np.float64]) -> NDArray[np.float64]:
+    """返回满足 ``skew(r) @ v = r × v`` 的反对称矩阵。"""
+
     x, y, z = value
     return np.array(
         [[0.0, -z, y], [z, 0.0, -x], [-y, x, 0.0]],
@@ -109,6 +133,8 @@ def _skew(value: NDArray[np.float64]) -> NDArray[np.float64]:
 
 @dataclass(frozen=True)
 class ArrayTolerances:
+    """平衡残差、秩/值域、稳定性、间隙和迭代次数容差。"""
+
     scaled_residual: float = 1e-9
     rank_absolute: float = 1e-12
     rank_relative: float = 1e-10
@@ -119,6 +145,8 @@ class ArrayTolerances:
     maximum_iterations: int = 30
 
     def __post_init__(self) -> None:
+        """校验所有数值容差为正，并至少允许一次迭代。"""
+
         for name in (
             "scaled_residual",
             "rank_absolute",
@@ -137,7 +165,11 @@ class ArrayTolerances:
 
 @dataclass(frozen=True)
 class MixedControl:
-    """Each component selects exactly one pose or wrench control contract."""
+    """六个广义分量各自且仅选择一个位姿或 wrench 控制契约。
+
+    ``q_C`` 表示接触约束相对背板的加载坐标；固定墙面时真实背板位姿为 ``-q_C``。
+    ``equality_matrix`` 可进一步约束 wrench 控制留下的自由子空间。
+    """
 
     modes: tuple[ControlMode, ...]
     prescribed_q_C: tuple[float | None, ...]
@@ -155,6 +187,8 @@ class MixedControl:
     equality_matrix: tuple[tuple[float, ...], ...] = ()
 
     def __post_init__(self) -> None:
+        """检查六维控制互斥性、加载器半正定性、尺度和语义标签。"""
+
         if len(self.modes) != 6:
             raise ConfigurationError("mixed control requires six component modes")
         if len(self.prescribed_q_C) != 6 or len(self.required_wrench) != 6:
@@ -199,6 +233,8 @@ class MixedControl:
 
 @dataclass(frozen=True)
 class SpineInstance:
+    """阵列中一根刺的全部本构输入、初始间隙和候选 continuation。"""
+
     geometry: SpineGeometry
     material: SpineMaterial
     friction: FrictionParameters
@@ -211,6 +247,8 @@ class SpineInstance:
     search_distance_increment_m: float = 0.0
 
     def __post_init__(self) -> None:
+        """校验间隙、搜索增量及候选 ID/序号的严格有序性。"""
+
         if not math.isfinite(self.initial_gap_m) or self.initial_gap_m < 0.0:
             raise ConfigurationError("initial_gap_m must be finite and non-negative")
         if (
@@ -234,17 +272,23 @@ class SpineInstance:
 
     @property
     def spine_id(self) -> str:
+        """代理几何对象中的稳定单刺 ID。"""
+
         return self.geometry.spine_id
 
 
 @dataclass(frozen=True)
 class ArrayAcceptedState:
+    """共同 ``q_C``、逐刺 accepted 状态、载荷参数和阵列 revision。"""
+
     q_C: tuple[float, ...]
     spine_states: tuple[SpineAcceptedState, ...]
     load_parameter: float
     revision: int = 0
 
     def __post_init__(self) -> None:
+        """统一六维坐标并检查逐刺 ID 唯一、载荷与 revision 有效。"""
+
         q_C = _vector(self.q_C, 6, "q_C")
         if not self.spine_states:
             raise ConfigurationError("array state must contain at least one spine")
@@ -269,6 +313,8 @@ class ArrayAcceptedState:
     def initial(
         cls, spines: Sequence[SpineInstance], *, load_parameter: float = 0.0
     ) -> "ArrayAcceptedState":
+        """为给定有序刺集合创建零位姿、revision 0 的阵列状态。"""
+
         return cls(
             q_C=(0.0,) * 6,
             spine_states=tuple(
@@ -282,6 +328,8 @@ class ArrayAcceptedState:
 
 @dataclass(frozen=True)
 class PerSpineArrayResult:
+    """单刺结果及其从几何间隙到阵列加载位移的映射诊断。"""
+
     spine_id: str
     initial_gap_m: float
     terrain_signed_gap_m: float | None
@@ -294,6 +342,8 @@ class PerSpineArrayResult:
 
 @dataclass(frozen=True)
 class EquilibriumDiagnostics:
+    """缩放残差、秩、值域、稳定性和装配规模诊断。"""
+
     iterations: int
     scaled_residual_norm: float | None
     scaled_rank: int
@@ -309,6 +359,8 @@ class EquilibriumDiagnostics:
 
 @dataclass(frozen=True)
 class ArrayResult:
+    """一个阵列 trial 的平衡、逐刺、事件、稳定性和模型边界输出。"""
+
     q_C: tuple[float, ...]
     physical_backplate_pose: tuple[float, ...]
     total_wrench: Wrench
@@ -332,6 +384,8 @@ class ArrayResult:
 
 @dataclass(frozen=True)
 class ArrayTrial:
+    """基于某一阵列 revision 的不可变平衡提案。"""
+
     base_revision: int
     proposed_state: ArrayAcceptedState
     result: ArrayResult
@@ -340,6 +394,8 @@ class ArrayTrial:
 
 @dataclass(frozen=True)
 class _Assembly:
+    """某个 ``q_C`` 上 O(N) 累加得到的内部装配快照。"""
+
     support_wrench: Vector6
     tangent: Matrix6
     trials: tuple[SingleSpineTrial, ...]
@@ -351,6 +407,8 @@ class _Assembly:
 def _candidate_for_state(
     spine: SpineInstance, accepted: SpineAcceptedState
 ) -> ContactCandidate | None:
+    """按单刺 resident state 和 continuation cursor 选择当前候选。"""
+
     candidates = tuple(
         item
         for item in (spine.candidate, *spine.continuation_candidates)
@@ -363,6 +421,7 @@ def _candidate_for_state(
         PhysicalState.SLIP,
         PhysicalState.HARDSTOP,
     }:
+        # 已承载接触必须继续使用同一 candidate_id，不能在 Newton 中跳换 feature。
         candidate = next(
             (
                 item
@@ -402,6 +461,8 @@ def _control_vectors(
     control: MixedControl,
     initial_q_C: Vector6,
 ) -> tuple[Vector6, Vector6, NDArray[np.int64]]:
+    """应用位姿控制值，并返回 required wrench 与自由分量索引。"""
+
     q = initial_q_C.copy()
     required = np.zeros(6, dtype=np.float64)
     free: list[int] = []
@@ -426,6 +487,8 @@ def _scaled_rank_range(
     coordinate_scale: Vector6,
     tolerances: ArrayTolerances,
 ) -> tuple[RankStatus, RangeStatus, int, NDArray[np.float64], float, NDArray[np.float64]]:
+    """在等式约束自由基中评估无量纲切线秩和残差值域相容性。"""
+
     mode_count = basis.shape[1]
     if mode_count == 0:
         return (
@@ -436,6 +499,7 @@ def _scaled_rank_range(
             0.0,
             np.empty((0, 0)),
         )
+    # 行尺度把力/力矩化为 F_ref 基准，列尺度把平移/转动化为 L_ref 基准。
     scaled_full = (
         row_scale[:, None]
         * matrix
@@ -444,6 +508,7 @@ def _scaled_rank_range(
     scaled = basis.T @ scaled_full @ basis
     rhs = -basis.T @ (row_scale * residual)
     u, singular, _vt = np.linalg.svd(scaled, full_matrices=True)
+    # 残差在列空间外的分量即值域不相容量；它与“矩阵欠秩”是两个独立结论。
     leading = float(singular[0]) if singular.size else 0.0
     threshold = tolerances.rank_absolute + tolerances.rank_relative * leading
     rank = int(np.count_nonzero(singular > threshold))
@@ -473,6 +538,8 @@ def _metric_input(
     resistance_direction: NDArray[np.float64],
     force_tolerance_N: float,
 ) -> SpineMetricInput:
+    """把单刺物理状态转换为计数与载荷分担指标所需的最小输入。"""
+
     geometric = candidate is not None and candidate.valid
     signed_gap = None if candidate is None else candidate.signed_gap_m
     if result.physical_state in {
@@ -492,10 +559,8 @@ def _metric_input(
         PhysicalState.SLIP,
         PhysicalState.HARDSTOP,
     }:
-        # Friction feasibility is resolved by the single-spine constitutive
-        # state.  The separate local safe-slope/directional predicate is an
-        # explicit input because it depends on the queried path direction; an
-        # absent assessment is epistemically unknown, never coerced to false.
+        # 摩擦可行性已由单刺本构解析；局部安全坡度/方向性仍取决于具体查询路径，
+        # 因而由 stable_engagement 显式输入。缺失评估保持 unknown，不能强制转成 false。
         engagement = stable_engagement
     else:
         engagement = None
@@ -526,6 +591,8 @@ def _assemble(
     *,
     load_parameter: float,
 ) -> _Assembly:
+    """在给定六维 ``q_C`` 上调用每根单刺，并 O(N) 装配总 wrench 和 6×6 切线。"""
+
     total = np.zeros(6, dtype=np.float64)
     tangent = np.zeros((6, 6), dtype=np.float64)
     trials: list[SingleSpineTrial] = []
@@ -533,6 +600,7 @@ def _assemble(
     metrics: list[SpineMetricInput] = []
     released: list[Mapping[str, Any]] = []
     for spine, accepted in zip(spines, states, strict=True):
+        # B=[I,-skew(r)] 把背板小位移/小转角映射到当前接触点的三维相对位移。
         candidate = _candidate_for_state(spine, accepted)
         terrain_signed_gap: float | None = None
         closure_threshold: float | None = None
@@ -562,10 +630,8 @@ def _assemble(
             )
             relative = point_displacement - closure_threshold * normal
             open_gap = -loading_displacement
-            # Once the unilateral contact is closed, elastic deformation is
-            # carried by BaseMotion and the geometric gap remains zero.  Passing
-            # overclosure as a negative terrain gap would make the canonical
-            # single-spine solver reject a perfectly valid loaded contact.
+            # 单边接触闭合后，继续加载由 BaseMotion 的弹性变形承担，几何 gap 保持 0。
+            # 若把 overclosure 作为负地形间隙传入，单刺层会误拒绝本来合法的承载接触。
             signed_gap = max(open_gap, 0.0)
             dynamic_candidate = replace(candidate, signed_gap_m=signed_gap)
         motion = BaseMotion(
@@ -593,6 +659,7 @@ def _assemble(
             new_reference_point=control.reference_point,
         )
         total += moved.vector
+        # 虚功一致映射：局部切线 K_i 贡献为 Bᵀ K_i B，因此总装配仅随刺数线性增长。
         local_tangent = np.asarray(single.local_tangent_N_per_m, dtype=np.float64)
         tangent += B.T @ local_tangent @ B
         per_spine.append(
@@ -622,6 +689,7 @@ def _assemble(
             and failure.continuation_action
             is ContinuationAction.PERMANENT_REMOVE
         ):
+            # 永久断开后记录失效瞬间释放的广义 wrench，供下一轮重平衡预测使用。
             force_before = next(
                 (
                     event.details.get("force_before_N")
@@ -669,11 +737,12 @@ def _predict_contact_seed(
     residual: Vector6,
     attempted: set[tuple[int, str]],
 ) -> tuple[Vector6, tuple[int, str]] | None:
-    """Select one load-compatible open contact and seed it in the free subspace."""
+    """选择与残差方向相容的开放接触，在自由子空间内生成闭合 seed。"""
 
     if admissible_basis.shape[1] == 0:
         return None
     displacement_basis = coordinate_scale[:, None] * admissible_basis
+    # desired_mode 是减少当前广义残差所需的自由模态方向。
     desired_mode = -admissible_basis.T @ (row_scale * residual)
     best_score = 0.0
     best: tuple[Vector6, tuple[int, str]] | None = None
@@ -702,6 +771,7 @@ def _predict_contact_seed(
             - spine.geometry.tip_radius_m * normal
         )
         B = np.hstack((np.eye(3), -_skew(point - reference_position)))
+        # closure_row 给出该接触法向闭合量对 q_C 的线性响应。
         closure_row = normal @ B
         closure_mode = closure_row @ displacement_basis
         closure_norm_squared = float(np.dot(closure_mode, closure_mode))
@@ -733,6 +803,8 @@ def _predict_contact_seed(
 def _active_set_signature(
     spines: Sequence[SpineInstance], states: Sequence[SpineAcceptedState]
 ) -> tuple[tuple[str, str | None, str, str | None, str | None], ...]:
+    """冻结当前逐刺物理/弹簧/候选组合，用于限制同一活动集的 seed 尝试。"""
+
     signature: list[
         tuple[str, str | None, str, str | None, str | None]
     ] = []
@@ -755,6 +827,8 @@ def _active_set_signature(
 
 
 def _trial_event_location(trial: SingleSpineTrial) -> tuple[float, float]:
+    """返回单刺 trial 最早事件的 ``(load_parameter, step_fraction)``。"""
+
     locations: list[tuple[float, float]] = []
     for event in trial.result.events:
         event_load = (
@@ -775,6 +849,8 @@ def _trial_event_location(trial: SingleSpineTrial) -> tuple[float, float]:
 
 
 def _stops_at_model_limit(trial: SingleSpineTrial) -> bool:
+    """该单刺 trial 是否触及不可继续模拟的材料模型边界。"""
+
     failure = trial.result.failure
     return (
         failure is not None
@@ -791,6 +867,8 @@ def _select_earliest_event_indices(
     step_start_q_C: Vector6,
     coordinate_scale: Vector6,
 ) -> set[int]:
+    """在所有单刺 trial 中选出全局最早事件；同点事件允许同时提交。"""
+
     eventful = tuple(
         (index, trial, _trial_event_location(trial))
         for index, trial in enumerate(trials)
@@ -803,6 +881,7 @@ def _select_earliest_event_indices(
         spine.tolerances.event_fraction for spine in spines
     )
     earliest_load = min(item[2][0] for item in eventful)
+    # 先比较载荷参数；同载荷事件再放回缩放后的全局 secant 上比较几何进度。
     at_earliest_load = tuple(
         item
         for item in eventful
@@ -865,6 +944,8 @@ def _nullspace_basis(
     tolerances: ArrayTolerances,
     coordinate_scale: Vector6,
 ) -> NDArray[np.float64]:
+    """构造自由 DOF 中同时满足齐次 equality_matrix 的正交基。"""
+
     if free.size == 0:
         return np.empty((6, 0), dtype=np.float64)
     selector = np.eye(6, dtype=np.float64)[:, free]
@@ -886,7 +967,7 @@ def _enforce_equality_constraints(
     tolerances: ArrayTolerances,
     coordinate_scale: Vector6,
 ) -> Vector6:
-    """Project the initial free coordinates onto homogeneous equalities."""
+    """仅调整自由分量，把初始 ``q_C`` 投影到齐次等式约束。"""
 
     if not control.equality_matrix:
         return q_C
@@ -907,6 +988,7 @@ def _enforce_equality_constraints(
     D_q = np.diag(coordinate_scale)
     operator = equality @ D_q @ selector
     operator = operator[nonzero] / row_norm[nonzero, None]
+    # 在无量纲自由坐标中求最小范数修正，随后再次验证约束残差。
     correction, _residuals, _rank, _singular = np.linalg.lstsq(
         operator, -normalized_residual, rcond=None
     )
@@ -927,12 +1009,15 @@ def _conservative_stability(
     tolerances: ArrayTolerances,
     coordinate_scale: Vector6,
 ) -> tuple[QuasistaticStability, float | None, float | None]:
+    """在 admissible 自由子空间中用对称切线最小特征值判定保守稳定性。"""
+
     if admissible_basis.shape[1] == 0:
         return QuasistaticStability.NO_FREE_MODE, None, None
     D_q = np.diag(coordinate_scale)
     K_hat = D_q.T @ tangent @ D_q / (
         control.F_ref_N * control.L_ref_m
     )
+    # 只对无量纲切线的对称部分做能量判据，并排除控制/等式约束禁止的模态。
     reduced = admissible_basis.T @ (0.5 * (K_hat + K_hat.T)) @ admissible_basis
     eigenvalues = np.linalg.eigvalsh(reduced)
     minimum = float(eigenvalues.min())
@@ -959,6 +1044,8 @@ def _stability(
     *,
     equilibrium_solved: bool,
 ) -> tuple[QuasistaticStability, float | None, float | None]:
+    """保守接触走特征值判据；滑移/非对称切线只检查耗散方向可接受性。"""
+
     if not equilibrium_solved:
         return QuasistaticStability.NOT_EVALUATED, None, None
     slip_or_nonconservative = any(
@@ -970,6 +1057,7 @@ def _stability(
         for item in assembly.per_spine
     ) or not np.allclose(tangent, tangent.T, atol=1e-10, rtol=1e-8)
     if slip_or_nonconservative:
+        # 非保守切线不能用势能 Hessian 下结论，只验证摩擦力未沿速度方向供能。
         admissible = True
         for item, spine in zip(assembly.per_spine, spines, strict=True):
             single = item.single_result
@@ -1011,7 +1099,7 @@ def evaluate_conservative_stability(
     control: MixedControl,
     tolerances: ArrayTolerances = ArrayTolerances(),
 ) -> tuple[QuasistaticStability, float | None, float | None]:
-    """Evaluate the scaled equality-constrained conservative free subspace."""
+    """公开评估缩放后、受 equality 约束的保守自由子空间稳定性。"""
 
     tangent_matrix = _matrix(tangent, 6, "tangent")
     free = np.asarray(free_dofs, dtype=np.int64)
@@ -1040,8 +1128,9 @@ def solve_array_equilibrium(
     load_parameter: float,
     tolerances: ArrayTolerances = ArrayTolerances(),
 ) -> ArrayTrial:
-    """Solve one 6-D array trial using only canonical single-spine trials."""
+    """仅通过标准单刺 trial 求解一个六自由度阵列平衡 trial。"""
 
+    # 阶段 1：验证刺序稳定，建立有量纲控制向量和无量纲缩放/约束自由基。
     if not spines:
         raise ConfigurationError("array must contain at least one spine")
     if len(spines) != len(accepted.spine_states):
@@ -1069,6 +1158,7 @@ def solve_array_equilibrium(
     q_C, required, free = _control_vectors(
         control, step_start_q
     )
+    # 力行以 F_ref 缩放，力矩行以 F_ref*L_ref 缩放；平移坐标则以 L_ref 缩放。
     row_scale = np.array(
         [1.0 / control.F_ref_N] * 3
         + [1.0 / (control.F_ref_N * control.L_ref_m)] * 3
@@ -1116,6 +1206,8 @@ def solve_array_equilibrium(
         selected_indices: set[int],
         target_q_C: Vector6,
     ) -> tuple[Vector6, _Assembly, tuple[Event, ...]]:
+        """把全局步截断到最早 STOP_MODEL_LIMIT 事件并重装配边界状态。"""
+
         terminal_index = next(
             index
             for index in sorted(selected_indices)
@@ -1157,6 +1249,7 @@ def solve_array_equilibrium(
         )
         return boundary_q_C, boundary, events
 
+    # 阶段 2：Newton/活动集循环。每轮先完整装配，再处理释放、事件，最后才做平衡更新。
     for iterations in range(1, tolerances.maximum_iterations + 1):
         last_evaluated_q_C = q_C.copy()
         assembly = _assemble(
@@ -1170,6 +1263,7 @@ def solve_array_equilibrium(
             load_parameter=load_parameter,
         )
         if pending_release is not None:
+            # 永久失效释放 f_R^- 后，用 (K_L+K_R)δq=f_R^- 预测下一重平衡起点。
             postfailure_tangent = assembly.tangent + loader
             (
                 prediction_rank,
@@ -1237,6 +1331,7 @@ def solve_array_equilibrium(
             _stops_at_model_limit(assembly.trials[index])
             for index in selected_event_indices
         ):
+            # 非永久材料失效没有后续损伤本构，只能在首次模型边界处终止。
             q_C, assembly, terminal_events = (
                 assemble_model_limit_boundary(
                     assembly, selected_event_indices, q_C
@@ -1249,6 +1344,7 @@ def solve_array_equilibrium(
         for index, trial in enumerate(assembly.trials):
             failure = trial.result.failure
             if index in selected_event_indices:
+                # 只提交全局最早事件；其余刺的 trial 仍基于旧状态，下一轮重新计算。
                 event_fraction = _trial_event_location(trial)[1]
                 if not math.isfinite(event_fraction):
                     event_fraction = 1.0
@@ -1272,6 +1368,7 @@ def solve_array_equilibrium(
                 failed_indices.add(index)
                 newly_failed.append(index)
         if newly_failed:
+            # 汇总同一事件位置永久断开的刺，其释放 wrench 在下一轮统一重分配。
             new_ids = tuple(spines[index].spine_id for index in newly_failed)
             releases = tuple(
                 item
@@ -1286,6 +1383,7 @@ def solve_array_equilibrium(
             pending_spine_ids = new_ids
         if eventful_indices:
             continue
+        # 无事件后才评估平衡：支撑 wrench + 加载器反力 - 目标 wrench = 0。
         residual = assembly.support_wrench + loader @ q_C - required
         scaled_residual = (
             0.0
@@ -1317,6 +1415,7 @@ def solve_array_equilibrium(
             break
         seed_signature = _active_set_signature(spines, working_states)
         if rank_status is RankStatus.RANK_DEFICIENT:
+            # 欠秩可能只是所有可承载接触尚未闭合，先尝试一个残差相容的接触 seed。
             attempted = contact_seed_attempts.setdefault(seed_signature, set())
             prediction = _predict_contact_seed(
                 spines,
@@ -1349,6 +1448,7 @@ def solve_array_equilibrium(
         if scaled_residual <= tolerances.scaled_residual:
             equilibrium_status = EquilibriumStatus.SOLVED
             break
+        # 在 admissible 自由模态中解缩放 Newton 步，再映射回有量纲 q_C。
         delta_scaled = np.linalg.solve(
             scaled_matrix,
             -admissible_basis.T @ (row_scale * residual),
@@ -1356,10 +1456,8 @@ def solve_array_equilibrium(
         q_C += coordinate_scale * (admissible_basis @ delta_scaled)
     else:
         iteration_exhausted = True
-        # A Newton update on the final permitted iteration changes q_C after
-        # the assembly was evaluated. Reassemble for a coherent diagnostic
-        # snapshot, but retain the last event-free iterate if the new pose
-        # exposes an event that the exhausted loop cannot process.
+        # 最后一次允许的 Newton 更新发生在装配之后；重新装配以获得一致诊断快照。
+        # 若新位姿暴露了已无迭代预算处理的事件，则退回最后一个无事件迭代点。
         final_assembly = _assemble(
             spines,
             working_states,
@@ -1393,6 +1491,7 @@ def solve_array_equilibrium(
         else:
             assembly = final_assembly
     assert assembly is not None
+    # 阶段 3：在最终装配点重新计算统一的残差、秩和值域诊断，避免使用中间迭代缓存。
     residual = assembly.support_wrench + loader @ q_C - required
     scaled_residual = (
         0.0
@@ -1432,6 +1531,7 @@ def solve_array_equilibrium(
         for index, item in enumerate(assembly.per_spine)
     )
     equilibrium_solved = equilibrium_status is EquilibriumStatus.SOLVED
+    # 阵列平衡成立还不够；每个单刺 trial 也必须数值收敛且可提交。
     local_numerical_states = tuple(
         trial.result.numerical_state for trial in assembly.trials
     )
@@ -1453,6 +1553,7 @@ def solve_array_equilibrium(
         coordinate_scale,
         equilibrium_solved=solution_accepted,
     )
+    # 模型、数值、平衡和稳定性是不同维度，分别汇总后再共同决定 committable。
     model_state = ModelState.CLOSED
     if equilibrium_status is EquilibriumStatus.MODEL_LIMIT:
         model_state = ModelState.OUT_OF_SCOPE
@@ -1505,6 +1606,7 @@ def solve_array_equilibrium(
     events = tuple(cascade_events) + final_events
     result = ArrayResult(
         q_C=_tuple_vector(q_C),
+        # q_C 是约束相对背板的加载坐标；固定墙面时真实背板位姿符号相反。
         physical_backplate_pose=_tuple_vector(-q_C),
         total_wrench=total_wrench,
         tangent=_tuple_matrix(total_tangent),
@@ -1540,6 +1642,7 @@ def solve_array_equilibrium(
         QuasistaticStability.DIRECTIONALLY_ADMISSIBLE_QUASISTATIC,
     }
     committable = solution_accepted and acceptable_stability
+    # 不可提交 trial 返回原 accepted state，调用方仍可读取完整失败诊断而不会污染状态。
     if committable:
         proposed_states = tuple(
             trial.proposed_state for trial in assembly.trials
@@ -1558,6 +1661,9 @@ def solve_array_equilibrium(
 def commit_array_trial(
     accepted: ArrayAcceptedState, trial: ArrayTrial
 ) -> ArrayAcceptedState:
+    """仅提交基于当前 revision 且达到可接受平衡/稳定性的阵列 trial。"""
+
+    # 与单刺相同，revision 防止旧 trial 覆盖更新后的阵列状态。
     if trial.base_revision != accepted.revision:
         raise ConfigurationError("stale array trial cannot be committed")
     if not trial.committable:

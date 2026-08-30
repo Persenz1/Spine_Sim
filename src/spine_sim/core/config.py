@@ -1,4 +1,8 @@
-"""Small versioned configuration schema normalized to SI."""
+"""带语义版本和稳定 identity 的 case/campaign 配置。
+
+配置对象假定物理量已经归一化为 SI；开放的 ``parameters`` 由具体 case adapter 校验，
+其规范哈希会直接参与 case ID，因此运行阶段不得再静默改写参数表示。
+"""
 
 from __future__ import annotations
 
@@ -18,6 +22,8 @@ from .versions import (
 
 
 def _unknown(data: Mapping[str, Any], allowed: set[str], name: str) -> None:
+    """拒绝拼写错误或当前 schema 未声明的配置字段。"""
+
     extra = set(data) - allowed
     if extra:
         raise ConfigurationError(f"{name} contains unknown fields: {sorted(extra)}")
@@ -25,6 +31,8 @@ def _unknown(data: Mapping[str, Any], allowed: set[str], name: str) -> None:
 
 @dataclass(frozen=True)
 class BaseCaseSpec:
+    """一个可独立执行、内容寻址的仿真 case。"""
+
     module: str
     module_version: str
     parameters: Mapping[str, Any]
@@ -39,6 +47,8 @@ class BaseCaseSpec:
     parameter_registry_version: str = PARAMETER_REGISTRY_VERSION
 
     def __post_init__(self) -> None:
+        """检查决定结果语义的模块名和版本字段。"""
+
         if not self.module:
             raise ConfigurationError("module cannot be empty")
         if not self.module_version:
@@ -56,10 +66,14 @@ class BaseCaseSpec:
 
     @property
     def normalized_input_hash(self) -> str:
+        """仅对规范参数求哈希，供结果 metadata 和 case identity 复用。"""
+
         return stable_hash(self.parameters)
 
     @property
     def case_id(self) -> str:
+        """由求解语义、参数和上游来源共同生成 case ID。"""
+
         return identity(
             "case",
             {
@@ -79,10 +93,14 @@ class BaseCaseSpec:
 
     @property
     def config_hash(self) -> str:
+        """对包括标签在内的完整 case 配置求哈希。"""
+
         return stable_hash(asdict(self))
 
     @classmethod
     def from_mapping(cls, data: Mapping[str, Any]) -> "BaseCaseSpec":
+        """从 JSON 映射构造严格的 case 配置。"""
+
         allowed = {
             "module",
             "module_version",
@@ -105,6 +123,8 @@ class BaseCaseSpec:
 
 @dataclass(frozen=True)
 class CampaignSpec:
+    """共享一个调用入口的一组唯一 case 及其运行策略。"""
+
     name: str
     module_version: str
     callable: str
@@ -113,6 +133,8 @@ class CampaignSpec:
     mode: str = "small"
 
     def __post_init__(self) -> None:
+        """校验调用路径、并行度、存储模式和 case ID 唯一性。"""
+
         if not self.name or not self.module_version:
             raise ConfigurationError("campaign name/version cannot be empty")
         if ":" not in self.callable:
@@ -129,6 +151,8 @@ class CampaignSpec:
 
     @property
     def campaign_id(self) -> str:
+        """由 campaign 名称、入口、模式和有序 case 集生成稳定 ID。"""
+
         return identity(
             "campaign",
             {
@@ -142,6 +166,8 @@ class CampaignSpec:
 
     @classmethod
     def from_mapping(cls, data: Mapping[str, Any]) -> "CampaignSpec":
+        """从 JSON 映射递归构造 campaign 与其 case。"""
+
         allowed = {"name", "module_version", "callable", "cases", "workers", "mode"}
         _unknown(data, allowed, "campaign")
         cases = [

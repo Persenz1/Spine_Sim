@@ -1,4 +1,8 @@
-"""Coordinate metadata and six-dimensional wrench operations."""
+"""坐标系元数据与六维力旋量（wrench）运算。
+
+力和力矩必须同时携带坐标系、参考点、受力对象和施力对象，避免在单刺到阵列的
+传递过程中混淆方向或重复计入力矩。
+"""
 
 from __future__ import annotations
 
@@ -16,6 +20,8 @@ Matrix3 = NDArray[np.float64]
 
 
 def _vector3(value: ArrayLike, name: str) -> Vector3:
+    """把输入校验为有限三维向量。"""
+
     array = np.asarray(value, dtype=float)
     if array.shape != (3,) or not np.all(np.isfinite(array)):
         raise ConfigurationError(f"{name} must be a finite 3-vector")
@@ -23,6 +29,8 @@ def _vector3(value: ArrayLike, name: str) -> Vector3:
 
 
 def _rotation(value: ArrayLike) -> Matrix3:
+    """校验右手正交旋转矩阵（``R.T @ R = I`` 且 ``det(R)=+1``）。"""
+
     array = np.asarray(value, dtype=float)
     if array.shape != (3, 3) or not np.all(np.isfinite(array)):
         raise ConfigurationError("rotation must be a finite 3x3 matrix")
@@ -35,6 +43,8 @@ def _rotation(value: ArrayLike) -> Matrix3:
 
 @dataclass(frozen=True)
 class FrameMetadata:
+    """描述一个相对父坐标系的右手坐标系。"""
+
     name: str
     parent: str | None
     origin_m: tuple[float, float, float]
@@ -42,6 +52,8 @@ class FrameMetadata:
     convention: str = "right_handed"
 
     def __post_init__(self) -> None:
+        """冻结对象前验证原点和旋转定义。"""
+
         if not self.name:
             raise ConfigurationError("frame name cannot be empty")
         _vector3(self.origin_m, "origin_m")
@@ -52,7 +64,7 @@ class FrameMetadata:
 
 @dataclass(frozen=True)
 class Wrench:
-    """Force and moment with mandatory frame, object and reference-point labels."""
+    """带坐标系、作用对象和参考点标签的力与力矩。"""
 
     force_N: tuple[float, float, float]
     moment_Nm: tuple[float, float, float]
@@ -63,6 +75,8 @@ class Wrench:
     sign_convention: str = "right_hand_rule"
 
     def __post_init__(self) -> None:
+        """保证六个分量有限，且所有语义标签非空。"""
+
         _vector3(self.force_N, "force_N")
         _vector3(self.moment_Nm, "moment_Nm")
         for field in ("frame", "reference_point", "acting_on", "exerted_by"):
@@ -71,13 +85,19 @@ class Wrench:
 
     @property
     def vector(self) -> NDArray[np.float64]:
+        """按 ``[Fx, Fy, Fz, Mx, My, Mz]`` 顺序返回六维向量。"""
+
         return np.asarray((*self.force_N, *self.moment_Nm), dtype=np.float64)
 
     @property
     def interaction_label(self) -> str:
+        """返回 ``施力者_on_受力者`` 形式的关系标签。"""
+
         return f"{self.exerted_by}_on_{self.acting_on}"
 
     def rotate(self, rotation_new_from_old: ArrayLike, *, new_frame: str) -> "Wrench":
+        """把力和力矩共同旋转到新坐标系，参考点和作用对象保持不变。"""
+
         rotation = _rotation(rotation_new_from_old)
         force = rotation @ np.asarray(self.force_N, dtype=np.float64)
         moment = rotation @ np.asarray(self.moment_Nm, dtype=np.float64)
@@ -97,7 +117,7 @@ class Wrench:
         *,
         new_reference_point: str,
     ) -> "Wrench":
-        """Move from O to P using vector P→O, so M_P = M_O + r_PO × F."""
+        """将参考点从 O 移到 P；输入 P→O 向量，使用 ``M_P=M_O+r_PO×F``。"""
         offset = _vector3(old_reference_from_new_m, "old_reference_from_new_m")
         force = np.asarray(self.force_N, dtype=np.float64)
         moment = np.asarray(self.moment_Nm, dtype=np.float64) + np.cross(offset, force)
@@ -112,6 +132,8 @@ class Wrench:
         )
 
     def as_dict(self) -> dict[str, Any]:
+        """转换为可序列化且保留全部力学语义的映射。"""
+
         return {
             "force_N": list(self.force_N),
             "moment_Nm": list(self.moment_Nm),

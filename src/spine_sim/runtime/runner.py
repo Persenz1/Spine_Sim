@@ -1,4 +1,8 @@
-"""Spawn-safe runner for independent cases and recoverable campaigns."""
+"""可恢复、支持 Windows ``spawn`` 多进程的 campaign runner。
+
+runner 只负责任务隔离、资源记录和结果持久化，不解释物理参数；实际 case 逻辑由
+``module.path:function`` 入口提供，并通过 :class:`RunContext` 获得冻结的版本信息。
+"""
 
 from __future__ import annotations
 
@@ -38,6 +42,8 @@ from spine_sim.runtime.backend import BackendCapabilities
 
 @dataclass
 class CaseOutput:
+    """case 入口返回给 runner 的标准内存载荷。"""
+
     summary: dict[str, Any] = field(default_factory=dict)
     arrays: dict[str, np.ndarray] = field(default_factory=dict)
     trace_rows: list[dict[str, Any]] = field(default_factory=list)
@@ -48,6 +54,8 @@ class CaseOutput:
 
 @dataclass(frozen=True)
 class RunContext:
+    """runner 传给 case 的 identity、后端和语义版本快照。"""
+
     case_id: str
     backend: Mapping[str, Any]
     normalized_input_hash: str
@@ -63,6 +71,8 @@ class RunContext:
 def _load_callable(
     reference: str,
 ) -> Callable[[Mapping[str, Any], RunContext], CaseOutput]:
+    """解析 ``模块:函数`` 引用，并确认目标可调用。"""
+
     module_name, function_name = reference.split(":", 1)
     function = getattr(importlib.import_module(module_name), function_name)
     if not callable(function):
@@ -71,12 +81,17 @@ def _load_callable(
 
 
 def _peak_rss_bytes() -> int:
+    """跨平台读取进程峰值常驻内存；平台不支持时返回 0。"""
+
     if platform.system() == "Windows":
+        # Windows 没有 resource.getrusage，直接查询当前进程的工作集峰值。
         try:
             import ctypes
             from ctypes import wintypes
 
             class ProcessMemoryCounters(ctypes.Structure):
+                """与 Win32 PROCESS_MEMORY_COUNTERS 二进制布局对应。"""
+
                 _fields_ = [
                     ("cb", wintypes.DWORD),
                     ("PageFaultCount", wintypes.DWORD),
@@ -123,10 +138,13 @@ def _execute(
     backend: Mapping[str, Any],
     profile_python_memory: bool,
 ) -> dict[str, Any]:
+    """在一个 worker 内执行 case，并把成功或异常统一包装为可持久化结果。"""
+
     started = time.perf_counter()
     if profile_python_memory:
         tracemalloc.start()
     try:
+        # worker 内重新导入入口，避免向 spawn 子进程传递不可 pickle 的函数对象。
         function = _load_callable(reference)
         context = RunContext(
             case_id=case.case_id,
@@ -169,12 +187,16 @@ def _execute(
 
 
 class CampaignRunner:
+    """选择待运行 case、协调 worker，并维护 campaign 级索引。"""
+
     def __init__(
         self,
         campaign: CampaignSpec,
         campaign_dir: str | Path,
         backend: BackendCapabilities,
     ):
+        """根据 campaign 模式选择逐文件或 SQLite 摘要存储。"""
+
         self.campaign = campaign
         summary_only_formal = (
             campaign.mode == "formal"
@@ -189,9 +211,12 @@ class CampaignRunner:
             if summary_only_formal
             else ResultStore(campaign_dir)
         )
+        # 大型 formal campaign 若明确只要 summary，就避免为每个 case 建多个小文件。
         self._backend_record = backend.as_dict()
 
     def initialize(self, raw_config: Mapping[str, Any]) -> None:
+        """首次创建 manifest、原始/规范配置和完整 case 来源链。"""
+
         normalized = {
             "campaign": asdict(self.campaign),
             "campaign_id": self.campaign.campaign_id,
@@ -241,7 +266,10 @@ class CampaignRunner:
         failed_only: bool = False,
         workers: int | None = None,
     ) -> list[CaseRecord]:
+        """运行筛选后的 case，逐个原子提交结果，并重建 campaign 索引。"""
+
         selected: list[BaseCaseSpec] = []
+        # resume 依据完整性复核跳过；failed_only 只重试已有执行错误，不补跑缺失 case。
         for case in self.campaign.cases:
             if resume and self.store.is_complete(case.case_id):
                 continue
@@ -261,6 +289,8 @@ class CampaignRunner:
         profile_python_memory = self.campaign.mode != "formal"
 
         def persist(result: dict[str, Any]) -> None:
+            """把 worker 返回值转换成成功或执行错误 summary 后立即落盘。"""
+
             case = selected_by_id[result["case_id"]]
             if result["ok"]:
                 output: CaseOutput = result["output"]
@@ -302,6 +332,7 @@ class CampaignRunner:
                 )
 
         if worker_count == 1:
+            # 单 worker 直接在当前进程运行，便于调试且避免不必要的进程启动成本。
             for case in selected:
                 persist(
                     _execute(
@@ -312,10 +343,8 @@ class CampaignRunner:
                     )
                 )
         elif selected:
-            # Keep only a small multiple of the worker count in flight. A formal
-            # campaign can contain thousands of array-heavy results, so retaining
-            # every Future until the campaign ends defeats per-case atomic writes
-            # and can exhaust the coordinator process.
+            # 只保留少量在途 Future。正式 campaign 可能有数千个大结果，若一次提交
+            # 全部任务，协调进程会长期持有 Future 和返回载荷，抵消逐 case 落盘的收益。
             context = multiprocessing.get_context("spawn")
             case_iterator = iter(selected)
             maximum_in_flight = 2 * worker_count
@@ -325,6 +354,8 @@ class CampaignRunner:
                 in_flight: dict[Any, BaseCaseSpec] = {}
 
                 def submit_next() -> bool:
+                    """补充一个任务到有界在途队列；迭代器耗尽时返回 False。"""
+
                     try:
                         case = next(case_iterator)
                     except StopIteration:
@@ -351,6 +382,7 @@ class CampaignRunner:
                         submit_next()
 
         records = self.store.list_records()
+        # case 全部持久化后再生成轻量总索引、聚合事件与结果集哈希。
         index_format = write_campaign_index(self.store.root, records)
         self.store.rebuild_event_index()
         counts: dict[str, int] = {}

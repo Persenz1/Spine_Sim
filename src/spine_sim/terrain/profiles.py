@@ -1,4 +1,4 @@
-"""Versioned material profile loading with strict material separation."""
+"""版本化材料 profile 加载，并严格隔离不同材料的 subtype。"""
 
 from __future__ import annotations
 
@@ -18,6 +18,8 @@ _PROFILE_DIRECTORY = Path(__file__).with_name("material_profiles")
 
 
 def _merge(base: Mapping[str, Any], override: Mapping[str, Any]) -> dict[str, Any]:
+    """深拷贝递归合并 defaults 与 subtype 覆盖，避免修改缓存文档。"""
+
     result = copy.deepcopy(dict(base))
     for key, value in override.items():
         if (
@@ -32,7 +34,7 @@ def _merge(base: Mapping[str, Any], override: Mapping[str, Any]) -> dict[str, An
 
 
 def available_profiles() -> dict[str, tuple[str, ...]]:
-    """List configured subtypes without importing any generation code."""
+    """不导入生成算法，仅列出配置文件中的材料和 subtype。"""
 
     result: dict[str, tuple[str, ...]] = {}
     for material in SUPPORTED_MATERIALS:
@@ -42,6 +44,8 @@ def available_profiles() -> dict[str, tuple[str, ...]]:
 
 
 def _load_document(material: str) -> dict[str, Any]:
+    """读取并校验一个材料 JSON 的 schema、标签和 subtype 表。"""
+
     if material not in SUPPORTED_MATERIALS:
         raise TerrainConfigurationError(
             f"unsupported material {material!r}; choose {SUPPORTED_MATERIALS}"
@@ -69,7 +73,7 @@ def _load_document(material: str) -> dict[str, Any]:
 def load_material_profile(
     material: str, subtype: str | None = None
 ) -> dict[str, Any]:
-    """Return a resolved profile and reject cross-material subtype reuse."""
+    """返回 defaults 已合并的 profile，并拒绝跨材料复用 subtype。"""
 
     document = _load_document(material)
     selected = subtype or document.get("default_subtype")
@@ -107,5 +111,6 @@ def load_material_profile(
         raise TerrainConfigurationError(
             f"invalid validation status for {material}/{selected}"
         )
+    # 哈希在加入 profile_hash 自身之前计算，绑定全部实际生成参数和验证状态。
     resolved["profile_hash"] = stable_hash(resolved)
     return resolved

@@ -1,4 +1,8 @@
-"""Public canonical terrain-to-single-spine-to-array interfaces."""
+"""Spine_Sim 的稳定公共接口。
+
+这里集中导出从地形候选查询、单根 spine 求解到阵列平衡求解所需的规范类型；
+调用方优先从本模块导入，可减少对包内目录结构的耦合。
+"""
 
 from .array import (
     ArrayAcceptedState,

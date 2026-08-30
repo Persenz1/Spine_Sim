@@ -1,4 +1,4 @@
-"""Versioned M1 data models and campaign-region construction."""
+"""M1 地形模块的版本化数据模型与 campaign 最大区域推导。"""
 
 from __future__ import annotations
 
@@ -27,12 +27,14 @@ _ALIGNMENT_ATOL = 1e-9
 
 
 def _identity_float(value: float) -> float:
-    """Remove sub-femtometre binary arithmetic noise before exact hashing."""
+    """去除亚飞米级浮点运算噪声，避免等价几何产生不同哈希。"""
 
     return round(float(value), 15)
 
 
 def _normalize_float_fields(value: Mapping[str, Any]) -> dict[str, Any]:
+    """规范化映射顶层的浮点 identity 字段。"""
+
     return {
         key: _identity_float(item) if isinstance(item, float) else item
         for key, item in value.items()
@@ -40,12 +42,16 @@ def _normalize_float_fields(value: Mapping[str, Any]) -> dict[str, Any]:
 
 
 def _require_finite(name: str, value: float) -> float:
+    """校验有限地形参数。"""
+
     if not math.isfinite(value):
         raise TerrainConfigurationError(f"{name} must be finite")
     return value
 
 
 def _require_positive(name: str, value: float) -> float:
+    """校验有限正地形参数。"""
+
     _require_finite(name, value)
     if value <= 0:
         raise TerrainConfigurationError(f"{name} must be positive")
@@ -53,6 +59,8 @@ def _require_positive(name: str, value: float) -> float:
 
 
 def _grid_intervals(size_m: float, spacing_m: float, *, name: str) -> int:
+    """把物理尺寸转换为整数网格区间，并拒绝未对齐范围。"""
+
     intervals_float = size_m / spacing_m
     intervals = int(round(intervals_float))
     if not math.isclose(intervals_float, intervals, rel_tol=0.0, abs_tol=_ALIGNMENT_ATOL):
@@ -65,6 +73,8 @@ def _grid_intervals(size_m: float, spacing_m: float, *, name: str) -> int:
 
 
 def _aligned_index(coordinate_m: float, origin_m: float, spacing_m: float, *, name: str) -> int:
+    """返回全局网格整数索引，并拒绝非节点坐标。"""
+
     index_float = (coordinate_m - origin_m) / spacing_m
     index = int(round(index_float))
     if not math.isclose(index_float, index, rel_tol=0.0, abs_tol=_ALIGNMENT_ATOL):
@@ -76,7 +86,11 @@ def _aligned_index(coordinate_m: float, origin_m: float, spacing_m: float, *, na
 
 @dataclass(frozen=True)
 class TerrainRecipe:
-    """A coordinate-addressable synthetic terrain realization."""
+    """一个内容可寻址的地形 realization 配方。
+
+    ``defined_geometry`` 由全局坐标直接寻址；``material_hybrid`` 则绑定已解析的材料、
+    subtype、生成模式和 profile hash。production 网格固定为 canonical 网格 stride-2。
+    """
 
     generator_name: str = "defined_geometry"
     generator_version: str = DEFINED_GEOMETRY_VERSION
@@ -100,6 +114,8 @@ class TerrainRecipe:
     profile_hash: str | None = None
 
     def __post_init__(self) -> None:
+        """校验生成器专属字段、网格关系、随机核和材料 identity。"""
+
         if self.generator_name not in {"defined_geometry", "material_hybrid"}:
             raise TerrainConfigurationError(
                 "generator_name must be 'defined_geometry' or 'material_hybrid'"
@@ -177,8 +193,10 @@ class TerrainRecipe:
             raise TerrainConfigurationError("unsupported coordinate convention")
 
     def normalized(self) -> dict[str, Any]:
+        """返回参与持久化/identity 的稳定字段映射。"""
+
         normalized = asdict(self)
-        # Preserve all pre-material recipe identities exactly.
+        # 旧 defined_geometry identity 中不存在材料字段，移除默认 None 以保持完全兼容。
         if self.generator_name == "defined_geometry":
             for name in ("material", "subtype", "generation_mode", "profile_hash"):
                 normalized.pop(name)
@@ -186,6 +204,8 @@ class TerrainRecipe:
 
     @property
     def terrain_recipe_id(self) -> str:
+        """由生成器语义、seed、参数和采样规则生成稳定 recipe ID。"""
+
         parameters = self.normalized()
         parameters.pop("generator_name")
         parameters.pop("generator_version")
@@ -204,6 +224,8 @@ class TerrainRecipe:
 
     @property
     def recipe_hash(self) -> str:
+        """对含 M1 模块版本的完整配方求来源哈希。"""
+
         return stable_hash(
             {
                 "module_version": M1_MODULE_VERSION,
@@ -214,6 +236,8 @@ class TerrainRecipe:
 
     @property
     def kernel_definition(self) -> dict[str, Any]:
+        """输出可审计的随机核或材料 profile 定义。"""
+
         if self.generator_name == "material_hybrid":
             return {
                 "kind": "material_specific",
@@ -230,6 +254,8 @@ class TerrainRecipe:
 
     @property
     def production_sampling(self) -> str:
+        """描述 identity 网格到 production 输出网格的采样语义。"""
+
         if self.generator_name == "material_hybrid":
             return "material_output_grid_stride2_from_identity_grid_nodal"
         return "canonical_even_indices_stride2_nodal"
@@ -237,6 +263,8 @@ class TerrainRecipe:
     def canonical_indices(
         self, x_m: float, y_m: float
     ) -> tuple[int, int]:
+        """把全局 x/y 节点坐标转换为 canonical 整数索引。"""
+
         return (
             _aligned_index(
                 x_m, self.global_origin_x_m, self.canonical_dx_m, name="x_m"
@@ -248,6 +276,8 @@ class TerrainRecipe:
 
     @classmethod
     def from_mapping(cls, value: Mapping[str, Any]) -> "TerrainRecipe":
+        """从严格映射构造配方并拒绝未知字段。"""
+
         allowed = set(cls.__dataclass_fields__)
         extra = set(value) - allowed
         if extra:
@@ -259,7 +289,7 @@ class TerrainRecipe:
 
 @dataclass(frozen=True)
 class RegionSpec:
-    """Inclusive, node-centred rectangular terrain cache region."""
+    """包含两端节点、以节点为中心的矩形地形缓存区域。"""
 
     terrain_recipe_id: str
     origin_x_m: float
@@ -271,6 +301,8 @@ class RegionSpec:
     purpose: str = "campaign"
 
     def __post_init__(self) -> None:
+        """校验尺寸能整除网格、分辨率各向同性且用途合法。"""
+
         if not self.terrain_recipe_id:
             raise TerrainConfigurationError("terrain_recipe_id cannot be empty")
         _require_finite("origin_x_m", self.origin_x_m)
@@ -297,6 +329,8 @@ class RegionSpec:
 
     @property
     def shape(self) -> tuple[int, int]:
+        """返回高度数组 shape ``(ny, nx)``；两端节点使每轴区间数加一。"""
+
         return (
             int(round(self.size_y_m / self.resolution_y_m)) + 1,
             int(round(self.size_x_m / self.resolution_x_m)) + 1,
@@ -304,20 +338,27 @@ class RegionSpec:
 
     @property
     def x_max_m(self) -> float:
+        """区域包含的最大 x 节点坐标。"""
+
         return self.origin_x_m + self.size_x_m
 
     @property
     def y_max_m(self) -> float:
+        """区域包含的最大 y 节点坐标。"""
+
         return self.origin_y_m + self.size_y_m
 
     def normalized(self) -> dict[str, Any]:
+        """返回浮点已量化的稳定区域映射。"""
+
         return _normalize_float_fields(asdict(self))
 
     @property
     def region_id(self) -> str:
-        # Grid arithmetic can produce values such as -0.021980000000000003.
-        # Quantize well below the 5 um grid so equivalent JSON and computed
-        # regions share one ID.
+        """由 recipe、边界和分辨率生成稳定区域 ID。"""
+
+        # 网格运算可能产生 -0.021980000000000003；在远低于 5 µm 网格的精度量化，
+        # 使 JSON 输入和程序推导出的等价区域共享同一个 ID。
         return identity(
             "region",
             {
@@ -332,9 +373,13 @@ class RegionSpec:
 
     @property
     def expected_npy_payload_bytes(self) -> int:
+        """返回 float32 高度数组的未压缩 NPY 数据体字节数。"""
+
         return int(np.prod(self.shape, dtype=np.int64)) * np.dtype(np.float32).itemsize
 
     def validate_against(self, recipe: TerrainRecipe) -> None:
+        """验证区域绑定正确配方，并落在 canonical 或 production 对齐网格上。"""
+
         if self.terrain_recipe_id != recipe.terrain_recipe_id:
             raise TerrainConfigurationError("region references a different terrain recipe")
         start_x, start_y = recipe.canonical_indices(
@@ -387,6 +432,8 @@ class RegionSpec:
 
     @classmethod
     def from_mapping(cls, value: Mapping[str, Any]) -> "RegionSpec":
+        """从严格映射构造区域并拒绝未知字段。"""
+
         allowed = set(cls.__dataclass_fields__)
         extra = set(value) - allowed
         if extra:
@@ -398,7 +445,11 @@ class RegionSpec:
 
 @dataclass(frozen=True)
 class TrackGeometry:
-    """One-dimensional finite-tip geometry for downstream consumers."""
+    """供几何/接触层消费的一维有限球尖轨迹。
+
+    每个 x 节点保留包络高度、坡度、top-2 支撑、三类法向、有效/不确定掩膜，
+    并通过来源数组和测量语义哈希绑定到唯一高度场。
+    """
 
     terrain_recipe_id: str
     region_id: str
@@ -434,6 +485,8 @@ class TrackGeometry:
     model_warning: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
+        """校验 schema、来源摘要及所有标量/向量数组 shape 与 dtype。"""
+
         if not self.terrain_recipe_id or not self.region_id or not self.track_id:
             raise TerrainConfigurationError("track IDs cannot be empty")
         _require_positive("radius_m", self.radius_m)
@@ -540,6 +593,8 @@ class TrackGeometry:
         source_valid_mask_sha256: str,
         measurement_semantics_hash: str,
     ) -> str:
+        """由地形来源、球半径、轨迹位置和算法语义生成 track ID。"""
+
         return identity(
             "track",
             {
@@ -563,7 +618,7 @@ class TrackGeometry:
 
 @dataclass(frozen=True)
 class CampaignDesignSpace:
-    """Inputs needed to derive, rather than hard-code, the maximum terrain region."""
+    """用于推导而非硬编码 campaign 最大地形区域的设计包络。"""
 
     drag_length_m: float = 0.100
     max_array_nx: int = 6
@@ -584,6 +639,8 @@ class CampaignDesignSpace:
     resolution_m: float = PRODUCTION_SPACING_M
 
     def __post_init__(self) -> None:
+        """校验阵列尺寸、安装角度和所有几何余量。"""
+
         for name in (
             "drag_length_m",
             "max_spacing_x_m",
@@ -608,6 +665,8 @@ class CampaignDesignSpace:
 
 @dataclass(frozen=True)
 class CampaignRegionReport:
+    """最大区域、对齐前后边界、各项余量和推导假设。"""
+
     region: RegionSpec
     raw_bounds_m: Mapping[str, float]
     aligned_bounds_m: Mapping[str, float]
@@ -617,6 +676,8 @@ class CampaignRegionReport:
     assumptions: tuple[str, ...] = field(default_factory=tuple)
 
     def as_dict(self) -> dict[str, Any]:
+        """转换为包含 shape/预计大小的可序列化报告。"""
+
         return {
             "region": self.region.normalized(),
             "region_id": self.region.region_id,
@@ -632,10 +693,14 @@ class CampaignRegionReport:
 
 
 def _align_floor(value: float, origin: float, spacing: float) -> float:
+    """相对全局原点向外向下对齐到网格。"""
+
     return origin + math.floor((value - origin) / spacing + 1e-12) * spacing
 
 
 def _align_ceil(value: float, origin: float, spacing: float) -> float:
+    """相对全局原点向外向上对齐到网格。"""
+
     return origin + math.ceil((value - origin) / spacing - 1e-12) * spacing
 
 
@@ -643,9 +708,10 @@ def compute_campaign_region(
     recipe: TerrainRecipe,
     design: CampaignDesignSpace | None = None,
 ) -> CampaignRegionReport:
-    """Compute and outward-align the maximum campaign terrain bounds."""
+    """从设计包络计算并向外对齐 campaign 最大地形边界。"""
 
     design = design or CampaignDesignSpace()
+    # 阶段 1：计算固定长度和等高渐变长度两类安装方式的水平投影极值。
     fixed_projections = [
         design.fixed_exposed_length_m * math.cos(math.radians(angle))
         for angle in design.fixed_angles_deg
@@ -661,6 +727,7 @@ def compute_campaign_region(
     projection_min = min(projections)
     projection_max = max(projections)
 
+    # 阶段 2：以 campaign 原点为阵列中心，求最大安装点包围盒。
     span_x = (design.max_array_nx - 1) * design.max_spacing_x_m
     span_y = (design.max_array_ny - 1) * design.max_spacing_y_m
     install_x_min = -0.5 * span_x
@@ -678,6 +745,7 @@ def compute_campaign_region(
     filter_halo_y = (
         recipe.kernel_truncate_sigma * recipe.correlation_length_y_m
     )
+    # 阶段 3：逐项累加尖端、弹簧、梁、事件细化、杆体和随机滤波 halo 余量。
     x_margin_parts = {
         "tip_radius": design.max_tip_radius_m,
         "spring_horizontal_projection": max_horizontal_spring,
@@ -702,6 +770,7 @@ def compute_campaign_region(
     )
     raw_y_min = install_y_min - margin_y
     raw_y_max = install_y_max + margin_y
+    # 阶段 4：把连续物理边界向外对齐到请求分辨率，绝不向内截掉所需节点。
     x_min = _align_floor(
         raw_x_min, recipe.global_origin_x_m, design.resolution_m
     )

@@ -1,4 +1,8 @@
-"""Generate nested 5 um refinements for selected formal M1 conditions."""
+"""为选定的正式 M1 工况生成嵌套的 5 μm 细化地形。
+
+细网格与其 10 μm 父网格属于同一随机实现：所有父网格节点必须逐位保持不变，
+新增节点才使用细尺度信息。脚本逐个工况注册、校验并写入可恢复的进度目录。
+"""
 
 from __future__ import annotations
 
@@ -26,6 +30,8 @@ FINE_RESOLUTION_M = 5e-6
 
 
 def _streaming_rms_um(height: np.ndarray, block_rows: int = 128) -> float:
+    """按行块计算全图 RMS（μm），避免为大型 memmap 再分配完整副本。"""
+
     count = 0
     total = 0.0
     total_square = 0.0
@@ -39,6 +45,7 @@ def _streaming_rms_um(height: np.ndarray, block_rows: int = 128) -> float:
         total_square += float(
             np.sum(block * block, dtype=np.float64)
         )
+    # 使用 E[x²]-E[x]²；max 消除有限精度可能产生的极小负方差。
     mean = total / count
     variance = max(total_square / count - mean * mean, 0.0)
     return variance**0.5 * 1e6
@@ -50,6 +57,8 @@ def _verify_nested_nodes(
     *,
     block_rows: int = 128,
 ) -> None:
+    """确认细网格形状正确，且每隔一个节点与父网格逐位相等。"""
+
     if fine.shape != (
         2 * coarse.shape[0] - 1,
         2 * coarse.shape[1] - 1,
@@ -72,6 +81,8 @@ def _selected_conditions(
     families: tuple[str, ...],
     seeds: tuple[int, ...],
 ) -> list[dict[str, Any]]:
+    """按材料族和种子筛选正式工况，并恢复用户请求的确定顺序。"""
+
     selected = [
         dict(condition)
         for condition in catalog["conditions"]
@@ -94,6 +105,8 @@ def _selected_conditions(
 
 
 def main(argv: Sequence[str] | None = None) -> int:
+    """生成、注册并审计所有选定的同实现细网格。"""
+
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("catalog", type=Path)
     parser.add_argument(
@@ -108,6 +121,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("--output", type=Path)
     args = parser.parse_args(argv)
 
+    # 细化只能以完整的 300 工况正式目录为父级，拒绝半成品或临时目录。
     catalog_path = args.catalog.resolve()
     catalog = json.loads(catalog_path.read_text(encoding="utf-8"))
     if (
@@ -116,6 +130,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         or len(catalog.get("conditions", [])) != 300
     ):
         raise ValueError("fine refinement requires the complete formal catalog")
+    # dict.fromkeys 在去重的同时保留命令行给出的顺序。
     families = tuple(
         dict.fromkeys(
             args.families
@@ -138,6 +153,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     rows: list[dict[str, Any]] = []
 
     for index, parent in enumerate(parents, start=1):
+        # 1. 重新读取父配方/区域并核对完整数据哈希，防止基线已被替换。
         recipe_id = str(parent["terrain_recipe_id"])
         region_id = str(parent["region_id"])
         recipe = library.load_recipe(recipe_id)
@@ -159,6 +175,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             mmap_mode="r",
             allow_pickle=False,
         )
+        # memmap 保持只读；Terrain 包装器补齐生成细化所需的物理元数据。
         coarse = Terrain(
             height=coarse_height,
             dx=region.resolution_x_m,
@@ -169,6 +186,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             seed=int(parent["seed"]),
             metadata=manifest["material_metadata"],
         )
+        # 2. 独立生成目标分辨率细节，再把父节点强制嵌入同一实现。
         fine_detail = generate_terrain(
             material=coarse.material,
             subtype=coarse.subtype,
@@ -185,6 +203,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         )
         del fine_detail
         gc.collect()
+        # 3. 通过公共注册接口落盘，以获得内容哈希、掩码哈希和规范 manifest。
         fine_recipe, fine_region, fine_metadata = register_terrain(
             catalog["library_root"],
             fine,
@@ -198,11 +217,13 @@ def main(argv: Sequence[str] | None = None) -> int:
             fine_region.region_id,
             verify_hash=True,
         )
+        # 4. 从注册后的文件重新打开并校验，而不是只相信内存中的 fine 对象。
         try:
             _verify_nested_nodes(coarse_height, registered_fine)
             fine_rms_height_um = _streaming_rms_um(registered_fine)
         finally:
             registered_fine._mmap.close()
+        # 目录行同时保存父子哈希和 realization_id，形成明确的细化血缘。
         row = {
             "index": index,
             "name": parent["name"] + "_nested_5um",
@@ -242,6 +263,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             "coarse_node_identity_exact": True,
         }
         rows.append(row)
+        # 每完成一个工况就刷新 running 目录；中断时已有结果仍可审查和恢复。
         atomic_write_json(
             output_path,
             {
@@ -275,12 +297,14 @@ def main(argv: Sequence[str] | None = None) -> int:
             ),
             flush=True,
         )
+        # 显式关闭 Windows 上的 memmap 文件句柄，避免下一轮注册或覆盖受阻。
         coarse_height._mmap.close()
         del coarse_mask
         del coarse
         del fine
         gc.collect()
 
+    # 完成后用所有父子数据哈希生成目录身份，并一次性切换为 complete 状态。
     result = {
         "schema_version": "m1-material-fine-refinement-catalog-v1",
         "m1_module_version": M1_MODULE_VERSION,

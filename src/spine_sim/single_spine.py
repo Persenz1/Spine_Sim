@@ -1,4 +1,8 @@
-"""Canonical quasi-static single-spine contact and suspension solver."""
+"""单根微刺的标准准静态接触—悬架求解器。
+
+输入是一个已经由几何层确定的候选和相对加载位移；本模块联合求解梁柔顺、三维
+Coulomb 摩擦、单边弹簧、容量与事件，并以不可变 trial/commit 更新八态状态机。
+"""
 
 from __future__ import annotations
 
@@ -28,6 +32,8 @@ Matrix3 = NDArray[np.float64]
 
 
 def _vector3(value: ArrayLike, name: str) -> Vector3:
+    """校验有限三维向量。"""
+
     result = np.asarray(value, dtype=np.float64)
     if result.shape != (3,) or not np.all(np.isfinite(result)):
         raise ConfigurationError(f"{name} must be a finite 3-vector")
@@ -35,6 +41,8 @@ def _vector3(value: ArrayLike, name: str) -> Vector3:
 
 
 def _unit3(value: ArrayLike, name: str) -> Vector3:
+    """校验并归一化非零三维向量。"""
+
     result = _vector3(value, name)
     norm = float(np.linalg.norm(result))
     if norm <= 0.0:
@@ -43,11 +51,15 @@ def _unit3(value: ArrayLike, name: str) -> Vector3:
 
 
 def _tuple3(value: ArrayLike) -> tuple[float, float, float]:
+    """把 NumPy 三维向量转成冻结 dataclass 可保存的标量元组。"""
+
     vector = np.asarray(value, dtype=np.float64)
     return tuple(float(item) for item in vector)
 
 
 def _matrix3(value: ArrayLike, name: str) -> Matrix3:
+    """校验有限 3×3 矩阵。"""
+
     result = np.asarray(value, dtype=np.float64)
     if result.shape != (3, 3) or not np.all(np.isfinite(result)):
         raise ConfigurationError(f"{name} must be a finite 3x3 matrix")
@@ -55,11 +67,15 @@ def _matrix3(value: ArrayLike, name: str) -> Matrix3:
 
 
 def _tuple_matrix3(value: ArrayLike) -> tuple[tuple[float, float, float], ...]:
+    """把 NumPy 3×3 矩阵转成嵌套元组。"""
+
     matrix = np.asarray(value, dtype=np.float64)
     return tuple(tuple(float(item) for item in row) for row in matrix)
 
 
 def _positive(value: float, name: str) -> float:
+    """校验有限正标量并返回其 float 表示。"""
+
     result = float(value)
     if not math.isfinite(result) or result <= 0.0:
         raise ConfigurationError(f"{name} must be positive and finite")
@@ -67,11 +83,15 @@ def _positive(value: float, name: str) -> float:
 
 
 def _optional_positive(value: float | None, name: str) -> float | None:
+    """对可选参数应用正数校验。"""
+
     return None if value is None else _positive(value, name)
 
 
 @dataclass(frozen=True)
 class SpineGeometry:
+    """单刺根部、轴向和圆杆/球尖尺寸，以及输出 wrench 的语义标签。"""
+
     spine_id: str
     root_position_m: tuple[float, float, float]
     axis_root_to_tip: tuple[float, float, float]
@@ -83,6 +103,8 @@ class SpineGeometry:
     backplate_object: str
 
     def __post_init__(self) -> None:
+        """校验标识、坐标向量和所有正尺寸。"""
+
         if not all(
             (self.spine_id, self.frame, self.root_reference, self.backplate_object)
         ):
@@ -96,6 +118,8 @@ class SpineGeometry:
 
 @dataclass(frozen=True)
 class SpineMaterial:
+    """针杆弹性参数及可选的轴体、表面和断裂容量参数。"""
+
     young_modulus_Pa: float
     poisson_ratio: float
     shear_correction: float
@@ -113,6 +137,8 @@ class SpineMaterial:
     parameter_sources: Mapping[str, str] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
+        """校验弹性常数、泊松比和所有已给出的容量参数。"""
+
         _positive(self.young_modulus_Pa, "young_modulus_Pa")
         if not -1.0 < float(self.poisson_ratio) < 0.5:
             raise ConfigurationError("poisson_ratio must lie in (-1, 0.5)")
@@ -137,11 +163,15 @@ class SpineMaterial:
 
 @dataclass(frozen=True)
 class FrictionParameters:
+    """三维各向同性 Coulomb 静/动摩擦系数及其来源。"""
+
     static_coefficient: float
     kinetic_coefficient: float
     parameter_source: str
 
     def __post_init__(self) -> None:
+        """要求 ``0 <= μ_k <= μ_s`` 且来源标签非空。"""
+
         static = float(self.static_coefficient)
         kinetic = float(self.kinetic_coefficient)
         if (
@@ -159,6 +189,8 @@ class FrictionParameters:
 
 @dataclass(frozen=True)
 class SuspensionParameters:
+    """附加线性柔顺、可选单边轴向弹簧和准静态回弹距离。"""
+
     additional_compliance_m_per_N: (
         tuple[tuple[float, float, float], ...] | None
     )
@@ -168,6 +200,8 @@ class SuspensionParameters:
     parameter_sources: Mapping[str, str] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
+        """检查柔度半正定性及弹簧刚度—行程的成对配置。"""
+
         if self.additional_compliance_m_per_N is not None:
             compliance = _matrix3(
                 self.additional_compliance_m_per_N,
@@ -196,6 +230,8 @@ class SuspensionParameters:
 
 @dataclass(frozen=True)
 class SingleSpineTolerances:
+    """几何、力、摩擦、弹簧、速度、容量和事件定位的独立容差。"""
+
     gap_m: float
     force_N: float
     friction_N: float
@@ -205,6 +241,8 @@ class SingleSpineTolerances:
     event_fraction: float
 
     def __post_init__(self) -> None:
+        """所有容差都必须为有限正数。"""
+
         for name in (
             "gap_m",
             "force_N",
@@ -219,7 +257,10 @@ class SingleSpineTolerances:
 
 @dataclass(frozen=True)
 class BaseMotion:
-    """Contact-constraint motion relative to the spine root/load frame."""
+    """接触约束相对刺根/加载坐标系的位移、切向速度和载荷参数。
+
+    ``relative_displacement_m`` 是本构加载变形，并不是刺根的绝对空间位姿。
+    """
 
     relative_displacement_m: tuple[float, float, float]
     relative_tangential_velocity_m_per_s: tuple[float, float, float]
@@ -227,6 +268,8 @@ class BaseMotion:
     search_distance_increment_m: float = 0.0
 
     def __post_init__(self) -> None:
+        """校验两个三维运动量、载荷参数和非负搜索增量。"""
+
         _vector3(self.relative_displacement_m, "relative_displacement_m")
         _vector3(
             self.relative_tangential_velocity_m_per_s,
@@ -245,6 +288,12 @@ class BaseMotion:
 
 @dataclass(frozen=True)
 class SpineAcceptedState:
+    """最近一次已提交的单刺状态与 continuation 信息。
+
+    CONTACT 只允许存在于 trial 事件链中，不能成为 resident state；HARDSTOP 则通过
+    ``contact_submode`` 继续保存其内部 STICK/SLIP 模式。
+    """
+
     spine_id: str
     physical_state: PhysicalState
     contact_submode: PhysicalState | None
@@ -265,6 +314,8 @@ class SpineAcceptedState:
     revision: int
 
     def __post_init__(self) -> None:
+        """校验状态、接触几何、游标、计数和 revision 的组合一致性。"""
+
         if not self.spine_id:
             raise ConfigurationError("spine_id cannot be empty")
         if self.physical_state is PhysicalState.CONTACT:
@@ -334,6 +385,8 @@ class SpineAcceptedState:
     def initial(
         cls, spine_id: str, *, load_parameter: float = 0.0
     ) -> "SpineAcceptedState":
+        """创建 revision 0 的 SEARCH 状态。"""
+
         return cls(
             spine_id=spine_id,
             physical_state=PhysicalState.SEARCH,
@@ -358,6 +411,8 @@ class SpineAcceptedState:
 
 @dataclass(frozen=True)
 class WedgeResult:
+    """二维楔形解析核的力、极限比和接触状态。"""
+
     normal_force_N: float
     signed_friction_demand_N: float
     friction_margin_N: float
@@ -374,7 +429,7 @@ def solve_wedge_2d(
     slope_angle_rad: float,
     friction_coefficient: float,
 ) -> WedgeResult:
-    """Chapter-2 signed 2D wedge closed form, including peel via P < 0."""
+    """计算含 ``P<0`` 剥离情形的有符号二维楔形闭式解。"""
 
     values = (
         tangential_load_N,
@@ -388,6 +443,7 @@ def solve_wedge_2d(
         raise ConfigurationError("T and friction coefficient must be non-negative")
     sine = math.sin(slope_angle_rad)
     cosine = math.cos(slope_angle_rad)
+    # 将外部切向/压紧载荷投影到局部法向和切向，再用 μN-|Fτ| 判断静摩擦。
     normal = tangential_load_N * sine + compressive_load_N * cosine
     demand = tangential_load_N * cosine - compressive_load_N * sine
     margin = friction_coefficient * normal - abs(demand)
@@ -395,6 +451,7 @@ def solve_wedge_2d(
     roundoff = 16.0 * np.finfo(np.float64).eps * max(
         1.0, abs(cosine), abs(friction_coefficient * sine)
     )
+    # 正向极限分母接近零或变负时，理论极限比发散，对应正向自锁。
     self_lock = denominator <= roundoff
     forward = (
         math.inf
@@ -429,6 +486,8 @@ def solve_wedge_2d(
 
 @dataclass(frozen=True)
 class SpringSolution:
+    """单边弹簧活动分支、位移、限位反力和互补残差。"""
+
     branch: SpringBranch
     displacement_m: float
     lower_stop_reaction_N: float
@@ -443,7 +502,7 @@ def solve_unilateral_spring(
     *,
     force_tolerance_N: float,
 ) -> SpringSolution:
-    """Solve the unilateral lower/interior/hard-stop spring complementarity."""
+    """求解单边弹簧的下限位、内部和硬限位互补分支。"""
 
     if not math.isfinite(float(axial_load_N)):
         raise ConfigurationError("axial_load_N must be finite")
@@ -457,12 +516,14 @@ def solve_unilateral_spring(
     if travel is None:
         raise ConfigurationError("finite spring stiffness requires travel")
     upper_load = stiffness * travel
+    # 轴向载荷不足以压缩弹簧时停在下限位；负载由下限位反力承担。
     if axial_load_N <= force_tolerance_N:
         reaction = max(-axial_load_N, 0.0)
         residual = max(axial_load_N, 0.0)
         return SpringSolution(
             SpringBranch.LOWER_STOP, 0.0, reaction, 0.0, residual
         )
+    # 超过 k*u_max 后位移固定，超出部分转为硬限位反力。
     if axial_load_N >= upper_load - force_tolerance_N:
         reaction = max(axial_load_N - upper_load, 0.0)
         residual = max(upper_load - axial_load_N, 0.0)
@@ -480,6 +541,8 @@ def solve_unilateral_spring(
 
 @dataclass(frozen=True)
 class CapacityAssessment:
+    """一项容量判据的闭合状态、需求、容量、利用率和失效语义。"""
+
     name: str
     model_state: ModelState
     demand: float | None
@@ -493,6 +556,8 @@ class CapacityAssessment:
 
 @dataclass(frozen=True)
 class FailurePayload:
+    """控制性失效判据及阵列层应采用的 continuation 动作。"""
+
     failure_object: str
     failure_mode: str
     criterion: str
@@ -505,6 +570,8 @@ class FailurePayload:
 
 @dataclass(frozen=True)
 class SingleSpineResult:
+    """一个加载站的单刺力学、状态、容量、残差和事件输出。"""
+
     wall_force_N: tuple[float, float, float]
     root_wrench: Wrench
     local_tangent_N_per_m: tuple[tuple[float, float, float], ...]
@@ -530,6 +597,8 @@ class SingleSpineResult:
 
 @dataclass(frozen=True)
 class SingleSpineTrial:
+    """基于某一 accepted revision 的不可变求解提案。"""
+
     spine_id: str
     base_revision: int
     proposed_state: SpineAcceptedState
@@ -539,6 +608,8 @@ class SingleSpineTrial:
 
 @dataclass(frozen=True)
 class _MechanicalResponse:
+    """给定接触/弹簧活动分支下的内部力学解。"""
+
     force_N: Vector3
     tangent_N_per_m: Matrix3
     normal_force_N: float
@@ -558,6 +629,8 @@ def _beam_compliance(
     suspension: SuspensionParameters,
     axis: Vector3,
 ) -> Matrix3:
+    """组装圆杆轴向、Euler–Bernoulli 弯曲、剪切和附加悬架柔度。"""
+
     diameter = float(geometry.diameter_m)
     length = float(geometry.length_m)
     area = math.pi * diameter**2 / 4.0
@@ -565,12 +638,14 @@ def _beam_compliance(
     shear_modulus = material.young_modulus_Pa / (
         2.0 * (1.0 + material.poisson_ratio)
     )
+    # c_a=L/(EA)；横向柔度同时包含弯曲 L³/(3EI) 和 Timoshenko 剪切项。
     axial = length / (material.young_modulus_Pa * area)
     transverse = length**3 / (
         3.0 * material.young_modulus_Pa * second_moment
     ) + length / (
         material.shear_correction * shear_modulus * area
     )
+    # 轴向投影 eeᵀ 与横向投影 I-eeᵀ 把两个标量柔度映射回全局坐标。
     projector = np.outer(axis, axis)
     compliance = axial * projector + transverse * (np.eye(3) - projector)
     if suspension.additional_compliance_m_per_N is not None:
@@ -588,6 +663,8 @@ def _branch_compliance(
     branch: SpringBranch,
     suspension: SuspensionParameters,
 ) -> tuple[Matrix3, Vector3]:
+    """把指定单边弹簧分支转换为等效柔度和仿射位移偏置。"""
+
     offset = np.zeros(3, dtype=np.float64)
     if branch is SpringBranch.RIGID or branch is SpringBranch.LOWER_STOP:
         return base_compliance, offset
@@ -596,12 +673,14 @@ def _branch_compliance(
     if stiffness is None or travel is None:
         raise ConfigurationError("non-rigid spring branch requires stiffness and travel")
     if branch is SpringBranch.INTERIOR:
+        # 内部分支增加沿压缩方向的 1/k 柔度。
         return (
             base_compliance
             + np.outer(compression_direction, compression_direction) / stiffness,
             offset,
         )
     if branch is SpringBranch.HARDSTOP:
+        # 硬限位后不再增加柔度，只保留固定行程形成的仿射位移。
         offset = travel * compression_direction
         return base_compliance, offset
     raise AssertionError(f"unhandled spring branch {branch}")
@@ -610,6 +689,8 @@ def _branch_compliance(
 def _friction_components(
     force_N: Vector3, normal: Vector3, friction: FrictionParameters
 ) -> tuple[float, Vector3, float]:
+    """分解法向/切向力并计算静摩擦锥裕度 ``μ_s Fn-|Ft|``。"""
+
     normal_force = float(np.dot(force_N, normal))
     tangential = force_N - normal_force * normal
     margin = friction.static_coefficient * normal_force - float(
@@ -640,7 +721,10 @@ def _solve_contact_for_branch(
     Vector3,
     PhysicalState,
 ]:
+    """在固定弹簧分支上求 STICK 或 SLIP 接触力及一致切线。"""
+
     effective_displacement = relative_displacement_m - affine_offset_m
+    # 先假定完全粘着，由位移反解所需力；摩擦裕度决定该假设是否可行。
     stiffness = np.linalg.inv(compliance)
     required_force = stiffness @ effective_displacement
     required_normal, required_tangent, required_margin = _friction_components(
@@ -651,6 +735,7 @@ def _solve_contact_for_branch(
     )
     velocity_norm = float(np.linalg.norm(velocity))
     should_slip = force_slip or required_margin < -tolerances.friction_N
+    # 已在滑移且仍有可辨切向速度时保持滑移，避免摩擦边界附近数值抖动。
     if previous_mode is PhysicalState.SLIP and velocity_norm > tolerances.velocity_m_per_s:
         should_slip = True
     if (
@@ -660,6 +745,7 @@ def _solve_contact_for_branch(
     ):
         should_slip = True
     if not should_slip:
+        # STICK：全部相对位移由弹性变形承担，切线就是组合刚度矩阵。
         elastic = compliance @ required_force + affine_offset_m
         return (
             required_force,
@@ -674,6 +760,7 @@ def _solve_contact_for_branch(
         )
 
     if velocity_norm > tolerances.velocity_m_per_s:
+        # 动摩擦方向与接触约束的相对切向速度相反。
         slip_direction = velocity / velocity_norm
     else:
         tangent_norm = float(np.linalg.norm(required_tangent))
@@ -691,6 +778,7 @@ def _solve_contact_for_branch(
             )
         slip_direction = -required_tangent / tangent_norm
     cone_direction = normal - friction.kinetic_coefficient * slip_direction
+    # F=Fn(n-μ_k v̂)，再由法向位移相容条件求唯一 Fn。
     denominator = float(normal @ compliance @ cone_direction)
     if denominator <= 0.0 or not math.isfinite(denominator):
         raise np.linalg.LinAlgError("sliding contact has no positive normal compliance")
@@ -722,6 +810,8 @@ def _spring_consistent(
     suspension: SuspensionParameters,
     tolerances: SingleSpineTolerances,
 ) -> SpringSolution | None:
+    """复算单边弹簧并仅接受与当前假设分支一致的解。"""
+
     solution = solve_unilateral_spring(
         axial_load_N,
         suspension.axial_spring_stiffness_N_per_m,
@@ -746,9 +836,12 @@ def _mechanical_response(
     *,
     force_slip: bool = False,
 ) -> _MechanicalResponse | None:
+    """枚举少量弹簧活动分支，返回首个同时满足接触和弹簧相容性的解。"""
+
     if suspension.axial_spring_stiffness_N_per_m is None:
         branches = (SpringBranch.RIGID,)
     else:
+        # 优先尝试上一步分支以保持 continuation，再按完整活动集补试其他分支。
         ordered = (
             accepted.spring_branch,
             SpringBranch.LOWER_STOP,
@@ -767,6 +860,7 @@ def _mechanical_response(
         else accepted.physical_state
     )
     for branch in branches:
+        # 每个候选分支只需一次 3×3 接触解；分支不相容就继续而不是修改 accepted。
         compliance, offset = _branch_compliance(
             base_compliance, compression_direction, branch, suspension
         )
@@ -822,6 +916,8 @@ def _mechanical_response(
 def _equivalent_radius_m(
     candidate: ContactCandidate, tip_radius_m: float
 ) -> float | None:
+    """由球尖和局部表面曲率计算 Hertz 等效半径；曲率未知则不闭合。"""
+
     surface_radius = candidate.curvature_radius_m
     if surface_radius is None:
         return None
@@ -834,6 +930,8 @@ def _assessment_unclosed(
     failure_mode: str,
     sources: Mapping[str, str],
 ) -> CapacityAssessment:
+    """构造“判据存在但参数或来源不足”的容量结果。"""
+
     return CapacityAssessment(
         name=name,
         model_state=ModelState.PARAMETER_UNCLOSED,
@@ -850,6 +948,8 @@ def _assessment_unclosed(
 def _assessment_out_of_scope(
     name: str, failure_object: str, failure_mode: str
 ) -> CapacityAssessment:
+    """构造当前模型明确不处理的容量结果。"""
+
     return CapacityAssessment(
         name=name,
         model_state=ModelState.OUT_OF_SCOPE,
@@ -863,6 +963,8 @@ def _assessment_out_of_scope(
 
 
 def _has_sources(material: SpineMaterial, names: tuple[str, ...]) -> bool:
+    """确认指定材料参数均带有非空来源记录。"""
+
     return all(bool(material.parameter_sources.get(name)) for name in names)
 
 
@@ -877,6 +979,8 @@ def _capacity_assessments(
     tangential_force_N: Vector3,
     contact_point_m: Vector3,
 ) -> tuple[dict[str, CapacityAssessment], dict[str, float | None]]:
+    """评估轴体强度、Hertz/表面拉应力和 II 型断裂容量。"""
+
     assessments: dict[str, CapacityAssessment] = {}
     diagnostics: dict[str, float | None] = {
         "shaft_axial_force_N": None,
@@ -889,6 +993,7 @@ def _capacity_assessments(
         "surface_edge_tension_Pa": None,
         "fracture_force_capacity_N": None,
     }
+    # 先把接触力搬到刺根，分解轴力、剪力、弯矩和扭矩。
     lever = contact_point_m - root_position_m
     moment = np.cross(lever, force_N)
     axial_force = float(np.dot(force_N, axis))
@@ -901,6 +1006,7 @@ def _capacity_assessments(
     area = math.pi * diameter**2 / 4.0
     second_moment = math.pi * diameter**4 / 64.0
     polar_moment = math.pi * diameter**4 / 32.0
+    # 轴向正应力与最外纤维弯曲应力保守相加，剪切与扭转再进入 von Mises 上界。
     normal_stress = abs(axial_force) / area + bending_moment * (
         diameter / 2.0
     ) / second_moment
@@ -947,6 +1053,7 @@ def _capacity_assessments(
         )
 
     if not material.surface_capacity_present:
+        # 没有声明表面容量拓扑时是 OUT_OF_SCOPE，而不是把未知容量当作无限大。
         assessments["hertz"] = _assessment_out_of_scope(
             "hertz", "tip_surface_contact", "hertz_contact"
         )
@@ -990,6 +1097,7 @@ def _capacity_assessments(
                 material.surface_allowable_tensile_stress_Pa
             )
             radius = float(equivalent_radius)
+            # 两弹性体的约化模量，以及球—局部曲面 Hertz 接触半径/中心压力。
             inverse_modulus = (
                 (1.0 - material.poisson_ratio**2)
                 / material.young_modulus_Pa
@@ -1040,6 +1148,7 @@ def _capacity_assessments(
             )
 
     if not material.fracture_topology_present:
+        # 只有明确声明裂纹/断裂拓扑后才启用断裂韧度判据。
         assessments["fracture"] = _assessment_out_of_scope(
             "fracture", "asperity", "mode_ii_fracture"
         )
@@ -1066,6 +1175,7 @@ def _capacity_assessments(
                 material.parameter_sources,
             )
         else:
+            # K_II=Y*τ*sqrt(pi*a)，再乘有效断裂面积得到切向力容量。
             critical_shear = float(material.fracture_toughness_Pa_sqrt_m) / (
                 float(material.fracture_geometry_factor)
                 * math.sqrt(math.pi * float(material.crack_half_length_m))
@@ -1091,6 +1201,8 @@ def _capacity_assessments(
 def _aggregate_model_state(
     assessments: Mapping[str, CapacityAssessment]
 ) -> ModelState:
+    """只要任一已启用判据参数未闭合，整体模型状态就保持未闭合。"""
+
     if any(
         assessment.model_state is ModelState.PARAMETER_UNCLOSED
         for assessment in assessments.values()
@@ -1104,6 +1216,8 @@ def _failure_from_assessments(
     material: SpineMaterial,
     tolerances: SingleSpineTolerances,
 ) -> FailurePayload | None:
+    """选择最小容量裕度作为控制失效，并决定永久移除或停止于模型边界。"""
+
     reached = [
         assessment
         for assessment in assessments.values()
@@ -1116,6 +1230,7 @@ def _failure_from_assessments(
     if not reached:
         return None
     controlling = min(reached, key=lambda item: float(item.margin))
+    # 当前只有声明为灾难性断开的轴体失效能继续为“永久移除”；其他损伤演化未建模。
     permanent = (
         controlling.name == "shaft"
         and material.shaft_failure_is_catastrophic_disconnect
@@ -1146,6 +1261,8 @@ def _new_event(
     motion: BaseMotion,
     details: Mapping[str, Any] | None = None,
 ) -> Event:
+    """基于 accepted 序号创建下一条已校验物理事件。"""
+
     return Event(
         event_type=event_type,
         sequence=accepted.event_sequence + offset,
@@ -1162,6 +1279,8 @@ def _contact_point(
     candidate: ContactCandidate,
     normal: Vector3,
 ) -> Vector3:
+    """从球心沿所选外法向回退一个尖端半径得到点接触位置。"""
+
     return candidate.sphere_center_m - geometry.tip_radius_m * normal
 
 
@@ -1171,6 +1290,8 @@ def _root_wrench(
     contact_point_m: Vector3,
     force_N: Vector3,
 ) -> Wrench:
+    """把墙面对刺的接触力等效为刺传给背板的根部 wrench。"""
+
     moment = np.cross(contact_point_m - root_position_m, force_N)
     return Wrench(
         force_N=_tuple3(force_N),
@@ -1183,6 +1304,8 @@ def _root_wrench(
 
 
 def _zero_wrench(geometry: SpineGeometry) -> Wrench:
+    """构造标签完整的零根部 wrench。"""
+
     return Wrench(
         force_N=(0.0, 0.0, 0.0),
         moment_Nm=(0.0, 0.0, 0.0),
@@ -1204,6 +1327,8 @@ def _zero_result(
     *,
     assumptions: tuple[str, ...] = (),
 ) -> SingleSpineResult:
+    """为 SEARCH/DETACH/REBOUND/FAILED 等无承载状态构造零力结果。"""
+
     return SingleSpineResult(
         wall_force_N=(0.0, 0.0, 0.0),
         root_wrench=_zero_wrench(geometry),
@@ -1232,6 +1357,8 @@ def _zero_result(
 def _candidate_gate(
     candidate: ContactCandidate,
 ) -> tuple[Vector3 | None, str | None, ModelState]:
+    """按 near-tie、法向、forward-cap、杆体碰撞和 valid 顺序门控候选。"""
+
     if candidate.near_tie:
         return None, "near_tie_requires_resolved_normal_model", ModelState.PARAMETER_UNCLOSED
     selected_normal = candidate.selected_normal
@@ -1264,6 +1391,8 @@ def _rejected_search_trial(
     model_state: ModelState,
     search_cursor: CandidateCursor | None,
 ) -> SingleSpineTrial:
+    """把 SEARCH 中被拒候选转成可提交 trial，并推进其 continuation cursor。"""
+
     event = _new_event(
         accepted,
         1,
@@ -1308,7 +1437,10 @@ def _advance_detach_or_rebound(
     accepted: SpineAcceptedState,
     motion: BaseMotion,
 ) -> SingleSpineTrial:
+    """按准静态恢复距离推进 DETACH→REBOUND→SEARCH。"""
+
     if accepted.physical_state is PhysicalState.DETACH:
+        # DETACH 只驻留一个已提交站，下一次调用显式进入 REBOUND。
         event = _new_event(
             accepted,
             1,
@@ -1346,6 +1478,7 @@ def _advance_detach_or_rebound(
     distance = accepted.rebound_distance_m + motion.search_distance_increment_m
     threshold = suspension.rebound_recovery_distance_m
     if threshold is None:
+        # 未提供恢复距离时不能臆造重挂条件；保持 REBOUND 并标记参数未闭合。
         proposed = replace(
             accepted,
             rebound_distance_m=distance,
@@ -1426,6 +1559,8 @@ def _detachment_trial(
     motion: BaseMotion,
     reason: str,
 ) -> SingleSpineTrial:
+    """清空接触几何和承载变形，构造进入 DETACH 的可提交 trial。"""
+
     event = _new_event(
         accepted,
         1,
@@ -1470,6 +1605,8 @@ def _interpolate_motion(
     target_displacement_m: Vector3,
     fraction: float,
 ) -> BaseMotion:
+    """按同一 fraction 插值位移、载荷参数与本步搜索距离。"""
+
     displacement = start_displacement_m + fraction * (
         target_displacement_m - start_displacement_m
     )
@@ -1500,6 +1637,8 @@ def _event_values(
     tolerances: SingleSpineTolerances,
     mechanical: _MechanicalResponse,
 ) -> dict[str, float]:
+    """把各事件条件写成“正值=尚未触发，非正=到达边界”的标量函数。"""
+
     axial_load = float(np.dot(mechanical.force_N, compression_direction))
     values = {
         "normal": mechanical.normal_force_N - tolerances.force_N,
@@ -1549,6 +1688,8 @@ def _locate_earliest_event(
     target_mechanical: _MechanicalResponse | None,
     tolerances: SingleSpineTolerances,
 ) -> tuple[str, float, BaseMotion] | None:
+    """在 accepted→target 步内二分定位最早的接触、摩擦、限位或容量事件。"""
+
     if target_mechanical is None:
         return None
     start_mechanical = _mechanical_response(
@@ -1588,6 +1729,7 @@ def _locate_earliest_event(
         tolerances,
         target_mechanical,
     )
+    # 只跟踪与上一步 resident state 有关的边界，避免把无效反向条件当成新事件。
     active_keys: list[str] = ["normal"]
     previous_mode = (
         accepted.contact_submode
@@ -1616,6 +1758,7 @@ def _locate_earliest_event(
             continue
         if start_value <= 0.0 or end_value > 0.0:
             continue
+        # 已确认条件从正值跨到非正值，用 fraction 区间二分到事件容差。
         low = 0.0
         high = 1.0
         while high - low > tolerances.event_fraction:
@@ -1658,6 +1801,7 @@ def _locate_earliest_event(
         crossings.append((high, key))
     if not crossings:
         return None
+    # 多个条件同一步跨越时按最小 fraction 截断，后续事件留给下一 trial 处理。
     fraction, key = min(crossings)
     return key, fraction, _interpolate_motion(
         accepted,
@@ -1679,8 +1823,9 @@ def solve_single_spine(
     *,
     tolerances: SingleSpineTolerances,
 ) -> SingleSpineTrial:
-    """Build one immutable trial; the caller explicitly commits accepted trials."""
+    """由 accepted 状态构造一个不可变 trial；只有调用方显式 commit 才生效。"""
 
+    # 阶段 1：验证状态归属并处理 FAILED、DETACH、REBOUND 等无需接触求解的 resident state。
     if accepted.spine_id != geometry.spine_id:
         raise ConfigurationError("accepted state and geometry spine_id do not match")
     axis = np.asarray(geometry.axis_root_to_tip, dtype=np.float64)
@@ -1714,6 +1859,7 @@ def solve_single_spine(
         )
 
     if candidate is None:
+        # SEARCH 无候选时继续空载搜索；已有承载态失去候选则必须先进入 DETACH。
         if accepted.physical_state is PhysicalState.SEARCH:
             proposed = replace(
                 accepted,
@@ -1736,6 +1882,7 @@ def solve_single_spine(
             geometry, accepted, motion, "contact_candidate_missing"
         )
 
+    # 阶段 2：检查 candidate identity、gap 和几何门控。活动接触不得直接切换 feature。
     candidate_id = candidate.candidate_id
     gap = candidate.signed_gap_m
     if (
@@ -1747,6 +1894,7 @@ def solve_single_spine(
             "an active contact must detach before switching candidate_id"
         )
     if gap > tolerances.gap_m:
+        # 正间隙表示尚未接触；负间隙超容差则表示离散候选发生不允许的穿透。
         if accepted.physical_state is PhysicalState.SEARCH:
             proposed = replace(
                 accepted,
@@ -1794,6 +1942,7 @@ def solve_single_spine(
             geometry, accepted, motion, gate_reason
         )
 
+    # 阶段 3：建立梁/悬架柔度，在目标位移上求活动集，并定位步内最早事件。
     compression_direction = -axis
     base_compliance = _beam_compliance(
         geometry, material, suspension, axis
@@ -1837,6 +1986,7 @@ def solve_single_spine(
     if located is not None:
         event_key, event_fraction, event_motion = located
         if event_key in {"hardstop", "hardstop_release"}:
+            # 限位边界处两侧切线不同，向事件后轻推一个数值小量以选择正确 resident 分支。
             post_fraction = min(
                 1.0,
                 event_fraction + 64.0 * tolerances.event_fraction,
@@ -1870,6 +2020,7 @@ def solve_single_spine(
             force_slip=event_key == "friction",
         )
     if mechanical is None:
+        # 没有任何接触—弹簧分支同时相容时，trial 不可提交且 accepted 保持不变。
         result = _zero_result(
             geometry,
             motion,
@@ -1883,6 +2034,7 @@ def solve_single_spine(
             geometry.spine_id, accepted.revision, accepted, result, False
         )
     if mechanical.normal_force_N <= tolerances.force_N:
+        # 单边接触不能提供拉向表面的负法向反力。
         if accepted.physical_state is PhysicalState.SEARCH:
             return _rejected_search_trial(
                 geometry,
@@ -1904,6 +2056,8 @@ def solve_single_spine(
         to_state: PhysicalState | None,
         details: Mapping[str, Any] | None = None,
     ) -> None:
+        """按本 trial 内顺序追加事件，并附带步内定位信息。"""
+
         merged_details = dict(details or {})
         if located_event is not None:
             merged_details.update(
@@ -1924,9 +2078,11 @@ def solve_single_spine(
             )
         )
 
+    # 阶段 4：将连续力学解映射为合法的离散事件链和最终 resident state。
     current = accepted.physical_state
     reengaged = False
     if current is PhysicalState.SEARCH:
+        # 新候选先产生瞬时 CONTACT，再在同一 trial 进入 STICK 或 SLIP。
         contact_event = (
             EventType.REENGAGE
             if accepted.completed_detach_cycles > 0
@@ -1950,6 +2106,7 @@ def solve_single_spine(
         current = target
         reengaged = contact_event is EventType.REENGAGE
     elif current is PhysicalState.HARDSTOP:
+        # HARDSTOP 是外层 resident state；内部摩擦模式通过 contact_submode 独立演化。
         if mechanical.spring.branch is not SpringBranch.HARDSTOP:
             append_event(
                 EventType.HARDSTOP_RELEASE,
@@ -2003,6 +2160,7 @@ def solve_single_spine(
 
     contact_submode: PhysicalState | None = None
     if mechanical.spring.branch is SpringBranch.HARDSTOP:
+        # 首次进入上限位时把当前 STICK/SLIP 保存为硬限位子模态。
         contact_submode = mechanical.contact_mode
         if current is not PhysicalState.HARDSTOP:
             append_event(
@@ -2013,6 +2171,7 @@ def solve_single_spine(
             )
             current = PhysicalState.HARDSTOP
 
+    # 阶段 5：评估材料容量。永久断开将当前输出力清零，其他失效停在模型边界。
     force = mechanical.force_N
     tangential_force = mechanical.tangential_force_N
     assessments, diagnostics = _capacity_assessments(
@@ -2049,6 +2208,7 @@ def solve_single_spine(
             },
         )
         if to_state is PhysicalState.FAILED:
+            # 失效事件保留 force_before_N 供追溯，但提交后的断开刺不再向背板传力。
             current = PhysicalState.FAILED
             contact_submode = None
             force = np.zeros(3, dtype=np.float64)
@@ -2057,6 +2217,7 @@ def solve_single_spine(
         else:
             model_state = ModelState.OUT_OF_SCOPE
 
+    # 阶段 6：整理边界裕度和互补残差；这些诊断决定数值状态及是否可提交。
     axial_load = float(np.dot(force_before_failure, compression_direction))
     stiffness = suspension.axial_spring_stiffness_N_per_m
     travel = suspension.axial_spring_travel_m
@@ -2130,6 +2291,7 @@ def solve_single_spine(
         numerical_state is NumericalState.CONVERGED
         and not stopped_at_model_limit
     )
+    # 阶段 7：分别构造只读 result 和 proposed state；求解函数本身不修改 accepted。
     result_wrench = _root_wrench(
         geometry, root_position, contact_point, force
     )
@@ -2212,10 +2374,11 @@ def solve_single_spine(
 def commit_single_spine_trial(
     accepted: SpineAcceptedState, trial: SingleSpineTrial
 ) -> SpineAcceptedState:
-    """Return the proposed immutable state only for the exact accepted revision."""
+    """仅当 spine、base revision 和数值状态全部匹配时提交 proposed state。"""
 
     if trial.spine_id != accepted.spine_id:
         raise ConfigurationError("trial and accepted state spine_id do not match")
+    # revision 检查阻止基于旧 accepted 状态计算的并发/缓存 trial 覆盖较新状态。
     if trial.base_revision != accepted.revision:
         raise ConfigurationError("stale single-spine trial cannot be committed")
     if not trial.committable:

@@ -1,4 +1,10 @@
-"""Canonical engineering parameter registry and legacy-input migration."""
+"""工程参数注册表及旧版设计输入迁移。
+
+本模块把参数的数值与其证据状态、来源绑定在一起，避免把“候选值”、
+“数值协议”或“旧版回归值”误当成已经标定的物理真值。它还负责重建旧版
+M3 参数扫描、生成可复现的历史设计编号，并把旧数据显式转换为当前 SI 制
+规范下的 :class:`CanonicalDesign`。
+"""
 
 from __future__ import annotations
 
@@ -15,6 +21,8 @@ from spine_sim.core.versions import PARAMETER_REGISTRY_VERSION
 
 REGISTRY_SCHEMA_VERSION = "spine-parameter-registry-v1"
 
+# 注册表接受的证据类别。这里采用白名单，拼错或新增但未处理的状态会在
+# 加载时立即失败，而不会悄悄进入仿真结果。
 _EVIDENCE_STATUSES = frozenset(
     {
         "frozen_design_semantics",
@@ -38,6 +46,8 @@ _ANGLE_PATTERN_ALIASES = {
 
 @dataclass(frozen=True, slots=True)
 class EvidenceValue:
+    """一个带证据等级和来源引用的参数值。"""
+
     value: Any
     evidence_status: str
     source: tuple[str, ...]
@@ -45,7 +55,7 @@ class EvidenceValue:
 
 @dataclass(frozen=True, slots=True)
 class Installation:
-    """Canonical tagged union for rigid or unilateral-spring installation."""
+    """安装方式：刚性固定，或只能受压的单边弹簧。"""
 
     mode: str
     stiffness_N_per_m: float | None = None
@@ -54,6 +64,8 @@ class Installation:
     tension_allowed: bool = False
 
     def __post_init__(self) -> None:
+        """检查标签与附加参数是否构成一个自洽的安装配置。"""
+
         if self.mode == "rigid":
             if self.stiffness_N_per_m is not None or self.travel_m is not None:
                 raise ValueError("rigid installation cannot carry spring values")
@@ -76,6 +88,8 @@ class Installation:
             raise ValueError("legacy unilateral springs are unpreloaded and cannot pull")
 
     def as_dict(self) -> dict[str, Any]:
+        """返回适合序列化和身份计算的普通字典。"""
+
         if self.mode == "rigid":
             return {"mode": "rigid"}
         return {
@@ -89,6 +103,8 @@ class Installation:
 
 @dataclass(frozen=True, slots=True)
 class SpinePackage:
+    """M3a 参数包：单根 spine 的几何、姿态与安装参数。"""
+
     tip_radius_m: float
     rod_diameter_m: float
     fixed_pitch_rad: float
@@ -102,6 +118,8 @@ class SpinePackage:
 
 @dataclass(frozen=True, slots=True)
 class ArrayGeometry:
+    """M3b 阵列几何；梯度端点沿 x 列展开。"""
+
     nx: int
     ny: int
     spacing_m: float
@@ -113,11 +131,15 @@ class ArrayGeometry:
 
     @property
     def array_shape(self) -> str:
+        """返回旧版使用的 ``nx x ny`` 形状标签。"""
+
         return f"{self.nx}x{self.ny}"
 
 
 @dataclass(frozen=True, slots=True)
 class CanonicalDesign:
+    """求解器使用的规范设计，长度和俯仰角均按 x 列显式给出。"""
+
     nx: int
     ny: int
     spacing_m: float
@@ -135,6 +157,8 @@ class CanonicalDesign:
 
     @property
     def mount_x_by_column_m(self) -> tuple[float, ...]:
+        """返回以阵列中心为原点的各列安装点 x 坐标。"""
+
         return tuple(
             (index - 0.5 * (self.nx - 1)) * self.spacing_m
             for index in range(self.nx)
@@ -142,6 +166,8 @@ class CanonicalDesign:
 
     @property
     def axis_by_x_column(self) -> tuple[tuple[float, float, float], ...]:
+        """把每列的俯仰角与公共偏航角转换为三维单位轴向。"""
+
         return tuple(
             axis_from_pitch_yaw(pitch, self.yaw_rad)
             for pitch in self.pitch_by_x_column_rad
@@ -150,6 +176,8 @@ class CanonicalDesign:
 
 @dataclass(frozen=True, slots=True)
 class LegacyDesign:
+    """旧版映射、历史编号与规范设计之间的可追溯绑定。"""
+
     legacy_design_id: str
     legacy_mapping: Mapping[str, Any]
     canonical: CanonicalDesign
@@ -159,6 +187,8 @@ class LegacyDesign:
 
 @dataclass(frozen=True, slots=True)
 class Protocol:
+    """一组命名仿真协议参数及其逐字段证据元数据。"""
+
     protocol_id: str
     evidence_status: str
     source: tuple[str, ...]
@@ -167,10 +197,14 @@ class Protocol:
 
     @property
     def values(self) -> dict[str, Any]:
+        """只提取字段值；证据审计时应直接读取 :attr:`fields`。"""
+
         return {name: field.value for name, field in self.fields.items()}
 
     @property
     def protocol_identity(self) -> str:
+        """计算包含参数、证据来源和注册表版本的稳定协议身份。"""
+
         return identity(
             "parameter_protocol",
             {
@@ -192,6 +226,8 @@ class Protocol:
 
 @dataclass(frozen=True, slots=True)
 class TerminalPreset:
+    """按机理和用途命名的终端候选设计。"""
+
     role_id: str
     legacy_design_id: str
     role: str
@@ -204,6 +240,8 @@ class TerminalPreset:
 
 @dataclass(frozen=True, slots=True)
 class SelectionSet:
+    """一组有顺序的终端角色及其对应旧版设计编号。"""
+
     selection_id: str
     role_ids: tuple[str, ...]
     legacy_design_ids: tuple[str, ...]
@@ -213,6 +251,8 @@ class SelectionSet:
 
 @dataclass(frozen=True, slots=True)
 class MigrationField:
+    """旧字段到规范字段的一条转换记录。"""
+
     legacy_field: str
     canonical_field: str
     legacy_value: Any
@@ -222,6 +262,8 @@ class MigrationField:
     source: tuple[str, ...]
 
     def as_dict(self) -> dict[str, Any]:
+        """将转换记录序列化为 JSON 兼容字典。"""
+
         return {
             "legacy_field": self.legacy_field,
             "canonical_field": self.canonical_field,
@@ -235,12 +277,16 @@ class MigrationField:
 
 @dataclass(frozen=True, slots=True)
 class MigrationReport:
+    """一次旧版设计导入的逐字段审计报告。"""
+
     protocol_id: str
     legacy_design_id: str
     fields: tuple[MigrationField, ...]
     unexplained_differences: tuple[str, ...] = ()
 
     def as_dict(self) -> dict[str, Any]:
+        """将完整迁移报告序列化为 JSON 兼容字典。"""
+
         return {
             "protocol_id": self.protocol_id,
             "legacy_design_id": self.legacy_design_id,
@@ -251,6 +297,8 @@ class MigrationReport:
 
 @dataclass(frozen=True, slots=True)
 class ImportedLegacyDesign:
+    """迁移后的规范设计及与之一一对应的报告。"""
+
     design: CanonicalDesign
     report: MigrationReport
 
@@ -258,6 +306,12 @@ class ImportedLegacyDesign:
 def axis_from_pitch_yaw(
     pitch_rad: float, yaw_rad: float
 ) -> tuple[float, float, float]:
+    """由俯仰角和偏航角构造右手坐标系中的三维单位轴向。
+
+    约定为 ``(cos(pitch) cos(yaw), cos(pitch) sin(yaw), sin(pitch))``；
+    因此负俯仰角指向负 z 方向。
+    """
+
     if not math.isfinite(float(pitch_rad)) or not math.isfinite(float(yaw_rad)):
         raise ValueError("pitch and yaw must be finite")
     cos_pitch = math.cos(float(pitch_rad))
@@ -269,7 +323,11 @@ def axis_from_pitch_yaw(
 
 
 def equal_height_length_m(pitch_rad: float) -> float:
-    """Length required to retain the legacy 4 mm at 80 degree height."""
+    """计算保持旧版“80°、4 mm”竖直高度不变所需的杆长。
+
+    梯度阵列采用 ``L_j |sin(pitch_j)| = 4 mm sin(80°)``，使不同
+    俯仰角列的初始端点高度一致。
+    """
 
     pitch = float(pitch_rad)
     if not math.isfinite(pitch):
@@ -282,6 +340,8 @@ def equal_height_length_m(pitch_rad: float) -> float:
 
 
 def _columns(start: float, end: float, count: int) -> tuple[float, ...]:
+    """在起止值之间生成包含两个端点的等间距列参数。"""
+
     if count < 1:
         raise ValueError("column count must be positive")
     if not math.isfinite(float(start)) or not math.isfinite(float(end)):
@@ -295,10 +355,14 @@ def _columns(start: float, end: float, count: int) -> tuple[float, ...]:
 
 
 def _legacy_angle_deg(pitch_rad: float) -> float:
+    """把当前有符号俯仰角还原为旧版向下为正的角度值。"""
+
     return float(round(-math.degrees(float(pitch_rad)), 12))
 
 
 def _spring_family(stiffness_N_per_m: float | None) -> str:
+    """复现旧版按刚度划分的 rigid/compliant/stiff 标签。"""
+
     if stiffness_N_per_m is None:
         return "rigid"
     return "compliant" if stiffness_N_per_m <= 500.0 else "stiff"
@@ -310,6 +374,8 @@ def _legacy_package_mapping(
     fixed_pitch_rad: float,
     installation: Installation,
 ) -> dict[str, Any]:
+    """由规范物理量生成确定性的旧版 package 映射和标签。"""
+
     angle_deg = _legacy_angle_deg(fixed_pitch_rad)
     stiffness = (
         None
@@ -335,6 +401,8 @@ def _legacy_package_mapping(
 def _legacy_geometry_mapping(
     nx: int, ny: int, spacing_m: float, angle_pattern: str
 ) -> dict[str, Any]:
+    """由规范阵列尺寸生成旧版 geometry 映射和可读编号。"""
+
     geometry_id = (
         f"{nx}x{ny}_s{int(round(spacing_m * 1e3))}mm_{angle_pattern}"
     )
@@ -349,6 +417,9 @@ def _legacy_geometry_mapping(
 
 
 def _legacy_digest(value: Mapping[str, Any]) -> str:
+    """按旧版规范 JSON 编码计算截断为 20 位十六进制的摘要。"""
+
+    # 禁止 NaN，并固定键序和分隔符，保证同一物理设计跨运行得到同一摘要。
     payload = json.dumps(
         value,
         ensure_ascii=False,
@@ -360,7 +431,10 @@ def _legacy_digest(value: Mapping[str, Any]) -> str:
 
 
 def legacy_design_id(value: Mapping[str, Any]) -> str:
-    """Reproduce the exact historical 20-hex M3 full-scan design ID."""
+    """严格复现历史 M3 全扫描的 20 位十六进制设计编号。
+
+    该编号仅用于来源追踪，不替代当前模型的规范 identity。
+    """
 
     package = _normalize_legacy_package(value["package"])
     geometry = _normalize_legacy_geometry(value["geometry"])
@@ -368,6 +442,8 @@ def legacy_design_id(value: Mapping[str, Any]) -> str:
 
 
 def _normalize_legacy_package(value: Any) -> dict[str, Any]:
+    """校验旧 package 的原始字段，并重新计算所有派生标签。"""
+
     if not isinstance(value, Mapping):
         raise TypeError("legacy package must be a mapping")
     try:
@@ -385,6 +461,7 @@ def _normalize_legacy_package(value: Any) -> dict[str, Any]:
         or not 0.0 < angle_deg < 90.0
     ):
         raise ValueError("legacy package physical fields are outside their domain")
+    # 旧格式以 null 表示刚性固定；数值刚度表示无预紧、只能受压的弹簧。
     raw_stiffness = value.get("spring_stiffness_N_per_m")
     if raw_stiffness is None:
         installation = Installation("rigid")
@@ -395,6 +472,7 @@ def _normalize_legacy_package(value: Any) -> dict[str, Any]:
     normalized = _legacy_package_mapping(
         radius, diameter, -math.radians(angle_deg), installation
     )
+    # 不信任输入中的派生字段，防止“物理量已改但标签未更新”的脏数据。
     for derived in ("package_id", "spring_family"):
         if derived in value and value[derived] != normalized[derived]:
             raise ValueError(f"legacy package {derived} does not match its inputs")
@@ -402,6 +480,8 @@ def _normalize_legacy_package(value: Any) -> dict[str, Any]:
 
 
 def _normalize_legacy_geometry(value: Any) -> dict[str, Any]:
+    """校验旧 geometry，并把历史梯度别名归一到固定名称。"""
+
     if not isinstance(value, Mapping):
         raise TypeError("legacy geometry must be a mapping")
     try:
@@ -426,6 +506,7 @@ def _normalize_legacy_geometry(value: Any) -> dict[str, Any]:
     ):
         raise ValueError("legacy geometry fields are outside their domain")
     normalized = _legacy_geometry_mapping(nx, ny, spacing_m, pattern)
+    # 与 package 相同，输入中的形状/编号只能作为一致性断言。
     for derived in ("array_shape", "geometry_id"):
         if derived in value and value[derived] != normalized[derived]:
             raise ValueError(f"legacy geometry {derived} does not match its inputs")
@@ -433,7 +514,15 @@ def _normalize_legacy_geometry(value: Any) -> dict[str, Any]:
 
 
 class ParameterRegistry:
+    """经过模式、版本和证据元数据校验的只读参数注册表。
+
+    ``candidate_axes`` 只描述各参数可取的候选值，并不自动定义它们的笛卡尔
+    积；只有 ``generators`` 中明确列出的组合规则才会实例化设计空间。
+    """
+
     def __init__(self, document: Mapping[str, Any]):
+        """从已解析的 JSON 对象构建注册表，并一次性完成结构校验。"""
+
         if document.get("schema_version") != REGISTRY_SCHEMA_VERSION:
             raise ValueError("unsupported parameter registry schema")
         self.registry_version = str(document.get("registry_version", ""))
@@ -450,6 +539,9 @@ class ParameterRegistry:
         self._validate_evidence(document)
 
     def _validate_evidence(self, document: Mapping[str, Any]) -> None:
+        """解析所有证据段、生成器和协议，并保留逐字段来源。"""
+
+        # 普通证据段的每个叶节点都必须是 EvidenceValue 形状。
         for section_name in (
             "coordinate_contract",
             "candidate_axes",
@@ -476,6 +568,8 @@ class ParameterRegistry:
                     )
                 parsed[name] = evidence
             self._evidence_sections[section_name] = parsed
+        # 生成器只需保存用于组合的裸值；协议还需保留逐字段证据，以便把来源
+        # 纳入 protocol_identity 和最终结果元数据。
         for section_name in ("generators", "protocols"):
             section = document.get(section_name)
             if not isinstance(section, Mapping):
@@ -515,30 +609,41 @@ class ParameterRegistry:
                     )
 
     def evidence(self, section: str, name: str) -> EvidenceValue:
+        """按段名和条目名读取带来源的参数值。"""
+
         return self._evidence_sections[section][name]
 
     def candidate_axis(self, name: str) -> EvidenceValue:
-        """Return one axis without materializing any parameter combinations."""
+        """读取一个候选轴，但不生成任何参数组合。"""
 
         return self.evidence("candidate_axes", name)
 
     def protocol(self, protocol_id: str) -> Protocol:
+        """按编号读取已验证的数值/分析协议。"""
+
         return self._protocols[protocol_id]
 
     def paired_seed_set(self, seed_set_id: str) -> tuple[int, ...]:
+        """读取用于配对比较的随机种子，保持注册表中的顺序。"""
+
         raw = self.evidence("paired_seed_sets", seed_set_id).value
         return tuple(int(seed) for seed in raw)
 
     def paired_seeds_for_protocol(self, protocol_id: str) -> tuple[int, ...]:
+        """返回协议引用的配对种子；未配置时返回空元组。"""
+
         protocol = self.protocol(protocol_id)
         seed_set = protocol.fields.get("paired_seed_set")
         return () if seed_set is None else self.paired_seed_set(str(seed_set.value))
 
     def generate_source_defined_m3a(self) -> tuple[SpinePackage, ...]:
+        """按注册表明示的笛卡尔积生成来源定义的 M3a 单杆参数包。"""
+
         fields, status, source = self._generators["source_defined_m3a"]
         fixed_length_m = float(self.candidate_axis("fixed_length_m").value)
         yaw_rad = float(self.candidate_axis("yaw_rad").value[0])
         packages: list[SpinePackage] = []
+        # 只有此生成器显式列出的四个轴参与组合；其它候选轴不会被隐式展开。
         for radius in fields["tip_radius_m"]:
             for diameter in fields["rod_diameter_m"]:
                 for pitch in fields["fixed_pitch_rad"]:
@@ -567,8 +672,11 @@ class ParameterRegistry:
         return tuple(packages)
 
     def generate_source_defined_m3b(self) -> tuple[ArrayGeometry, ...]:
+        """生成来源定义的 M3b 固定角与梯度角阵列几何。"""
+
         fields, status, source = self._generators["source_defined_m3b"]
         geometries: list[ArrayGeometry] = []
+        # 固定角布局只有形状和间距；俯仰角由所配套的 SpinePackage 给出。
         for nx, ny in fields["fixed_shapes"]:
             for spacing in fields["fixed_spacing_m"]:
                 geometries.append(
@@ -576,6 +684,7 @@ class ParameterRegistry:
                         int(nx), int(ny), float(spacing), "fixed", None, status, source
                     )
                 )
+        # 梯度布局单独携带首末列俯仰角，后续按 x 列线性插值。
         for layout in fields["gradient_layouts"]:
             endpoints = tuple(float(value) for value in layout["pitch_endpoints_rad"])
             for nx, ny in layout["shapes"]:
@@ -594,9 +703,12 @@ class ParameterRegistry:
         return tuple(geometries)
 
     def generate_legacy_full_scan(self) -> tuple[LegacyDesign, ...]:
+        """完整复建旧版 M3 扫描空间及其历史设计编号。"""
+
         fields, status, source = self._generators["legacy_full_scan"]
         designs: list[LegacyDesign] = []
         fixed_length_m = float(self.candidate_axis("fixed_length_m").value)
+        # 循环顺序属于历史数据契约：既影响输出顺序，也便于与旧结果逐项对齐。
         for nx, ny in fields["shapes"]:
             for spacing in fields["spacing_m"]:
                 for radius in fields["tip_radius_m"]:
@@ -620,6 +732,7 @@ class ParameterRegistry:
                                         source,
                                     )
                                 )
+                            # 每组 package/geometry 除固定角外再追加一个梯度设计。
                             endpoints = tuple(
                                 float(value)
                                 for value in fields["gradient_pitch_endpoints_rad"]
@@ -641,6 +754,7 @@ class ParameterRegistry:
                                 )
                             )
         self._check_count("legacy_full_scan", fields, len(designs))
+        # 期望数量和 ID 唯一性共同捕获注册表漏项、重复项或组合规则漂移。
         ids = [design.legacy_design_id for design in designs]
         if len(ids) != len(set(ids)):
             raise ValueError("legacy full-scan design IDs are not unique")
@@ -652,6 +766,12 @@ class ParameterRegistry:
         *,
         protocol_id: str = "legacy_full_scan",
     ) -> ImportedLegacyDesign:
+        """把一条旧版设计严格转换为规范设计，并生成逐字段迁移报告。
+
+        若输入带有 ``design_id``，会先用规范化后的物理载荷重算并核对，防止
+        把错误编号继续传播到新结果中。
+        """
+
         package = _normalize_legacy_package(value["package"])
         geometry = _normalize_legacy_geometry(value["geometry"])
         computed_id = legacy_design_id({"package": package, "geometry": geometry})
@@ -663,6 +783,7 @@ class ParameterRegistry:
         pitch_deg = float(package["fixed_angle_deg"])
         pattern = str(geometry["angle_pattern"])
         nx = int(geometry["nx"])
+        # 先按历史角度模式恢复每个 x 列的俯仰角，再按同一模式恢复杆长。
         pitch_columns = self._pitch_columns(pattern, pitch_deg, nx)
         length_columns = self._length_columns(pattern, pitch_columns)
         installation = (
@@ -687,6 +808,7 @@ class ParameterRegistry:
             evidence_status=protocol.evidence_status,
             source=migration_source,
         )
+        # 报告明确记录每个旧字段的转换公式，使迁移结果可独立审计。
         fields = self._migration_fields(
             package,
             geometry,
@@ -700,6 +822,8 @@ class ParameterRegistry:
         )
 
     def terminal_presets(self) -> tuple[TerminalPreset, ...]:
+        """解析 12 个命名终端角色，并绑定到已复建的旧版设计。"""
+
         by_id = {
             design.legacy_design_id: design
             for design in self.generate_legacy_full_scan()
@@ -731,6 +855,8 @@ class ParameterRegistry:
         return tuple(presets)
 
     def selection_set(self, selection_id: str) -> SelectionSet:
+        """把角色选择集解析为保持顺序的历史设计编号集合。"""
+
         evidence = self.evidence("selection_sets", selection_id)
         role_ids = tuple(str(value) for value in evidence.value)
         preset_by_role = {preset.role_id: preset for preset in self.terminal_presets()}
@@ -751,6 +877,8 @@ class ParameterRegistry:
         )
 
     def _installation(self, stiffness: Any) -> Installation:
+        """将注册表的 ``rigid``/刚度值转换为显式安装标签。"""
+
         if stiffness == "rigid" or stiffness is None:
             return Installation("rigid")
         travel_m = float(self.candidate_axis("spring_travel_m").value)
@@ -766,6 +894,8 @@ class ParameterRegistry:
         status: str,
         source: tuple[str, ...],
     ) -> ArrayGeometry:
+        """创建阵列几何，同时复用旧版规则生成可追踪编号。"""
+
         mapping = _legacy_geometry_mapping(nx, ny, spacing_m, pattern)
         return ArrayGeometry(
             nx,
@@ -793,6 +923,8 @@ class ParameterRegistry:
         status: str,
         source: tuple[str, ...],
     ) -> LegacyDesign:
+        """由一组扫描参数同时构造旧版映射与规范求解器设计。"""
+
         package = _legacy_package_mapping(
             radius_m, diameter_m, package_pitch_rad, installation
         )
@@ -801,9 +933,11 @@ class ParameterRegistry:
         design_id = legacy_design_id(mapping)
         mapping["design_id"] = design_id
         if endpoints is None:
+            # 固定角设计沿所有 x 列复用相同俯仰角和 4 mm 杆长。
             pitches = (package_pitch_rad,) * nx
             lengths = (fixed_length_m,) * nx
         else:
+            # 梯度设计线性插值俯仰角，并用等高规则逐列修正杆长。
             pitches = _columns(endpoints[0], endpoints[1], nx)
             lengths = tuple(equal_height_length_m(pitch) for pitch in pitches)
         canonical = CanonicalDesign(
@@ -826,6 +960,8 @@ class ParameterRegistry:
 
     @staticmethod
     def _pitch_columns(pattern: str, fixed_angle_deg: float, nx: int) -> tuple[float, ...]:
+        """按旧版模式恢复每个 x 列的有符号俯仰角。"""
+
         if pattern == "fixed":
             return (-math.radians(fixed_angle_deg),) * nx
         legacy_endpoints = {
@@ -840,6 +976,8 @@ class ParameterRegistry:
     def _length_columns(
         pattern: str, pitches: tuple[float, ...]
     ) -> tuple[float, ...]:
+        """恢复固定 4 mm 长度，或对梯度列应用等高长度规则。"""
+
         if pattern == "fixed":
             return (0.004,) * len(pitches)
         return tuple(equal_height_length_m(pitch) for pitch in pitches)
@@ -852,6 +990,8 @@ class ParameterRegistry:
         status: str,
         source: tuple[str, ...],
     ) -> tuple[MigrationField, ...]:
+        """生成覆盖几何、角度、安装和来源编号的迁移台账。"""
+
         unchanged = "identity_after_explicit_SI_parse"
         return (
             MigrationField(
@@ -953,6 +1093,8 @@ class ParameterRegistry:
     def _check_count(
         generator_id: str, fields: Mapping[str, Any], observed: int
     ) -> None:
+        """用注册表声明的期望数量检测组合规则或数据的意外变化。"""
+
         expected = int(fields["expected_count"])
         if observed != expected:
             raise ValueError(
@@ -963,6 +1105,8 @@ class ParameterRegistry:
 def _metadata(
     raw: Mapping[str, Any], name: str
 ) -> tuple[str, tuple[str, ...]]:
+    """校验并提取一个证据节点共有的状态和非空来源列表。"""
+
     status = str(raw.get("evidence_status", ""))
     if status not in _EVIDENCE_STATUSES:
         raise ValueError(f"{name} has invalid evidence_status {status!r}")
@@ -976,6 +1120,8 @@ def _metadata(
 
 
 def _evidence(raw: Any, name: str) -> EvidenceValue:
+    """把 JSON 证据节点解析为不可变的 :class:`EvidenceValue`。"""
+
     if not isinstance(raw, Mapping) or "value" not in raw:
         raise TypeError(f"{name} must be an evidence value")
     status, source = _metadata(raw, name)
@@ -983,6 +1129,8 @@ def _evidence(raw: Any, name: str) -> EvidenceValue:
 
 
 def load_registry(path: str | Path | None = None) -> ParameterRegistry:
+    """从指定 JSON 文件加载注册表；省略路径时使用随包发布的版本。"""
+
     registry_path = (
         Path(__file__).with_name("registry.json")
         if path is None

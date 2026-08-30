@@ -1,4 +1,8 @@
-"""Atomic per-case writes and lightweight campaign indexes."""
+"""逐 case 原子结果存储与轻量 campaign 索引。
+
+small/含轨迹任务使用目录式 :class:`ResultStore`；只保存摘要的大型 formal 任务使用
+事务式 :class:`CompactResultStore`。两者共享结果哈希语义和读取接口。
+"""
 
 from __future__ import annotations
 
@@ -27,9 +31,10 @@ from spine_sim.io.files import (
 def atomic_write_trace_table(
     directory: Path, rows: Iterable[Mapping[str, Any]]
 ) -> tuple[str | None, str | None, str | None]:
-    """Write canonical trace rows as Parquet, or JSONL when pyarrow is absent."""
+    """原子写入规范轨迹；有 PyArrow 时用 Parquet，否则退化为 JSONL。"""
 
     normalized = [canonicalize(dict(row)) for row in rows]
+    # 每次写入只保留一种轨迹格式，防止读取端命中上一次运行留下的旧文件。
     for name in ("trace.parquet", "trace.jsonl"):
         stale = directory / name
         if stale.exists():
@@ -49,6 +54,8 @@ def atomic_write_trace_table(
         return target.name, "jsonl_fallback", sha256_file(target)
 
     columns = sorted({key for row in normalized for key in row})
+    # Parquet 不能无损表达任意嵌套列和全空列；把这些列编码为规范 JSON 字符串，
+    # 并在 schema metadata 中记录，读取时可精确还原原始 Python 结构。
     json_columns = {
         key
         for key in columns
@@ -95,7 +102,7 @@ def atomic_write_trace_table(
 
 
 def read_trace_table(path: str | Path) -> list[dict[str, Any]]:
-    """Read a canonical trace and reverse its lossless Parquet encoding."""
+    """读取规范轨迹，并反解 Parquet 中无损保存的 JSON 列。"""
 
     source = Path(path)
     if source.is_dir():
@@ -131,6 +138,7 @@ def read_trace_table(path: str | Path) -> list[dict[str, Any]]:
 
 
 _RESULT_HASH_EXCLUDED_SUMMARY_FIELDS = {
+    # 运行耗时、内存和完成时间不改变物理结果；排除后，同一计算可得到稳定结果哈希。
     "completed_at_utc",
     "wall_time_s",
     "peak_ram_bytes",
@@ -150,6 +158,8 @@ def _result_hash(
     event_lines: list[str],
     path_sha256: str | None,
 ) -> str:
+    """联合配置、稳定 summary、事件和附件摘要计算结果 identity。"""
+
     stable_summary = {
         key: value
         for key, value in document.items()
@@ -171,6 +181,8 @@ def _result_hash(
 
 @dataclass(frozen=True)
 class CaseRecord:
+    """campaign 索引中每个 case 的最小查询记录。"""
+
     case_id: str
     run_state: str
     result_hash: str
@@ -183,6 +195,8 @@ class CaseRecord:
 
 
 def _case_record(document: Mapping[str, Any]) -> CaseRecord:
+    """从完整 summary 提取索引字段，并展开可选错误信息。"""
+
     if "error" in document:
         error = document["error"]
         if not isinstance(error, Mapping):
@@ -210,6 +224,8 @@ def _case_record(document: Mapping[str, Any]) -> CaseRecord:
 def write_campaign_index(
     root: str | Path, records: Iterable[CaseRecord]
 ) -> str:
+    """按 case ID 排序写入 Parquet 索引；缺少 PyArrow 时写 JSONL。"""
+
     campaign_root = Path(root).resolve()
     rows = [
         asdict(record)
@@ -248,6 +264,8 @@ def write_campaign_index(
 
 
 def update_manifest(root: str | Path, **fields: Any) -> None:
+    """合并并原子重写 campaign manifest 的指定字段。"""
+
     path = Path(root).resolve() / "manifest.json"
     current = json.loads(path.read_text(encoding="utf-8"))
     current.update(fields)
@@ -255,7 +273,11 @@ def update_manifest(root: str | Path, **fields: Any) -> None:
 
 
 class ResultStore:
+    """适用于数组、轨迹和事件输出的逐 case 目录存储。"""
+
     def __init__(self, campaign_dir: str | Path):
+        """解析 campaign 根目录及 ``paths`` 子目录。"""
+
         self.root = Path(campaign_dir).resolve()
         self.cases_dir = self.root / "paths"
 
@@ -267,6 +289,8 @@ class ResultStore:
         normalized_config: Mapping[str, Any],
         lineage: Mapping[str, Any],
     ) -> None:
+        """建立 campaign 目录骨架并写入配置、来源链和空聚合文件。"""
+
         self.root.mkdir(parents=True, exist_ok=True)
         (self.root / "config").mkdir(exist_ok=True)
         self.cases_dir.mkdir(exist_ok=True)
@@ -280,17 +304,22 @@ class ResultStore:
             atomic_write_json(self.root / "validation.json", {"status": "not_run", "checks": []})
 
     def case_dir(self, case_id: str) -> Path:
+        """返回受限于 ``paths`` 下的 case 目录，拒绝路径分隔符。"""
+
         if not case_id or any(char in case_id for char in "\\/:"):
             raise ValueError("invalid case_id")
         return self.cases_dir / case_id
 
     def is_complete(self, case_id: str) -> bool:
+        """复核 marker、summary、所有附件哈希及最终结果哈希。"""
+
         directory = self.case_dir(case_id)
         marker = directory / "COMPLETE"
         summary = directory / "summary.json"
         if not marker.is_file() or not summary.is_file():
             return False
         try:
+            # COMPLETE 只是一项证据；继续校验路径数组、轨迹、事件、配置和 validation。
             document = json.loads(summary.read_text(encoding="utf-8"))
             if not isinstance(document, Mapping):
                 return False
@@ -386,9 +415,12 @@ class ResultStore:
         events: Iterable[Mapping[str, Any]] = (),
         validation: Mapping[str, Any] | None = None,
     ) -> CaseRecord:
+        """写入一个 case；仅在全部内容完成后发布 ``COMPLETE`` marker。"""
+
         directory = self.case_dir(case_id)
         directory.mkdir(parents=True, exist_ok=True)
         marker = directory / "COMPLETE"
+        # 先撤销旧完成标记，避免覆盖过程中被 resume 误判为完整。
         if marker.exists():
             marker.unlink()
         atomic_write_json(directory / "config.json", config)
@@ -445,16 +477,21 @@ class ResultStore:
         record = _case_record(document)
         atomic_write_json(directory / "summary.json", document)
         if record.run_state == "complete":
+            # marker 最后写入，并保存 result_hash 以绑定当前 summary 和附件集合。
             atomic_write_bytes(
                 marker, (document["result_hash"] + "\n").encode("ascii")
             )
         return record
 
     def load_case_summary(self, case_id: str) -> dict[str, Any]:
+        """读取一个 case 的 ``summary.json``。"""
+
         path = self.case_dir(case_id) / "summary.json"
         return json.loads(path.read_text(encoding="utf-8"))
 
     def list_records(self) -> list[CaseRecord]:
+        """扫描已有 summary，并按目录名稳定返回 campaign 索引记录。"""
+
         records: list[CaseRecord] = []
         if not self.cases_dir.exists():
             return records
@@ -466,6 +503,8 @@ class ResultStore:
         return records
 
     def rebuild_event_index(self) -> None:
+        """汇总逐 case 事件，并在缺失时补上所属 case ID。"""
+
         lines: list[str] = []
         if self.cases_dir.exists():
             for directory in sorted(self.cases_dir.iterdir()):
@@ -484,23 +523,25 @@ class ResultStore:
         )
 
 class CompactResultStore:
-    """Transactional summary-only storage for large formal campaign shards.
+    """大型 formal 分片使用的事务式纯摘要存储。
 
-    A formal shard can contain thousands of cases. Keeping four or five files
-    in one directory per summary case turns filesystem metadata into a larger
-    workload than the summaries themselves. This store retains the same
-    result-hash semantics while committing each summary atomically to SQLite.
-    Aggregate/full trace campaigns continue to use :class:`ResultStore`.
+    formal 分片可能包含数千个 case。若每个摘要都建立四五个小文件，文件系统元数据
+    开销会超过内容本身。本类保留与 :class:`ResultStore` 相同的结果哈希语义，但把
+    每个摘要原子提交到 SQLite；需要数组、轨迹或事件的任务仍使用目录式存储。
     """
 
     DATABASE_NAME = "case_summaries.sqlite3"
 
     def __init__(self, campaign_dir: str | Path):
+        """解析 campaign 根目录和固定 SQLite 数据库路径。"""
+
         self.root = Path(campaign_dir).resolve()
         self.database_path = self.root / self.DATABASE_NAME
 
     @contextmanager
     def _connect(self) -> Iterable[sqlite3.Connection]:
+        """打开 WAL/FULL 连接，并在上下文退出时提交或回滚事务。"""
+
         connection = sqlite3.connect(self.database_path, timeout=60.0)
         try:
             connection.execute("PRAGMA journal_mode=WAL")
@@ -521,6 +562,8 @@ class CompactResultStore:
         normalized_config: Mapping[str, Any],
         lineage: Mapping[str, Any],
     ) -> None:
+        """写入紧凑 manifest/config，并初始化摘要表。"""
+
         self.root.mkdir(parents=True, exist_ok=True)
         (self.root / "config").mkdir(exist_ok=True)
         compact_manifest = dict(manifest)
@@ -532,6 +575,8 @@ class CompactResultStore:
             self.root / "config" / "original.json", raw_config
         )
         campaign_document = dict(normalized_config["campaign"])
+        # case 全载荷已保存在 original.json；normalized.json 只保留计数和有序集合哈希，
+        # 避免在大型 formal campaign 中复制一遍巨大的配置数组。
         normalized_cases = list(campaign_document.pop("cases"))
         compact_normalized = dict(normalized_config)
         compact_normalized["campaign"] = {
@@ -582,6 +627,8 @@ class CompactResultStore:
     def _payload_sha256(
         summary_json: str, validation_json: str
     ) -> str:
+        """用 NUL 分隔 summary 与 validation，计算数据库载荷完整性摘要。"""
+
         digest = hashlib.sha256()
         digest.update(summary_json.encode("utf-8"))
         digest.update(b"\0")
@@ -589,6 +636,8 @@ class CompactResultStore:
         return digest.hexdigest()
 
     def is_complete(self, case_id: str) -> bool:
+        """在事务记录、载荷摘要和 validation 哈希均一致时才判为完整。"""
+
         if not self.database_path.is_file():
             return False
         try:
@@ -642,6 +691,8 @@ class CompactResultStore:
         events: Iterable[Mapping[str, Any]] = (),
         validation: Mapping[str, Any] | None = None,
     ) -> CaseRecord:
+        """原子 upsert 一个纯 summary case，并拒绝该模式不支持的附件。"""
+
         if arrays:
             raise ValueError(
                 "compact formal storage only supports summary output"
@@ -690,6 +741,7 @@ class CompactResultStore:
         )
         record = _case_record(document)
         with self._connect() as connection:
+            # 单条 UPSERT 与事务边界共同保证中断后只会看到旧记录或完整新记录。
             connection.execute(
                 """
                 INSERT INTO case_summary (
@@ -731,6 +783,8 @@ class CompactResultStore:
         return record
 
     def load_case_summary(self, case_id: str) -> dict[str, Any]:
+        """按 case ID 读取并解析摘要；不存在时保持文件式接口的异常语义。"""
+
         with self._connect() as connection:
             row = connection.execute(
                 "SELECT summary_json FROM case_summary WHERE case_id = ?",
@@ -741,6 +795,8 @@ class CompactResultStore:
         return json.loads(row[0])
 
     def list_records(self) -> list[CaseRecord]:
+        """按 case ID 查询轻量索引字段，不反序列化完整 summary。"""
+
         if not self.database_path.is_file():
             return []
         with self._connect() as connection:
@@ -769,12 +825,16 @@ class CompactResultStore:
         ]
 
     def rebuild_event_index(self) -> None:
+        """紧凑模式不接受逐 case 事件，因此聚合事件文件始终为空。"""
+
         atomic_write_bytes(self.root / "events.jsonl", b"")
 
 
 def open_result_store(
     campaign_dir: str | Path,
 ) -> ResultStore | CompactResultStore:
+    """依据 manifest 打开目录式或紧凑式结果存储。"""
+
     root = Path(campaign_dir).resolve()
     manifest_path = root / "manifest.json"
     result_storage = None

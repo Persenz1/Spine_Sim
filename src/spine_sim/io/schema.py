@@ -1,4 +1,8 @@
-"""Canonical result metadata and schema checks for single-spine and array runs."""
+"""单刺和阵列结果的标准 metadata 与 schema 校验。
+
+该层只校验结果是否完整表达模型版本、来源、单位、坐标和诊断状态，不判断数值结果
+是否“好”或物理性能是否达标。
+"""
 
 from __future__ import annotations
 
@@ -18,6 +22,8 @@ from spine_sim.core.versions import (
 
 @dataclass(frozen=True)
 class CanonicalResultMetadata:
+    """每个标准物理结果都必须携带的可复现性与适用范围信息。"""
+
     case_id: str
     normalized_input_hash: str
     model_level: str
@@ -37,6 +43,8 @@ class CanonicalResultMetadata:
     parameter_registry_version: str = PARAMETER_REGISTRY_VERSION
 
     def __post_init__(self) -> None:
+        """检查模型层级和最小 identity/单位/坐标元数据。"""
+
         if self.model_level not in {
             SINGLE_SPINE_MODEL_LEVEL,
             ARRAY_MODEL_LEVEL,
@@ -54,10 +62,13 @@ class CanonicalResultMetadata:
             raise ValueError("canonical results require units and frame metadata")
 
     def as_dict(self) -> dict[str, Any]:
+        """递归转换为可持久化字典。"""
+
         return asdict(self)
 
 
 _COMMON_REQUIRED = {
+    # 所有物理层级共享的结果字段；阵列层还会在下方追加平衡/稳定性字段。
     "project_schema_version",
     "model_schema_version",
     "result_schema_version",
@@ -85,6 +96,8 @@ _COMMON_REQUIRED = {
 
 
 def validate_canonical_summary(summary: Mapping[str, Any]) -> None:
+    """校验 summary 字段完整性及其语义版本是否与当前 writer 一致。"""
+
     missing = _COMMON_REQUIRED - set(summary)
     if missing:
         raise ValueError(f"canonical result is missing fields: {sorted(missing)}")

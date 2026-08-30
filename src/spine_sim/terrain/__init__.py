@@ -1,4 +1,4 @@
-"""M1 terrain recipes, local caches and finite-tip track geometry."""
+"""M1 地形配方、本地缓存及有限半径尖端的轨迹几何接口。"""
 
 from .analytic import evaluate_analytic
 from .api import (

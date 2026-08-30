@@ -1,4 +1,4 @@
-"""Unified API for measured and material-specific synthetic terrain."""
+"""实测裁剪与材料专用合成地形的统一 API。"""
 
 from __future__ import annotations
 
@@ -32,7 +32,7 @@ TerrainBackend = Literal["cpu", "cuda"]
 
 @dataclass(frozen=True)
 class Terrain:
-    """A finite SI height field returned by :func:`generate_terrain`."""
+    """由 :func:`generate_terrain` 返回的有限 SI 高度场及其来源/不确定性。"""
 
     height: NDArray[np.float32]
     dx: float
@@ -50,6 +50,8 @@ class Terrain:
     geometry_upper_bound_m: NDArray[np.float32] | None = None
 
     def __post_init__(self) -> None:
+        """校验 float32 高度、bool mask、网格、材料标识和可选几何界。"""
+
         height = np.asarray(self.height)
         mask = np.asarray(self.valid_mask)
         if height.ndim != 2 or min(height.shape) < 2:
@@ -109,18 +111,24 @@ class Terrain:
 
     @property
     def size_x_m(self) -> float:
+        """返回 x 方向节点首尾之间的物理跨度。"""
+
         return (self.height.shape[1] - 1) * self.dx
 
     @property
     def size_y_m(self) -> float:
+        """返回 y 方向节点首尾之间的物理跨度。"""
+
         return (self.height.shape[0] - 1) * self.dy
 
     @property
     def resolved_mode(self) -> str:
+        """返回实际使用的 ``measured`` 或 ``synthetic`` 路径。"""
+
         return str(self.metadata["resolved_mode"])
 
     def to_recipe(self) -> TerrainRecipe:
-        """Build the recipe identity used by the existing terrain library."""
+        """构造与现有 mmap 地形库兼容的材料 recipe identity。"""
 
         return TerrainRecipe(
             generator_name="material_hybrid",
@@ -146,6 +154,8 @@ class Terrain:
 def _grid_shape(
     size_x_m: float, size_y_m: float, resolution_m: float
 ) -> tuple[int, int]:
+    """将物理范围与节点间距转换为包含端点的 ``(ny, nx)``。"""
+
     for name, value in (
         ("size_x_m", size_x_m),
         ("size_y_m", size_y_m),
@@ -186,6 +196,8 @@ def _measured(
     measured_path: str | Path | None,
     measured_options: Mapping[str, Any] | None,
 ) -> tuple[NDArray[np.float32], NDArray[np.bool_], dict[str, Any]]:
+    """解析实测来源，并随机选择满足范围/分辨率要求的有效裁剪。"""
+
     source_path, source_record = resolve_profile_source(profile, measured_path)
     if source_path is None:
         raise FileNotFoundError(
@@ -229,12 +241,10 @@ def generate_terrain(
     measured_options: Mapping[str, Any] | None = None,
     backend: TerrainBackend = "cpu",
 ) -> Terrain:
-    """Generate a reproducible red-brick, concrete, or sandpaper height field.
+    """生成可复现的红砖、混凝土或砂纸高度场。
 
-    The array is node-centred, indexed ``[y, x]``, stored as ``float32``, and
-    measured in metres.  ``mode='auto'`` uses a measured crop only when a
-    suitable source exists and the requested extent/resolution is supported;
-    otherwise it records the reason and falls back to synthetic generation.
+    数组以节点为中心、按 ``[y, x]`` 索引、使用 metre 单位的 ``float32``。``auto``
+    仅在实测源存在且覆盖请求范围/分辨率时使用裁剪，否则记录原因并生成 synthetic。
     """
 
     if not isinstance(seed, (int, np.integer)) or int(seed) < 0:
@@ -247,12 +257,14 @@ def generate_terrain(
         raise TerrainConfigurationError(
             "backend must be 'cpu' or 'cuda'"
         )
+    # 阶段 1：解析唯一材料 profile、严格网格 shape 和独立 PCG64 realization。
     profile = load_material_profile(material, subtype)
     shape = _grid_shape(size_x_m, size_y_m, resolution_m)
     rng = np.random.Generator(np.random.PCG64(int(seed)))
     fallback_reason: str | None = None
 
     if mode in {"measured", "auto"}:
+        # measured 是强约束；auto 才允许在来源或覆盖不足时回退到 synthetic。
         try:
             height, mask, generation_record = _measured(
                 profile,
@@ -268,7 +280,7 @@ def generate_terrain(
             if mode == "measured":
                 raise
             fallback_reason = f"{type(exc).__name__}: {exc}"
-            # Reinitialize so auto fallback is bit-identical to explicit synthetic.
+            # 重置 RNG，保证 auto 回退与显式 synthetic 调用逐位一致。
             rng = np.random.Generator(np.random.PCG64(int(seed)))
             resolved_mode = "synthetic"
     else:
@@ -276,6 +288,7 @@ def generate_terrain(
 
     cupy_module: Any | None = None
     if resolved_mode == "synthetic" and backend == "cuda":
+        # 在进入材料生成器前完成设备探测和内存池清理，失败不伪装成 CPU 成功。
         try:
             import cupy as cp  # type: ignore
         except ImportError as exc:
@@ -292,6 +305,7 @@ def generate_terrain(
         cupy_module = cp
 
     if resolved_mode == "synthetic":
+        # 阶段 2：每种材料只有一条专用生成路径；生成器同时返回方法/来源记录。
         if material == "sandpaper":
             height, generation_record = generate_sandpaper(
                 profile,
@@ -321,6 +335,7 @@ def generate_terrain(
             raise AssertionError(material)
         mask = np.ones(shape, dtype=np.bool_)
 
+    # 阶段 3：实测处理固定在 CPU；synthetic 才继承请求的 CPU/CUDA 后端。
     resolved_backend = (
         backend if resolved_mode == "synthetic" else "cpu"
     )
@@ -376,6 +391,7 @@ def generate_terrain(
             f"generator returned shape {height.shape}, expected {shape}"
         )
     if resolved_mode == "measured":
+        # 未做探针反卷积时，所有有效实测点仍属于几何不确定，不会被标成 determinate。
         measurement_semantics = dict(generation_record["measurement_semantics"])
         geometry_uncertain_mask = mask.copy()
     else:
@@ -387,6 +403,7 @@ def generate_terrain(
             "bounds": None,
         }
         geometry_uncertain_mask = np.zeros(shape, dtype=np.bool_)
+    # 阶段 4：把 profile、实际路径、设备、网格、测量语义和局限写入结果 metadata。
     metadata: dict[str, Any] = {
         "schema_version": "material-terrain-output-v1",
         "generator_version": MATERIAL_TERRAIN_VERSION,
@@ -443,12 +460,10 @@ def refine_material_terrain_same_realization(
     coarse: Terrain,
     fine_detail: Terrain,
 ) -> Terrain:
-    """Create a nested 2x refinement while preserving every coarse node.
+    """创建严格嵌套的 2× 细化，同时逐位保留所有粗网格节点。
 
-    ``fine_detail`` supplies only the sub-grid residual of the same
-    material/profile/seed.  The returned 5 um-style field is exactly equal to
-    ``coarse`` at all stride-2 nodes, so 10/5 um comparisons cannot drift onto
-    a different large-scale realization.
+    ``fine_detail`` 只提供同一材料/profile/seed 的子网格残差；返回细场在 stride-2
+    节点上与 ``coarse`` 完全相等，防止 10/5 µm 对比漂移到另一大尺度 realization。
     """
 
     if any(
@@ -509,6 +524,7 @@ def refine_material_terrain_same_realization(
             "fine-detail shape must contain the same extent at 2x resolution"
         )
 
+    # 粗节点直接复制；边中点和单元中心使用粗场插值 + fine_detail 相对自身粗插值的残差。
     coarse_height = coarse.height
     detail_height = fine_detail.height
     refined = np.empty_like(detail_height)
@@ -549,6 +565,7 @@ def refine_material_terrain_same_realization(
         )
     )
 
+    # 新节点只有在其 fine_detail 点和所有相关粗节点都有效时才有效。
     coarse_mask = coarse.valid_mask
     refined_mask = fine_detail.valid_mask.copy()
     refined_mask[::2, ::2] &= coarse_mask
@@ -560,6 +577,7 @@ def refine_material_terrain_same_realization(
         & coarse_mask[:-1, 1:]
         & coarse_mask[1:, 1:]
     )
+    # 不确定性沿参与插值的粗节点作 OR 传播，不能被细场的确定值覆盖。
     coarse_uncertain = (
         np.zeros_like(coarse_mask)
         if coarse.geometry_uncertain_mask is None
@@ -621,7 +639,7 @@ def refine_material_terrain_same_realization(
 
 
 def save_terrain(path: str | Path, terrain: Terrain) -> Path:
-    """Atomically save a portable NPZ artifact containing height, mask and metadata."""
+    """原子保存包含高度、mask、可选几何界和 metadata 的便携 NPZ。"""
 
     target = Path(path).resolve()
     target.parent.mkdir(parents=True, exist_ok=True)
@@ -631,6 +649,7 @@ def save_terrain(path: str | Path, terrain: Terrain) -> Path:
     os.close(descriptor)
     temporary = Path(temporary_name)
     try:
+        # 保存时重建规范 measurement_semantics，使可选数组的存在性与 metadata 一致。
         metadata = dict(terrain.metadata)
         metadata["measurement_semantics"] = {
             "status": (
@@ -676,7 +695,7 @@ def save_terrain(path: str | Path, terrain: Terrain) -> Path:
 
 
 def load_terrain(path: str | Path) -> Terrain:
-    """Load and validate an NPZ artifact created by :func:`save_terrain`."""
+    """加载 :func:`save_terrain` 生成的 NPZ，并通过 ``Terrain`` 再次校验。"""
 
     with np.load(Path(path), allow_pickle=False) as archive:
         height = archive["height"]
@@ -711,6 +730,7 @@ def load_terrain(path: str | Path) -> Terrain:
         "determinate_mask",
         "bounds",
     }
+    # 旧/不完整 artifact 不静默猜测测量语义，缺字段时明确拒绝。
     if not isinstance(measurement, Mapping) or not required_measurement_fields <= (
         measurement.keys()
     ):
@@ -744,7 +764,7 @@ def register_terrain(
     purpose: str = "user",
     overwrite: bool = False,
 ) -> tuple[TerrainRecipe, RegionSpec, dict[str, Any]]:
-    """Register generated output in the existing mmap terrain-library contract."""
+    """把内存 Terrain 注册到现有 mmap 地形库契约。"""
 
     from .library import TerrainLibrary
 

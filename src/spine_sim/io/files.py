@@ -1,4 +1,8 @@
-"""Atomic file writes, file hashes, and UTC timestamps."""
+"""结果文件的原子写入、哈希和 UTC 时间工具。
+
+写入流程统一为“同目录临时文件 → flush/fsync → 原子替换”，因此不会把半写文件
+误认作完整结果；临时文件在异常路径中也会清理。
+"""
 
 from __future__ import annotations
 
@@ -16,10 +20,14 @@ from spine_sim.core.identity import canonicalize
 
 
 def utc_now() -> str:
+    """返回带 UTC 时区的 ISO-8601 时间戳。"""
+
     return datetime.now(UTC).isoformat()
 
 
 def atomic_write_bytes(path: str | Path, data: bytes) -> None:
+    """在目标目录内通过临时文件原子替换二进制内容。"""
+
     target = Path(path)
     target.parent.mkdir(parents=True, exist_ok=True)
     descriptor, temporary = tempfile.mkstemp(
@@ -27,6 +35,7 @@ def atomic_write_bytes(path: str | Path, data: bytes) -> None:
     )
     temporary_path = Path(temporary)
     try:
+        # fsync 保证替换前数据已经交给操作系统持久化，随后 replace 只暴露完整文件。
         with os.fdopen(descriptor, "wb") as handle:
             handle.write(data)
             handle.flush()
@@ -38,6 +47,8 @@ def atomic_write_bytes(path: str | Path, data: bytes) -> None:
 
 
 def atomic_write_json(path: str | Path, value: Any) -> None:
+    """规范化对象并以稳定、可读的 UTF-8 JSON 原子写入。"""
+
     data = json.dumps(
         canonicalize(value),
         ensure_ascii=False,
@@ -51,6 +62,8 @@ def atomic_write_json(path: str | Path, value: Any) -> None:
 def atomic_write_npz(
     path: str | Path, arrays: Mapping[str, np.ndarray]
 ) -> None:
+    """把一组 NumPy 数组压缩为 NPZ，并以原子替换方式发布。"""
+
     target = Path(path)
     target.parent.mkdir(parents=True, exist_ok=True)
     descriptor, temporary = tempfile.mkstemp(
@@ -70,6 +83,8 @@ def atomic_write_npz(
 
 
 def sha256_file(path: str | Path) -> str:
+    """分块计算文件 SHA-256，避免把大型地形文件一次读入内存。"""
+
     digest = hashlib.sha256()
     with Path(path).open("rb") as handle:
         for chunk in iter(lambda: handle.read(8 * 1024 * 1024), b""):

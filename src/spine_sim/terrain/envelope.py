@@ -1,4 +1,8 @@
-"""CPU-authoritative finite-sphere envelope, tracks and geometry gates."""
+"""CPU 权威的有限球尖包络、track 与针体几何门控。
+
+离散包络在每个目标节点保留 top-2 原始支撑；near-tie 不强选唯一分支。有效性、
+测量不确定性和高度上下界会沿整个球形 footprint 传播到下游候选。
+"""
 
 from __future__ import annotations
 
@@ -22,6 +26,8 @@ from spine_sim.core.identity import stable_hash
 
 @dataclass(frozen=True)
 class SphereEnvelope2D:
+    """完整二维球心包络及支撑、法向、有效性和不确定性字段。"""
+
     envelope_height_m: NDArray[np.float64]
     envelope_slope_x: NDArray[np.float64]
     envelope_slope_y: NDArray[np.float64] | None
@@ -44,6 +50,8 @@ class SphereEnvelope2D:
 
 @dataclass(frozen=True)
 class RodClearanceResult:
+    """杆体碰撞三态结论、最小间隙、采样量和模型警告。"""
+
     collision: bool | None
     minimum_clearance_m: float | None
     sample_count: int
@@ -53,6 +61,8 @@ class RodClearanceResult:
 def _offsets(
     radius_m: float, dx_m: float, dy_m: float
 ) -> Iterable[tuple[int, int, float]]:
+    """枚举球形 footprint 内的离散偏移及对应球冠高度。"""
+
     if radius_m <= 0 or not math.isfinite(radius_m):
         raise TerrainConfigurationError("radius_m must be finite and positive")
     max_x = int(math.floor(radius_m / dx_m + 1e-12))
@@ -69,6 +79,8 @@ def _offsets(
 
 
 def _slices(offset: int, length: int) -> tuple[slice, slice]:
+    """为一个整数偏移生成不越界的目标/来源配对切片。"""
+
     if offset >= 0:
         return slice(0, length - offset), slice(offset, length)
     return slice(-offset, length), slice(0, length + offset)
@@ -86,8 +98,11 @@ def _update_candidates(
     source_x_indices: NDArray[np.int32],
     source_y_indices: NDArray[np.int32],
 ) -> None:
+    """就地维护每个目标节点的 top-1/top-2 包络值及支撑索引。"""
+
     greater = candidate > best
     second_greater = (~greater) & (candidate > second)
+    # 新最大值出现时，旧 top-1 必须整体降为 top-2，连同其支撑 identity 一起移动。
     previous_best = best.copy()
     previous_support_x = support_x_index.copy()
     previous_support_y = support_y_index.copy()
@@ -120,6 +135,8 @@ def _update_candidates(
 
 
 def array_sha256(array: NDArray[np.generic]) -> str:
+    """对 dtype、shape 和连续原始字节计算数组内容摘要。"""
+
     contiguous = np.ascontiguousarray(array)
     digest = hashlib.sha256()
     digest.update(str(contiguous.dtype).encode("ascii"))
@@ -143,6 +160,8 @@ def _source_geometry_inputs(
     NDArray[np.floating] | None,
     NDArray[np.floating] | None,
 ]:
+    """统一高度、有效/不确定 mask 和可选几何上下界的 shape/dtype 约束。"""
+
     height = np.asarray(height_m)
     if height.ndim != 2 or height.shape != region.shape:
         raise TerrainConfigurationError("height shape must match RegionSpec")
@@ -200,6 +219,8 @@ def _normalized_height_normals(
     valid: NDArray[np.bool_],
     region: RegionSpec,
 ) -> NDArray[np.float64]:
+    """由原始高度梯度计算 surface normal，仅保留五点 stencil 全有效的位置。"""
+
     edge_order = 2 if min(height.shape) >= 3 else 1
     slope_y, slope_x = np.gradient(
         np.asarray(height, dtype=np.float64),
@@ -228,6 +249,8 @@ def _normal_from_slopes(
     valid: NDArray[np.bool_],
     near_tie: NDArray[np.bool_],
 ) -> NDArray[np.float64]:
+    """由包络坡度计算法向；无效或 near-tie 节点不输出唯一法向。"""
+
     normals = np.stack((-slope_x, -slope_y, np.ones_like(slope_x)), axis=-1)
     norm = np.linalg.norm(normals, axis=-1, keepdims=True)
     np.divide(normals, norm, out=normals, where=norm > 0)
@@ -239,6 +262,8 @@ def _feature_switch(
     feature_indices_yx: NDArray[np.int64],
     near_tie: NDArray[np.bool_],
 ) -> NDArray[np.bool_]:
+    """标记 top-1 支撑 identity 在相邻节点切换的两侧。"""
+
     primary = feature_indices_yx[..., 0, :]
     switch = near_tie.copy()
     if primary.ndim == 2:
@@ -286,11 +311,14 @@ def _support_geometry(
     NDArray[np.float64],
     NDArray[np.float64],
 ]:
+    """把 top-2 支撑索引展开为物理支撑点、法向和支撑值间隔。"""
+
     shape = best.shape
     support_points = np.full(shape + (2, 3), np.nan, dtype=np.float64)
     feature_indices = np.full(shape + (2, 2), -1, dtype=np.int64)
     surface_normals = np.full(shape + (2, 3), np.nan, dtype=np.float64)
     contact_normals = np.full(shape + (2, 3), np.nan, dtype=np.float64)
+    # rank 0/1 始终对应 top-1/top-2，缺失支撑用 NaN/-1 保留固定数组 shape。
     for rank, (x_index, y_index) in enumerate(
         (
             (support_x_index, support_y_index),
@@ -357,7 +385,7 @@ def compute_sphere_envelope_2d(
     height_lower_bound_m: ArrayLike | None = None,
     height_upper_bound_m: ArrayLike | None = None,
 ) -> SphereEnvelope2D:
-    """Compute a full 2-D finite-sphere envelope for fixtures and debugging."""
+    """为夹具和调试计算完整二维有限球尖包络。"""
 
     height, source_valid, source_uncertain, lower, upper = _source_geometry_inputs(
         height_m,
@@ -370,6 +398,7 @@ def compute_sphere_envelope_2d(
     if near_tie_tolerance_m < 0:
         raise TerrainConfigurationError("near_tie_tolerance_m must be non-negative")
     ny, nx = height.shape
+    # 阶段 1：遍历球形 footprint 偏移，逐目标节点维护 max/second-max 支撑分支。
     best = np.full((ny, nx), -np.inf, dtype=np.float64)
     second = np.full((ny, nx), -np.inf, dtype=np.float64)
     support_x_index = np.full((ny, nx), -1, dtype=np.int32)
@@ -402,6 +431,7 @@ def compute_sphere_envelope_2d(
         support_y_view = support_y_index[target_y, target_x]
         second_support_x_view = second_support_x_index[target_y, target_x]
         second_support_y_view = second_support_y_index[target_y, target_x]
+        # footprint 只有在球底覆盖的每个离散来源点都有效时才是确定有效。
         footprint_valid[target_y, target_x] &= source_is_valid
         footprint_uncertain[target_y, target_x] |= source_uncertain[
             source_y, source_x
@@ -445,6 +475,7 @@ def compute_sphere_envelope_2d(
             source_y_indices=source_y_grid,
         )
 
+    # 阶段 2：包络坡度需要中心及四邻域 footprint 都有效，边缘 halo 因信息不足失效。
     best[~np.isfinite(best)] = np.nan
     edge_order = 2 if min(best.shape) >= 3 else 1
     slope_y, slope_x = np.gradient(
@@ -473,6 +504,7 @@ def compute_sphere_envelope_2d(
     valid = derivative_valid & np.isfinite(best)
     slope_x = np.where(valid, slope_x, np.nan)
     slope_y_output = np.where(valid, slope_y, np.nan) if compute_slope_y else None
+    # top-1 与 top-2 的包络值差在容差内即 near-tie，保留两组支撑而不平均。
     near_tie = (
         np.isfinite(second)
         & ((best - second) <= near_tie_tolerance_m)
@@ -503,6 +535,7 @@ def compute_sphere_envelope_2d(
         y_global[:, None],
     )
     envelope_normals = _normal_from_slopes(slope_x, slope_y, valid, near_tie)
+    # 阶段 3：不确定性由来源 mask/界传播，并扩展到计算坡度所用的邻域 stencil。
     point_uncertain = footprint_uncertain | ~footprint_valid
     if best_lower is not None and best_upper is not None:
         best_lower[~np.isfinite(best_lower)] = np.nan
@@ -544,6 +577,8 @@ def compute_sphere_envelope_2d(
 
 @dataclass(frozen=True)
 class _TrackSlice:
+    """固定 y 行的一维 top-2 包络中间结果。"""
+
     best: NDArray[np.float64]
     second: NDArray[np.float64]
     support_x_index: NDArray[np.int32]
@@ -557,6 +592,8 @@ class _TrackSlice:
 
 
 def _track_slice_uncertainty(value: _TrackSlice) -> NDArray[np.bool_]:
+    """汇总一条中间 track slice 的 footprint 和几何界不确定性。"""
+
     uncertain = value.footprint_uncertain | ~value.footprint_valid
     if value.lower is not None and value.upper is not None:
         uncertain |= (
@@ -578,6 +615,8 @@ def _compute_track_slice(
     radius_m: float,
     y_index: int,
 ) -> _TrackSlice:
+    """直接计算一个 y 索引的一维球尖包络，避免物化完整二维数组。"""
+
     ny, nx = height.shape
     best = np.full(nx, -np.inf, dtype=np.float64)
     second = np.full(nx, -np.inf, dtype=np.float64)
@@ -591,6 +630,7 @@ def _compute_track_slice(
     best_upper = None if upper is None else np.full(nx, -np.inf)
     max_offset_x = 0
     max_offset_y = 0
+    # 越界的相邻行以全无效 slice 返回，便于统一计算中心差分而不另设分支。
     if not 0 <= y_index < ny:
         footprint_valid.fill(False)
         return _TrackSlice(
@@ -605,6 +645,7 @@ def _compute_track_slice(
             best_lower,
             best_upper,
         )
+    # 仍遍历完整二维球 footprint，但只更新目标中心行上的 nx 个节点。
     for offset_y, offset_x, cap in _offsets(
         radius_m, region.resolution_x_m, region.resolution_y_m
     ):
@@ -694,7 +735,7 @@ def compute_track_geometry(
     source_valid_mask_sha256: str | None = None,
     measurement_semantics_hash: str | None = None,
 ) -> TrackGeometry:
-    """Compute one fixed-y track without materializing a 2-D envelope."""
+    """不物化完整二维包络，直接计算一条固定 y 的 TrackGeometry。"""
 
     height, source_valid, source_uncertain, lower, upper = _source_geometry_inputs(
         height_m,
@@ -718,6 +759,7 @@ def compute_track_geometry(
     if near_tie_tolerance_m < 0:
         raise TerrainConfigurationError("near_tie_tolerance_m must be non-negative")
 
+    # 阶段 1：计算中心行及上下相邻行，后两者只用于 y 向包络坡度和不确定性。
     center = _compute_track_slice(
         height,
         source_valid,
@@ -754,6 +796,7 @@ def compute_track_geometry(
         + np.arange(nx, dtype=np.float64) * region.resolution_x_m
     )
     edge_order = 2 if nx >= 3 else 1
+    # x 坡度来自中心行，y 坡度用上下包络行中心差分；两者共享严格 stencil mask。
     slope_x = np.gradient(
         center.best, region.resolution_x_m, edge_order=edge_order
     )
@@ -770,6 +813,7 @@ def compute_track_geometry(
     valid = derivative_valid & np.isfinite(center.best)
     slope_x = np.where(valid, slope_x, np.nan)
     slope_y = np.where(valid, slope_y, np.nan)
+    # 阶段 2：整理 top-2 支撑、三类法向、feature switch 和不确定性。
     near_tie = (
         np.isfinite(center.second)
         & ((center.best - center.second) <= near_tie_tolerance_m)
@@ -809,6 +853,7 @@ def compute_track_geometry(
             | below_uncertain[1:-1]
             | above_uncertain[1:-1]
         )
+    # 阶段 3：track identity 绑定实际高度、valid mask 和完整测量语义。
     data_digest = source_data_sha256 or array_sha256(
         np.asarray(height)
     )
@@ -889,7 +934,7 @@ def forward_cap_gate(
     *,
     tolerance_m: float = 0.0,
 ) -> NDArray[np.bool_] | np.bool_:
-    """Apply ``(q-c) dot a >= 0`` to scalar or batched support coordinates."""
+    """对单个或批量支撑应用前向球冠条件 ``(q-c)·a >= 0``。"""
 
     support = np.asarray(support_xyz_m, dtype=np.float64)
     center = np.asarray(sphere_center_xyz_m, dtype=np.float64)
@@ -913,6 +958,8 @@ def _bilinear_height(
     x_m: float,
     y_m: float,
 ) -> float:
+    """在区域内双线性采样地形高度，越界时明确抛出模型域错误。"""
+
     x_float = (x_m - region.origin_x_m) / region.resolution_x_m
     y_float = (y_m - region.origin_y_m) / region.resolution_y_m
     nx = height.shape[1]
@@ -942,7 +989,7 @@ def check_rod_clearance(
     rod_radius_m: float | None,
     sample_count: int = 32,
 ) -> RodClearanceResult:
-    """Low-cost conservative centreline/cylinder clearance diagnostic."""
+    """低成本的保守中心线/圆柱杆 clearance 诊断。"""
 
     if exposed_rod_length_m is None or rod_radius_m is None:
         return RodClearanceResult(
@@ -966,6 +1013,7 @@ def check_rod_clearance(
     if not np.isfinite(axis_norm) or axis_norm <= 0:
         raise TerrainConfigurationError("tip_axis must be finite and non-zero")
     axis = axis / axis_norm
+    # 沿向后刺轴采样中心线，并用“中心高度-杆半径”保守代表圆柱下表面。
     distances = np.linspace(0.0, exposed_rod_length_m, sample_count)
     points = center[None, :] - distances[:, None] * axis[None, :]
     clearances = np.empty(sample_count, dtype=np.float64)
@@ -1000,7 +1048,7 @@ def check_segmented_tip_rod_clearance(
     axial_sample_count: int = 32,
     perimeter_sample_count: int = 16,
 ) -> RodClearanceResult:
-    """Sample the actual rear sphere-cap, cone and cylindrical rod surface."""
+    """离散采样实际后球冠、锥段和圆柱杆表面。"""
 
     dimensions = (
         spherical_cap_axial_length_m,
@@ -1052,6 +1100,7 @@ def check_segmented_tip_rod_clearance(
     if not math.isfinite(axis_norm) or axis_norm <= 0.0:
         raise TerrainConfigurationError("tip_axis must be finite and non-zero")
     axis /= axis_norm
+    # 构造与刺轴正交的局部 u/v 基，用于环向采样轴对称针体。
     reference = np.array([1.0, 0.0, 0.0])
     if abs(float(np.dot(reference, axis))) > 0.9:
         reference = np.array([0.0, 1.0, 0.0])
@@ -1064,6 +1113,7 @@ def check_segmented_tip_rod_clearance(
     cap_join_radius = math.sqrt(
         max(0.0, tip_radius_m * tip_radius_m - cap_length * cap_length)
     )
+    # 分段半径：后球冠圆截面 → 线性锥段 → 恒定圆柱杆。
     radii = np.empty_like(axial)
     cap_mask = axial <= cap_length
     cone_mask = (axial > cap_length) & (axial <= cap_length + cone_length)
@@ -1081,6 +1131,7 @@ def check_segmented_tip_rod_clearance(
         np.cos(angles)[:, None] * basis_u[None, :]
         + np.sin(angles)[:, None] * basis_v[None, :]
     )
+    # 同时检查轴线、半径中点和外周，避免只看外周漏掉跨越非凸地形的内部穿透。
     radial_fractions = (0.0, 0.5, 1.0)
     minimum = math.inf
     evaluated = 0
@@ -1113,6 +1164,7 @@ def check_segmented_tip_rod_clearance(
                 x0 = min(int(math.floor(x_float)), height.shape[1] - 2)
                 y0 = min(int(math.floor(y_float)), height.shape[0] - 2)
                 if not np.all(valid_mask[y0 : y0 + 2, x0 : x0 + 2]):
+                    # 任一双线性 stencil 点未知就返回三态 unknown，绝不把未知区域当作净空。
                     return RodClearanceResult(
                         collision=None,
                         minimum_clearance_m=None,

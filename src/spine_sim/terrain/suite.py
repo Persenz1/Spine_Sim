@@ -1,4 +1,4 @@
-"""GPU terrain-suite generation and CPU/GPU overlap validation."""
+"""GPU 地形套件生成，以及 CPU/GPU 重叠区域一致性验证。"""
 
 from __future__ import annotations
 
@@ -24,6 +24,8 @@ from .random_field import generate_defined_geometry
 
 
 def _cuda_record() -> dict[str, Any]:
+    """记录实际 CUDA/CuPy/设备版本与显存能力。"""
+
     capabilities = discover_backend(BackendConfig(preference="cuda"))
     try:
         import cupy as cp  # type: ignore
@@ -57,6 +59,8 @@ def _overlap_check(
     size_x_m: float,
     size_y_m: float,
 ) -> dict[str, Any]:
+    """在小型同域区域比较 CPU/GPU defined geometry 的误差。"""
+
     region = RegionSpec(
         terrain_recipe_id=recipe.terrain_recipe_id,
         origin_x_m=0.0,
@@ -99,6 +103,8 @@ def _region_statistics(
     recipe: TerrainRecipe,
     region: RegionSpec,
 ) -> dict[str, Any]:
+    """分块扫描只读 memmap，计算完整 region 的基础统计量。"""
+
     height = library.open_region(
         recipe.terrain_recipe_id,
         region.region_id,
@@ -110,6 +116,7 @@ def _region_statistics(
         total_squared = 0.0
         minimum = float("inf")
         maximum = float("-inf")
+        # 分块累加一、二阶矩，避免把完整 campaign region 转成 float64 副本。
         for row_start in range(0, height.shape[0], 64):
             block = np.asarray(
                 height[row_start : row_start + 64], dtype=np.float64
@@ -142,7 +149,7 @@ def generate_terrain_suite(
     tile_rows: int = 64,
     overwrite: bool = False,
 ) -> dict[str, Any]:
-    """Generate a versioned set of full campaign regions on CUDA."""
+    """在 CUDA 上生成一组版本化的完整 campaign region。"""
 
     allowed = {
         "schema_version",
@@ -191,6 +198,7 @@ def generate_terrain_suite(
     results: list[dict[str, Any]] = []
     suite_started = time.perf_counter()
 
+    # 每个条件先通过小域 CPU/GPU 对照，再生成全域、复核统计并缓存两种球尖 track。
     for condition in conditions:
         allowed_condition = {"name", "description", "recipe_overrides"}
         condition_extra = set(condition) - allowed_condition
@@ -297,4 +305,6 @@ def generate_terrain_suite(
 
 
 def load_suite(path: str | Path) -> dict[str, Any]:
+    """读取 suite JSON 配置或已生成报告。"""
+
     return json.loads(Path(path).read_text(encoding="utf-8"))
