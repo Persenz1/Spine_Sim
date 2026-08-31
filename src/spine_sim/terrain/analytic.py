@@ -1,4 +1,4 @@
-"""Analytic terrain fixtures that can be queried on any finite grid."""
+"""可在任意有限全局网格上求值的解析地形夹具。"""
 
 from __future__ import annotations
 
@@ -11,6 +11,8 @@ from .errors import TerrainConfigurationError
 
 
 def _axis(value: ArrayLike, name: str) -> NDArray[np.float64]:
+    """校验非空有限的一维坐标轴。"""
+
     axis = np.asarray(value, dtype=np.float64)
     if axis.ndim != 1 or axis.size == 0 or not np.all(np.isfinite(axis)):
         raise TerrainConfigurationError(f"{name} must be a non-empty finite 1-D array")
@@ -18,6 +20,8 @@ def _axis(value: ArrayLike, name: str) -> NDArray[np.float64]:
 
 
 def _number(parameters: Mapping[str, Any], name: str, default: float) -> float:
+    """读取有限数值参数或默认值。"""
+
     try:
         value = float(parameters.get(name, default))
     except (TypeError, ValueError) as exc:
@@ -28,6 +32,8 @@ def _number(parameters: Mapping[str, Any], name: str, default: float) -> float:
 
 
 def _positive(parameters: Mapping[str, Any], name: str, default: float) -> float:
+    """读取有限正参数或默认值。"""
+
     value = _number(parameters, name, default)
     if value <= 0:
         raise TerrainConfigurationError(f"{name} must be positive")
@@ -44,6 +50,8 @@ def _bump(
     sigma_x_m: float,
     sigma_y_m: float,
 ) -> NDArray[np.float64]:
+    """在张量积 x/y 网格上计算一个各向异性二维高斯凸包。"""
+
     exponent = (
         ((x[None, :] - center_x_m) / sigma_x_m) ** 2
         + ((y[:, None] - center_y_m) / sigma_y_m) ** 2
@@ -57,13 +65,14 @@ def evaluate_analytic(
     y_global_m: ArrayLike,
     parameters: Mapping[str, Any] | None = None,
 ) -> NDArray[np.float64]:
-    """Evaluate a named analytic fixture on arbitrary global x/y node arrays."""
+    """在任意全局 x/y 节点数组上计算命名解析夹具。"""
 
     x = _axis(x_global_m, "x_global_m")
     y = _axis(y_global_m, "y_global_m")
     p = parameters or {}
     base = _number(p, "offset_m", 0.0)
 
+    # 每种 fixture 都直接使用全局坐标，不依赖请求窗口或切片顺序。
     if kind == "plane":
         return np.full((y.size, x.size), base, dtype=np.float64)
 

@@ -1,4 +1,4 @@
-"""Versioned M1 data models and campaign-region construction."""
+"""M1 地形模块的版本化数据模型与 campaign 最大区域推导。"""
 
 from __future__ import annotations
 
@@ -9,11 +9,7 @@ from typing import Any, Mapping
 import numpy as np
 from numpy.typing import NDArray
 
-from spine_sim.core.identity import (
-    stable_hash,
-    track_id as make_track_id,
-)
-from spine_sim.core.config import TerrainRecipeRef, TerrainRegionSpec
+from spine_sim.core.identity import identity, stable_hash
 
 from .errors import TerrainConfigurationError
 
@@ -21,19 +17,24 @@ from .errors import TerrainConfigurationError
 M1_MODULE_VERSION = "m1.0.0"
 DEFINED_GEOMETRY_VERSION = "defined-geometry-v1-canonical5um-stride2-nodal"
 MATERIAL_TERRAIN_VERSION = "material-terrain-v2"
-ENVELOPE_ALGORITHM_VERSION = "finite-sphere-envelope-v1"
+TRACK_SCHEMA_VERSION = "2"
+ENVELOPE_ALGORITHM_VERSION = (
+    "finite-sphere-envelope-v3-footprint-support2-uncertainty-stencil"
+)
 CANONICAL_SPACING_M = 5e-6
 PRODUCTION_SPACING_M = 10e-6
 _ALIGNMENT_ATOL = 1e-9
 
 
 def _identity_float(value: float) -> float:
-    """Remove sub-femtometre binary arithmetic noise before exact hashing."""
+    """去除亚飞米级浮点运算噪声，避免等价几何产生不同哈希。"""
 
     return round(float(value), 15)
 
 
 def _normalize_float_fields(value: Mapping[str, Any]) -> dict[str, Any]:
+    """规范化映射顶层的浮点 identity 字段。"""
+
     return {
         key: _identity_float(item) if isinstance(item, float) else item
         for key, item in value.items()
@@ -41,12 +42,16 @@ def _normalize_float_fields(value: Mapping[str, Any]) -> dict[str, Any]:
 
 
 def _require_finite(name: str, value: float) -> float:
+    """校验有限地形参数。"""
+
     if not math.isfinite(value):
         raise TerrainConfigurationError(f"{name} must be finite")
     return value
 
 
 def _require_positive(name: str, value: float) -> float:
+    """校验有限正地形参数。"""
+
     _require_finite(name, value)
     if value <= 0:
         raise TerrainConfigurationError(f"{name} must be positive")
@@ -54,6 +59,8 @@ def _require_positive(name: str, value: float) -> float:
 
 
 def _grid_intervals(size_m: float, spacing_m: float, *, name: str) -> int:
+    """把物理尺寸转换为整数网格区间，并拒绝未对齐范围。"""
+
     intervals_float = size_m / spacing_m
     intervals = int(round(intervals_float))
     if not math.isclose(intervals_float, intervals, rel_tol=0.0, abs_tol=_ALIGNMENT_ATOL):
@@ -66,6 +73,8 @@ def _grid_intervals(size_m: float, spacing_m: float, *, name: str) -> int:
 
 
 def _aligned_index(coordinate_m: float, origin_m: float, spacing_m: float, *, name: str) -> int:
+    """返回全局网格整数索引，并拒绝非节点坐标。"""
+
     index_float = (coordinate_m - origin_m) / spacing_m
     index = int(round(index_float))
     if not math.isclose(index_float, index, rel_tol=0.0, abs_tol=_ALIGNMENT_ATOL):
@@ -77,7 +86,11 @@ def _aligned_index(coordinate_m: float, origin_m: float, spacing_m: float, *, na
 
 @dataclass(frozen=True)
 class TerrainRecipe:
-    """A coordinate-addressable synthetic terrain realization."""
+    """一个内容可寻址的地形 realization 配方。
+
+    ``defined_geometry`` 由全局坐标直接寻址；``material_hybrid`` 则绑定已解析的材料、
+    subtype、生成模式和 profile hash。production 网格固定为 canonical 网格 stride-2。
+    """
 
     generator_name: str = "defined_geometry"
     generator_version: str = DEFINED_GEOMETRY_VERSION
@@ -101,6 +114,8 @@ class TerrainRecipe:
     profile_hash: str | None = None
 
     def __post_init__(self) -> None:
+        """校验生成器专属字段、网格关系、随机核和材料 identity。"""
+
         if self.generator_name not in {"defined_geometry", "material_hybrid"}:
             raise TerrainConfigurationError(
                 "generator_name must be 'defined_geometry' or 'material_hybrid'"
@@ -178,34 +193,39 @@ class TerrainRecipe:
             raise TerrainConfigurationError("unsupported coordinate convention")
 
     def normalized(self) -> dict[str, Any]:
+        """返回参与持久化/identity 的稳定字段映射。"""
+
         normalized = asdict(self)
-        # Preserve all pre-material recipe identities exactly.
+        # 旧 defined_geometry identity 中不存在材料字段，移除默认 None 以保持完全兼容。
         if self.generator_name == "defined_geometry":
             for name in ("material", "subtype", "generation_mode", "profile_hash"):
                 normalized.pop(name)
         return _normalize_float_fields(normalized)
 
-    def to_m0_ref(self) -> TerrainRecipeRef:
-        """Represent this full recipe through M0's frozen recipe-reference schema."""
+    @property
+    def terrain_recipe_id(self) -> str:
+        """由生成器语义、seed、参数和采样规则生成稳定 recipe ID。"""
 
         parameters = self.normalized()
         parameters.pop("generator_name")
         parameters.pop("generator_version")
         parameters.pop("seed")
         parameters["production_sampling"] = self.production_sampling
-        return TerrainRecipeRef(
-            recipe_name=self.generator_name,
-            recipe_version=self.generator_version,
-            seed=self.seed,
-            parameters=parameters,
+        return identity(
+            "terrain_recipe",
+            {
+                "recipe_name": self.generator_name,
+                "recipe_version": self.generator_version,
+                "seed": self.seed,
+                "parameters": parameters,
+            },
+            module_version=self.generator_version,
         )
 
     @property
-    def terrain_recipe_id(self) -> str:
-        return self.to_m0_ref().terrain_recipe_id
-
-    @property
     def recipe_hash(self) -> str:
+        """对含 M1 模块版本的完整配方求来源哈希。"""
+
         return stable_hash(
             {
                 "module_version": M1_MODULE_VERSION,
@@ -216,6 +236,8 @@ class TerrainRecipe:
 
     @property
     def kernel_definition(self) -> dict[str, Any]:
+        """输出可审计的随机核或材料 profile 定义。"""
+
         if self.generator_name == "material_hybrid":
             return {
                 "kind": "material_specific",
@@ -232,6 +254,8 @@ class TerrainRecipe:
 
     @property
     def production_sampling(self) -> str:
+        """描述 identity 网格到 production 输出网格的采样语义。"""
+
         if self.generator_name == "material_hybrid":
             return "material_output_grid_stride2_from_identity_grid_nodal"
         return "canonical_even_indices_stride2_nodal"
@@ -239,6 +263,8 @@ class TerrainRecipe:
     def canonical_indices(
         self, x_m: float, y_m: float
     ) -> tuple[int, int]:
+        """把全局 x/y 节点坐标转换为 canonical 整数索引。"""
+
         return (
             _aligned_index(
                 x_m, self.global_origin_x_m, self.canonical_dx_m, name="x_m"
@@ -250,6 +276,8 @@ class TerrainRecipe:
 
     @classmethod
     def from_mapping(cls, value: Mapping[str, Any]) -> "TerrainRecipe":
+        """从严格映射构造配方并拒绝未知字段。"""
+
         allowed = set(cls.__dataclass_fields__)
         extra = set(value) - allowed
         if extra:
@@ -261,7 +289,7 @@ class TerrainRecipe:
 
 @dataclass(frozen=True)
 class RegionSpec:
-    """Inclusive, node-centred rectangular terrain cache region."""
+    """包含两端节点、以节点为中心的矩形地形缓存区域。"""
 
     terrain_recipe_id: str
     origin_x_m: float
@@ -273,6 +301,8 @@ class RegionSpec:
     purpose: str = "campaign"
 
     def __post_init__(self) -> None:
+        """校验尺寸能整除网格、分辨率各向同性且用途合法。"""
+
         if not self.terrain_recipe_id:
             raise TerrainConfigurationError("terrain_recipe_id cannot be empty")
         _require_finite("origin_x_m", self.origin_x_m)
@@ -294,57 +324,62 @@ class RegionSpec:
             abs_tol=1e-15,
         ):
             raise TerrainConfigurationError(
-                "M0 TerrainRegionSpec supports one isotropic resolution"
+                "RegionSpec requires one isotropic resolution"
             )
 
     @property
     def shape(self) -> tuple[int, int]:
+        """返回高度数组 shape ``(ny, nx)``；两端节点使每轴区间数加一。"""
+
         return (
-            _grid_intervals(
-                self.size_y_m, self.resolution_y_m, name="size_y_m"
-            )
-            + 1,
-            _grid_intervals(
-                self.size_x_m, self.resolution_x_m, name="size_x_m"
-            )
-            + 1,
+            int(round(self.size_y_m / self.resolution_y_m)) + 1,
+            int(round(self.size_x_m / self.resolution_x_m)) + 1,
         )
 
     @property
     def x_max_m(self) -> float:
+        """区域包含的最大 x 节点坐标。"""
+
         return self.origin_x_m + self.size_x_m
 
     @property
     def y_max_m(self) -> float:
+        """区域包含的最大 y 节点坐标。"""
+
         return self.origin_y_m + self.size_y_m
 
     def normalized(self) -> dict[str, Any]:
+        """返回浮点已量化的稳定区域映射。"""
+
         return _normalize_float_fields(asdict(self))
-
-    def to_m0_spec(self) -> TerrainRegionSpec:
-        """Return the frozen M0 region record used to define the region ID."""
-
-        # Grid arithmetic can produce values such as -0.021980000000000003.
-        # Quantize well below the 5 um grid before passing values to M0's exact
-        # canonical hash so equivalent JSON and computed regions share one ID.
-        return TerrainRegionSpec(
-            terrain_recipe_id=self.terrain_recipe_id,
-            origin_x_m=_identity_float(self.origin_x_m),
-            origin_y_m=_identity_float(self.origin_y_m),
-            size_x_m=_identity_float(self.size_x_m),
-            size_y_m=_identity_float(self.size_y_m),
-            resolution_m=_identity_float(self.resolution_x_m),
-        )
 
     @property
     def region_id(self) -> str:
-        return self.to_m0_spec().region_id
+        """由 recipe、边界和分辨率生成稳定区域 ID。"""
+
+        # 网格运算可能产生 -0.021980000000000003；在远低于 5 µm 网格的精度量化，
+        # 使 JSON 输入和程序推导出的等价区域共享同一个 ID。
+        return identity(
+            "region",
+            {
+                "terrain_recipe_id": self.terrain_recipe_id,
+                "origin_x_m": _identity_float(self.origin_x_m),
+                "origin_y_m": _identity_float(self.origin_y_m),
+                "size_x_m": _identity_float(self.size_x_m),
+                "size_y_m": _identity_float(self.size_y_m),
+                "resolution_m": _identity_float(self.resolution_x_m),
+            },
+        )
 
     @property
     def expected_npy_payload_bytes(self) -> int:
+        """返回 float32 高度数组的未压缩 NPY 数据体字节数。"""
+
         return int(np.prod(self.shape, dtype=np.int64)) * np.dtype(np.float32).itemsize
 
     def validate_against(self, recipe: TerrainRecipe) -> None:
+        """验证区域绑定正确配方，并落在 canonical 或 production 对齐网格上。"""
+
         if self.terrain_recipe_id != recipe.terrain_recipe_id:
             raise TerrainConfigurationError("region references a different terrain recipe")
         start_x, start_y = recipe.canonical_indices(
@@ -397,6 +432,8 @@ class RegionSpec:
 
     @classmethod
     def from_mapping(cls, value: Mapping[str, Any]) -> "RegionSpec":
+        """从严格映射构造区域并拒绝未知字段。"""
+
         allowed = set(cls.__dataclass_fields__)
         extra = set(value) - allowed
         if extra:
@@ -408,7 +445,11 @@ class RegionSpec:
 
 @dataclass(frozen=True)
 class TrackGeometry:
-    """One-dimensional finite-tip geometry for downstream consumers."""
+    """供几何/接触层消费的一维有限球尖轨迹。
+
+    每个 x 节点保留包络高度、坡度、top-2 支撑、三类法向、有效/不确定掩膜，
+    并通过来源数组和测量语义哈希绑定到唯一高度场。
+    """
 
     terrain_recipe_id: str
     region_id: str
@@ -416,39 +457,126 @@ class TrackGeometry:
     radius_m: float
     y_global_m: float
     resolution_m: float
+    track_schema_version: str
     envelope_algorithm_version: str
+    near_tie_tolerance_m: float
+    source_data_sha256: str
+    source_valid_mask_sha256: str
+    measurement_semantics_hash: str
     x_global_m: NDArray[np.float64]
     envelope_height_m: NDArray[np.float64]
     envelope_slope_x: NDArray[np.float64]
+    envelope_slope_y: NDArray[np.float64]
     support_x_m: NDArray[np.float64]
     support_y_m: NDArray[np.float64]
+    support_points_m: NDArray[np.float64]
+    support_feature_indices_yx: NDArray[np.int64]
+    support_value_gap_m: NDArray[np.float64]
+    surface_normals: NDArray[np.float64]
+    envelope_normals: NDArray[np.float64]
+    contact_normals: NDArray[np.float64]
+    footprint_valid_mask: NDArray[np.bool_]
     valid_mask: NDArray[np.bool_]
     near_tie_flag: NDArray[np.bool_]
+    feature_switch_flag: NDArray[np.bool_]
+    geometry_uncertain_mask: NDArray[np.bool_]
+    envelope_height_lower_m: NDArray[np.float64] | None = None
+    envelope_height_upper_m: NDArray[np.float64] | None = None
     model_warning: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
+        """校验 schema、来源摘要及所有标量/向量数组 shape 与 dtype。"""
+
         if not self.terrain_recipe_id or not self.region_id or not self.track_id:
             raise TerrainConfigurationError("track IDs cannot be empty")
         _require_positive("radius_m", self.radius_m)
         _require_positive("resolution_m", self.resolution_m)
+        if self.track_schema_version != TRACK_SCHEMA_VERSION:
+            raise TerrainConfigurationError(
+                f"TrackGeometry requires track schema {TRACK_SCHEMA_VERSION!r}"
+            )
+        if self.envelope_algorithm_version != ENVELOPE_ALGORITHM_VERSION:
+            raise TerrainConfigurationError(
+                "TrackGeometry envelope algorithm version is unsupported"
+            )
+        if self.near_tie_tolerance_m < 0 or not math.isfinite(
+            self.near_tie_tolerance_m
+        ):
+            raise TerrainConfigurationError(
+                "near_tie_tolerance_m must be finite and non-negative"
+            )
+        for name, value in (
+            ("source_data_sha256", self.source_data_sha256),
+            ("source_valid_mask_sha256", self.source_valid_mask_sha256),
+            ("measurement_semantics_hash", self.measurement_semantics_hash),
+        ):
+            if len(value) != 64:
+                raise TerrainConfigurationError(f"{name} must be a SHA-256 digest")
         arrays = (
             self.x_global_m,
             self.envelope_height_m,
             self.envelope_slope_x,
+            self.envelope_slope_y,
             self.support_x_m,
             self.support_y_m,
+            self.support_value_gap_m,
+            self.footprint_valid_mask,
             self.valid_mask,
             self.near_tie_flag,
+            self.feature_switch_flag,
+            self.geometry_uncertain_mask,
         )
         shapes = {np.asarray(array).shape for array in arrays}
         if len(shapes) != 1 or len(next(iter(shapes))) != 1:
             raise TerrainConfigurationError(
                 "all TrackGeometry arrays must have the same one-dimensional shape"
             )
-        if np.asarray(self.valid_mask).dtype != np.bool_:
-            raise TerrainConfigurationError("valid_mask must be boolean")
-        if np.asarray(self.near_tie_flag).dtype != np.bool_:
-            raise TerrainConfigurationError("near_tie_flag must be boolean")
+        sample_shape = np.asarray(self.x_global_m).shape
+        expected_vector_shapes = {
+            "support_points_m": sample_shape + (2, 3),
+            "support_feature_indices_yx": sample_shape + (2, 2),
+            "surface_normals": sample_shape + (2, 3),
+            "envelope_normals": sample_shape + (3,),
+            "contact_normals": sample_shape + (2, 3),
+        }
+        for name, expected_shape in expected_vector_shapes.items():
+            if np.asarray(getattr(self, name)).shape != expected_shape:
+                raise TerrainConfigurationError(
+                    f"{name} must have shape {expected_shape}"
+                )
+        if not np.issubdtype(
+            np.asarray(self.support_feature_indices_yx).dtype, np.integer
+        ):
+            raise TerrainConfigurationError(
+                "support_feature_indices_yx must contain integers"
+            )
+        for name in (
+            "footprint_valid_mask",
+            "valid_mask",
+            "near_tie_flag",
+            "feature_switch_flag",
+            "geometry_uncertain_mask",
+        ):
+            if np.asarray(getattr(self, name)).dtype != np.bool_:
+                raise TerrainConfigurationError(f"{name} must be boolean")
+        if (self.envelope_height_lower_m is None) != (
+            self.envelope_height_upper_m is None
+        ):
+            raise TerrainConfigurationError(
+                "envelope lower and upper bounds must both be present or both be None"
+            )
+        if self.envelope_height_lower_m is not None:
+            lower = np.asarray(self.envelope_height_lower_m)
+            upper = np.asarray(self.envelope_height_upper_m)
+            if lower.shape != sample_shape or upper.shape != sample_shape:
+                raise TerrainConfigurationError(
+                    "envelope bounds must match the public track shape"
+                )
+            comparable = np.isfinite(lower) & np.isfinite(upper)
+            if np.any(lower[comparable] > upper[comparable]):
+                raise TerrainConfigurationError(
+                    "envelope lower bound cannot exceed upper bound"
+                )
 
     @staticmethod
     def make_id(
@@ -457,17 +585,32 @@ class TrackGeometry:
         region_id: str,
         radius_m: float,
         y_global_m: float,
+        track_schema_version: str,
         envelope_algorithm_version: str,
+        near_tie_tolerance_m: float,
         resolution_m: float,
+        source_data_sha256: str,
+        source_valid_mask_sha256: str,
+        measurement_semantics_hash: str,
     ) -> str:
-        return make_track_id(
+        """由地形来源、球半径、轨迹位置和算法语义生成 track ID。"""
+
+        return identity(
+            "track",
             {
                 "terrain_recipe_id": terrain_recipe_id,
                 "region_id": region_id,
                 "radius_m": _identity_float(radius_m),
                 "y_global_m": _identity_float(y_global_m),
+                "track_schema_version": track_schema_version,
                 "envelope_algorithm_version": envelope_algorithm_version,
+                "near_tie_tolerance_m": _identity_float(
+                    near_tie_tolerance_m
+                ),
                 "resolution_m": _identity_float(resolution_m),
+                "source_data_sha256": source_data_sha256,
+                "source_valid_mask_sha256": source_valid_mask_sha256,
+                "measurement_semantics_hash": measurement_semantics_hash,
             },
             module_version=M1_MODULE_VERSION,
         )
@@ -475,7 +618,7 @@ class TrackGeometry:
 
 @dataclass(frozen=True)
 class CampaignDesignSpace:
-    """Inputs needed to derive, rather than hard-code, the maximum terrain region."""
+    """用于推导而非硬编码 campaign 最大地形区域的设计包络。"""
 
     drag_length_m: float = 0.100
     max_array_nx: int = 6
@@ -496,6 +639,8 @@ class CampaignDesignSpace:
     resolution_m: float = PRODUCTION_SPACING_M
 
     def __post_init__(self) -> None:
+        """校验阵列尺寸、安装角度和所有几何余量。"""
+
         for name in (
             "drag_length_m",
             "max_spacing_x_m",
@@ -520,6 +665,8 @@ class CampaignDesignSpace:
 
 @dataclass(frozen=True)
 class CampaignRegionReport:
+    """最大区域、对齐前后边界、各项余量和推导假设。"""
+
     region: RegionSpec
     raw_bounds_m: Mapping[str, float]
     aligned_bounds_m: Mapping[str, float]
@@ -529,6 +676,8 @@ class CampaignRegionReport:
     assumptions: tuple[str, ...] = field(default_factory=tuple)
 
     def as_dict(self) -> dict[str, Any]:
+        """转换为包含 shape/预计大小的可序列化报告。"""
+
         return {
             "region": self.region.normalized(),
             "region_id": self.region.region_id,
@@ -544,10 +693,14 @@ class CampaignRegionReport:
 
 
 def _align_floor(value: float, origin: float, spacing: float) -> float:
+    """相对全局原点向外向下对齐到网格。"""
+
     return origin + math.floor((value - origin) / spacing + 1e-12) * spacing
 
 
 def _align_ceil(value: float, origin: float, spacing: float) -> float:
+    """相对全局原点向外向上对齐到网格。"""
+
     return origin + math.ceil((value - origin) / spacing - 1e-12) * spacing
 
 
@@ -555,9 +708,10 @@ def compute_campaign_region(
     recipe: TerrainRecipe,
     design: CampaignDesignSpace | None = None,
 ) -> CampaignRegionReport:
-    """Compute and outward-align the maximum campaign terrain bounds."""
+    """从设计包络计算并向外对齐 campaign 最大地形边界。"""
 
     design = design or CampaignDesignSpace()
+    # 阶段 1：计算固定长度和等高渐变长度两类安装方式的水平投影极值。
     fixed_projections = [
         design.fixed_exposed_length_m * math.cos(math.radians(angle))
         for angle in design.fixed_angles_deg
@@ -573,6 +727,7 @@ def compute_campaign_region(
     projection_min = min(projections)
     projection_max = max(projections)
 
+    # 阶段 2：以 campaign 原点为阵列中心，求最大安装点包围盒。
     span_x = (design.max_array_nx - 1) * design.max_spacing_x_m
     span_y = (design.max_array_ny - 1) * design.max_spacing_y_m
     install_x_min = -0.5 * span_x
@@ -590,6 +745,7 @@ def compute_campaign_region(
     filter_halo_y = (
         recipe.kernel_truncate_sigma * recipe.correlation_length_y_m
     )
+    # 阶段 3：逐项累加尖端、弹簧、梁、事件细化、杆体和随机滤波 halo 余量。
     x_margin_parts = {
         "tip_radius": design.max_tip_radius_m,
         "spring_horizontal_projection": max_horizontal_spring,
@@ -614,6 +770,7 @@ def compute_campaign_region(
     )
     raw_y_min = install_y_min - margin_y
     raw_y_max = install_y_max + margin_y
+    # 阶段 4：把连续物理边界向外对齐到请求分辨率，绝不向内截掉所需节点。
     x_min = _align_floor(
         raw_x_min, recipe.global_origin_x_m, design.resolution_m
     )

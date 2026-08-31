@@ -5,7 +5,31 @@ import csv
 import json
 from pathlib import Path
 
-from spine_sim.m3_fast.campaign import generate_full_scan_designs
+
+LEGACY_SELECTION_PATH = (
+    Path(__file__).resolve().parents[1]
+    / "provenance"
+    / "legacy_simulation"
+    / "terminal_input_selected_designs.json"
+)
+
+
+def load_archived_designs() -> dict[str, dict[str, object]]:
+    payload = json.loads(LEGACY_SELECTION_PATH.read_text(encoding="utf-8"))
+    designs = payload.get("selected_designs")
+    if not isinstance(designs, list):
+        raise RuntimeError(
+            f"archived terminal selection has no design list: {LEGACY_SELECTION_PATH}"
+        )
+
+    by_id: dict[str, dict[str, object]] = {}
+    for design in designs:
+        if not isinstance(design, dict) or not isinstance(design.get("design_id"), str):
+            raise RuntimeError(
+                f"archived terminal selection contains an invalid design: {design!r}"
+            )
+        by_id[design["design_id"]] = design
+    return by_id
 
 
 def write_json_atomic(path: Path, payload: dict[str, object]) -> None:
@@ -32,8 +56,7 @@ def main() -> None:
     if len(selected_ids) != 12 or len(set(selected_ids)) != 12:
         raise RuntimeError("terminal selection must contain exactly 12 unique IDs")
 
-    all_designs = generate_full_scan_designs()
-    by_id = {design.design_id: design for design in all_designs}
+    by_id = load_archived_designs()
     unknown = sorted(set(selected_ids) - set(by_id))
     if unknown:
         raise RuntimeError(f"unknown design IDs: {unknown}")
@@ -43,7 +66,7 @@ def main() -> None:
         "schema_version": "m3-full-selected-designs-v1",
         "stage": "reviewed_terminal_input",
         "selected_design_ids": selected_ids,
-        "selected_designs": [design.to_mapping() for design in selected],
+        "selected_designs": selected,
         "selection_count": len(selected),
         "selection_rule": (
             "mechanism-reviewed selection: five advantage candidates and "

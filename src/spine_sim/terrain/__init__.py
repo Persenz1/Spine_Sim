@@ -1,4 +1,4 @@
-"""M1 terrain recipes, local caches and finite-tip track geometry."""
+"""M1 地形配方、本地缓存及有限半径尖端的轨迹几何接口。"""
 
 from .analytic import evaluate_analytic
 from .api import (
@@ -14,20 +14,22 @@ from .envelope import (
     RodClearanceResult,
     SphereEnvelope2D,
     check_rod_clearance,
+    check_segmented_tip_rod_clearance,
     compute_sphere_envelope_2d,
     compute_track_geometry,
     forward_cap_gate,
 )
-from .heightmap import (
+from .measured import (
     FileHeightMapSource,
     register_heightmap_source,
     sample_file_heightmap,
 )
-from .formal import generate_formal_terrain_batch
 from .library import TerrainLibrary
 from .models import (
+    ENVELOPE_ALGORITHM_VERSION,
     M1_MODULE_VERSION,
     MATERIAL_TERRAIN_VERSION,
+    TRACK_SCHEMA_VERSION,
     CampaignDesignSpace,
     CampaignRegionReport,
     RegionSpec,
@@ -56,6 +58,8 @@ from .validation import (
 __all__ = [
     "M1_MODULE_VERSION",
     "MATERIAL_TERRAIN_VERSION",
+    "ENVELOPE_ALGORITHM_VERSION",
+    "TRACK_SCHEMA_VERSION",
     "CampaignDesignSpace",
     "CampaignRegionReport",
     "FileHeightMapSource",
@@ -70,6 +74,7 @@ __all__ = [
     "TerrainRecipe",
     "TrackGeometry",
     "check_rod_clearance",
+    "check_segmented_tip_rod_clearance",
     "compute_campaign_region",
     "compute_descriptors",
     "compute_sphere_envelope_2d",
@@ -80,7 +85,6 @@ __all__ = [
     "generate_defined_geometry",
     "generate_terrain",
     "refine_material_terrain_same_realization",
-    "generate_formal_terrain_batch",
     "generate_terrain_suite",
     "place_sphere_on_patch",
     "available_profiles",

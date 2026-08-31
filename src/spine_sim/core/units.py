@@ -1,8 +1,11 @@
-"""Explicit conversion of supported input quantities to SI."""
+"""输入单位归一化。
+
+仿真内部只使用 SI 单位。公开配置既可传入已经是 SI 的裸数值，也可传入
+``{"value": 数值, "unit": 单位}``；本模块在数据进入物理模型前统一完成换算和校验。
+"""
 
 from __future__ import annotations
 
-from dataclasses import dataclass
 from math import isfinite, pi
 from typing import Any
 
@@ -10,6 +13,7 @@ from .errors import ConfigurationError
 
 
 _UNITS: dict[str, tuple[str, float]] = {
+    # 每个条目保存“物理维度”和“换算到 SI 的倍率”，维度检查可防止把角度误作长度。
     "1": ("dimensionless", 1.0),
     "m": ("length", 1.0),
     "mm": ("length", 1e-3),
@@ -29,15 +33,8 @@ _UNITS: dict[str, tuple[str, float]] = {
 }
 
 
-@dataclass(frozen=True)
-class Quantity:
-    value_si: float
-    dimension: str
-    input_unit: str
-
-
 def to_si(value: Any, dimension: str, *, name: str = "value") -> float:
-    """Normalize a number already in SI or ``{"value": x, "unit": u}``."""
+    """把裸 SI 数值或显式 value/unit 映射归一化为有限浮点数。"""
     if isinstance(value, bool):
         raise ConfigurationError(f"{name} must be numeric, not bool")
     if isinstance(value, (int, float)):
@@ -73,6 +70,8 @@ def require_range(
     inclusive_min: bool = True,
     inclusive_max: bool = True,
 ) -> float:
+    """校验标量是否位于指定开闭区间，并原样返回通过校验的值。"""
+
     lower_bad = minimum is not None and (
         value < minimum if inclusive_min else value <= minimum
     )

@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "spine-sim"
-version = "0.2.0"
-description = "M0/M1 foundation and independent M3-fast array screening simulator"
+version = "0.3.0"
+description = "Canonical terrain, single-spine, and rigid-backplate array simulator"
 requires-python = ">=3.11"
 dependencies = ["numpy>=1.26"]
 
@@ -18,10 +18,10 @@ plot = ["matplotlib>=3.9,<4"]
 [project.scripts]
 spine-sim = "spine_sim.cli:main"
 spine-terrain = "spine_sim.terrain.cli:main"
-spine-m3-fast = "spine_sim.m3_fast.campaign:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
 
 [tool.setuptools.package-data]
 "spine_sim.terrain" = ["material_profiles/*.json"]
+"spine_sim.parameters" = ["registry.json"]

@@ -1,21 +1,23 @@
-"""Measured topography ingestion and conservative preprocessing.
+"""实测表面形貌导入与保守预处理。
 
-The public API in :mod:`spine_sim.terrain.api` uses this module for measured
-terrain.  Raw files are never modified.  Every loader returns SI units, a
-separate validity mask, and a provenance/preprocessing record.
+公共 terrain API 使用本模块处理实测地形；本模块也提供绝对网格高度图的轻量采样。
+原始文件从不改写，所有路径都会记录单位、文件哈希、预处理和测量语义。
 """
 
 from __future__ import annotations
 
-import hashlib
+import json
 import math
 import struct
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any, Iterable, Mapping
 
 import numpy as np
-from numpy.typing import NDArray
+from numpy.typing import ArrayLike, NDArray
+
+from spine_sim.core.identity import identity, stable_hash
+from spine_sim.io.files import atomic_write_json, sha256_file
 
 from .errors import GeometryOutOfDomainError, TerrainConfigurationError
 
@@ -29,28 +31,28 @@ _LENGTH_SCALES = {
     "nm": 1e-9,
 }
 
-
-def sha256_file(path: str | Path) -> str:
-    """Return a streaming SHA-256 digest without changing the source."""
-
-    digest = hashlib.sha256()
-    with Path(path).open("rb") as stream:
-        for block in iter(lambda: stream.read(8 * 1024 * 1024), b""):
-            digest.update(block)
-    return digest.hexdigest()
+_FILE_HEIGHT_UNITS = {"m", "mm", "um", "µm", "nm"}
 
 
 @dataclass(frozen=True)
 class MeasuredSurface:
-    """A standardized, finite 2.5-D measured surface in SI units."""
+    """已标准化为 SI 的有限 2.5D 实测表面及其 mask/几何不确定性。"""
 
     height_m: NDArray[np.float32]
     valid_mask: NDArray[np.bool_]
     dx_m: float
     dy_m: float
     metadata: Mapping[str, Any]
+    measurement_probe: Mapping[str, Any] | None = None
+    measurement_tolerance_m: float | None = None
+    determinate_mask: NDArray[np.bool_] | None = None
+    geometry_uncertain_mask: NDArray[np.bool_] | None = None
+    geometry_lower_bound_m: NDArray[np.float32] | None = None
+    geometry_upper_bound_m: NDArray[np.float32] | None = None
 
     def __post_init__(self) -> None:
+        """校验高度、mask、间距、探针容差和可选几何界。"""
+
         height = np.asarray(self.height_m)
         mask = np.asarray(self.valid_mask)
         if height.ndim != 2 or min(height.shape) < 2:
@@ -71,21 +73,65 @@ class MeasuredSurface:
             raise TerrainConfigurationError("dx_m must be positive and finite")
         if not math.isfinite(self.dy_m) or self.dy_m <= 0:
             raise TerrainConfigurationError("dy_m must be positive and finite")
+        if self.measurement_tolerance_m is not None and (
+            not math.isfinite(self.measurement_tolerance_m)
+            or self.measurement_tolerance_m < 0.0
+        ):
+            raise TerrainConfigurationError(
+                "measurement_tolerance_m must be finite and non-negative"
+            )
+        for name in ("determinate_mask", "geometry_uncertain_mask"):
+            value = getattr(self, name)
+            if value is not None:
+                array = np.asarray(value)
+                if array.shape != height.shape or array.dtype != np.bool_:
+                    raise TerrainConfigurationError(
+                        f"{name} must be boolean with the height shape"
+                    )
+        if (self.geometry_lower_bound_m is None) != (
+            self.geometry_upper_bound_m is None
+        ):
+            raise TerrainConfigurationError(
+                "measured geometry bounds must both be present or both be None"
+            )
+        if self.geometry_lower_bound_m is not None:
+            lower = np.asarray(self.geometry_lower_bound_m)
+            upper = np.asarray(self.geometry_upper_bound_m)
+            if (
+                lower.shape != height.shape
+                or upper.shape != height.shape
+                or lower.dtype != np.float32
+                or upper.dtype != np.float32
+                or not np.all(np.isfinite(lower))
+                or not np.all(np.isfinite(upper))
+                or np.any(lower[mask] > upper[mask])
+            ):
+                raise TerrainConfigurationError(
+                    "measured geometry bounds must be finite float32 arrays with lower<=upper"
+                )
 
     @property
     def shape(self) -> tuple[int, int]:
+        """返回高度数组的 ``(ny, nx)``。"""
+
         return self.height_m.shape
 
     @property
     def size_x_m(self) -> float:
+        """返回 x 方向节点跨度。"""
+
         return (self.height_m.shape[1] - 1) * self.dx_m
 
     @property
     def size_y_m(self) -> float:
+        """返回 y 方向节点跨度。"""
+
         return (self.height_m.shape[0] - 1) * self.dy_m
 
 
 def _unit_scale(unit: str, *, field_name: str) -> float:
+    """查找长度单位到 metre 的倍率。"""
+
     try:
         return _LENGTH_SCALES[unit]
     except KeyError as exc:
@@ -94,10 +140,232 @@ def _unit_scale(unit: str, *, field_name: str) -> float:
         ) from exc
 
 
+def _load_source_array(
+    path: Path, *, mmap_mode: str | None = "r"
+) -> NDArray[np.floating]:
+    """只读加载全有限的 NPY/CSV/TXT 规则二维高度数组。"""
+
+    if path.suffix.lower() == ".npy":
+        array = np.load(path, mmap_mode=mmap_mode, allow_pickle=False)
+    elif path.suffix.lower() in {".csv", ".txt"}:
+        array = np.loadtxt(
+            path,
+            delimiter="," if path.suffix.lower() == ".csv" else None,
+        )
+    else:
+        raise TerrainConfigurationError(
+            "file heightmap must be .npy, .csv or whitespace-delimited .txt"
+        )
+    if array.ndim != 2 or not np.issubdtype(array.dtype, np.number):
+        raise TerrainConfigurationError(
+            "file heightmap must contain a numeric 2-D array"
+        )
+    if not np.all(np.isfinite(array)):
+        raise TerrainConfigurationError("file heightmap contains non-finite values")
+    return array
+
+
+@dataclass(frozen=True)
+class FileHeightMapSource:
+    """不可变外部规则高度图的 identity、单位和绝对网格元数据。"""
+
+    source_path: str
+    source_sha256: str
+    source_format: str
+    source_height_unit: str
+    origin_x_m: float
+    origin_y_m: float
+    spacing_x_m: float
+    spacing_y_m: float
+    shape_yx: tuple[int, int]
+
+    def __post_init__(self) -> None:
+        """校验来源单位、网格间距、shape 和文件摘要。"""
+
+        if self.source_height_unit not in _FILE_HEIGHT_UNITS:
+            raise TerrainConfigurationError(
+                f"unsupported source height unit {self.source_height_unit!r}"
+            )
+        if self.spacing_x_m <= 0 or self.spacing_y_m <= 0:
+            raise TerrainConfigurationError("heightmap spacing must be positive")
+        if len(self.shape_yx) != 2 or min(self.shape_yx) < 2:
+            raise TerrainConfigurationError(
+                "heightmap must contain at least 2x2 nodes"
+            )
+        if len(self.source_sha256) != 64:
+            raise TerrainConfigurationError("invalid source SHA-256")
+
+    @property
+    def source_id(self) -> str:
+        """由文件摘要和绝对网格语义生成来源 ID。"""
+
+        normalized = asdict(self)
+        for key in ("origin_x_m", "origin_y_m", "spacing_x_m", "spacing_y_m"):
+            normalized[key] = round(float(normalized[key]), 15)
+        return identity("terrain_source", normalized, module_version="m1.0.0")
+
+    @property
+    def x_max_m(self) -> float:
+        """来源覆盖的最大 x 节点坐标。"""
+
+        return self.origin_x_m + (self.shape_yx[1] - 1) * self.spacing_x_m
+
+    @property
+    def y_max_m(self) -> float:
+        """来源覆盖的最大 y 节点坐标。"""
+
+        return self.origin_y_m + (self.shape_yx[0] - 1) * self.spacing_y_m
+
+    @classmethod
+    def from_file(
+        cls,
+        path: str | Path,
+        *,
+        source_height_unit: str,
+        origin_x_m: float,
+        origin_y_m: float,
+        spacing_x_m: float,
+        spacing_y_m: float,
+    ) -> "FileHeightMapSource":
+        """检查外部文件并捕获其绝对路径、SHA-256、格式和 shape。"""
+
+        source_path = Path(path).resolve()
+        array = _load_source_array(source_path)
+        return cls(
+            source_path=str(source_path),
+            source_sha256=sha256_file(source_path),
+            source_format=source_path.suffix.lower().lstrip("."),
+            source_height_unit=source_height_unit,
+            origin_x_m=float(origin_x_m),
+            origin_y_m=float(origin_y_m),
+            spacing_x_m=float(spacing_x_m),
+            spacing_y_m=float(spacing_y_m),
+            shape_yx=(int(array.shape[0]), int(array.shape[1])),
+        )
+
+
+def register_heightmap_source(
+    library_root: str | Path,
+    source: FileHeightMapSource,
+) -> Path:
+    """只登记来源记录，不复制或重新标记原始文件。"""
+
+    target = Path(library_root).resolve() / "sources" / f"{source.source_id}.json"
+    document = {
+        "schema_version": "1",
+        "source_id": source.source_id,
+        "source": asdict(source),
+        "source_role": "external_raw_input_not_preprocessed_copy",
+    }
+    if target.exists():
+        existing = json.loads(target.read_text(encoding="utf-8"))
+        if existing != document:
+            raise TerrainConfigurationError(
+                "source ID already exists with different metadata"
+            )
+    else:
+        atomic_write_json(target, document)
+    return target
+
+
+def sample_file_heightmap(
+    source: FileHeightMapSource,
+    x_global_m: ArrayLike,
+    y_global_m: ArrayLike,
+    *,
+    detrend_plane: bool = False,
+    preprocessing: Mapping[str, Any] | None = None,
+) -> tuple[NDArray[np.float64], dict[str, Any]]:
+    """双线性采样绝对来源网格，并返回完整预处理记录。"""
+
+    source_path = Path(source.source_path)
+    # 采样前复核文件内容，防止同一路径被替换后仍沿用旧 source identity。
+    if sha256_file(source_path) != source.source_sha256:
+        raise TerrainConfigurationError("heightmap source hash changed")
+    x = np.asarray(x_global_m, dtype=np.float64)
+    y = np.asarray(y_global_m, dtype=np.float64)
+    if x.ndim != 1 or y.ndim != 1 or x.size == 0 or y.size == 0:
+        raise TerrainConfigurationError("query x/y must be non-empty 1-D arrays")
+    if (
+        x.min() < source.origin_x_m
+        or x.max() > source.x_max_m
+        or y.min() < source.origin_y_m
+        or y.max() > source.y_max_m
+    ):
+        raise GeometryOutOfDomainError(
+            "geometry_out_of_domain: file heightmap query exceeds source domain"
+        )
+
+    raw = np.asarray(
+        _load_source_array(source_path, mmap_mode="r"), dtype=np.float64
+    )
+    values_m = raw * _LENGTH_SCALES[source.source_height_unit]
+    applied: dict[str, Any] = dict(preprocessing or {})
+    if detrend_plane:
+        # 该轻量入口使用索引空间最小二乘平面，系数连同语义写入记录。
+        yy, xx = np.indices(values_m.shape, dtype=np.float64)
+        design = np.column_stack(
+            (xx.ravel(), yy.ravel(), np.ones(values_m.size))
+        )
+        coefficients, *_ = np.linalg.lstsq(
+            design, values_m.ravel(), rcond=None
+        )
+        values_m = values_m - (
+            coefficients[0] * xx
+            + coefficients[1] * yy
+            + coefficients[2]
+        )
+        applied[
+            "detrend_plane_coefficients_index_space"
+        ] = coefficients.tolist()
+    applied["interpolation"] = "bilinear"
+    applied["query_crop_bounds_m"] = {
+        "x_min": float(x.min()),
+        "x_max": float(x.max()),
+        "y_min": float(y.min()),
+        "y_max": float(y.max()),
+    }
+
+    # 查询坐标已做域检查，下面仅计算四邻节点和双线性权重。
+    x_float = (x - source.origin_x_m) / source.spacing_x_m
+    y_float = (y - source.origin_y_m) / source.spacing_y_m
+    x0 = np.minimum(np.floor(x_float).astype(int), source.shape_yx[1] - 2)
+    y0 = np.minimum(np.floor(y_float).astype(int), source.shape_yx[0] - 2)
+    tx = x_float - x0
+    ty = y_float - y0
+    result = np.empty((y.size, x.size), dtype=np.float64)
+    for row, (source_y, weight_y) in enumerate(zip(y0, ty, strict=True)):
+        top = (
+            (1.0 - tx) * values_m[source_y, x0]
+            + tx * values_m[source_y, x0 + 1]
+        )
+        bottom = (
+            (1.0 - tx) * values_m[source_y + 1, x0]
+            + tx * values_m[source_y + 1, x0 + 1]
+        )
+        result[row, :] = (1.0 - weight_y) * top + weight_y * bottom
+    record = {
+        "source_id": source.source_id,
+        "source_sha256": source.source_sha256,
+        "source_height_unit": source.source_height_unit,
+        "source_grid": {
+            "origin_x_m": source.origin_x_m,
+            "origin_y_m": source.origin_y_m,
+            "spacing_x_m": source.spacing_x_m,
+            "spacing_y_m": source.spacing_y_m,
+            "shape_yx": list(source.shape_yx),
+        },
+        "preprocessing": applied,
+        "processed_data_hash": stable_hash(result),
+        "interpretation": "file_heightmap_no_random_recipe_statistics",
+    }
+    return result, record
+
+
 def _finite_placeholder(
     height: NDArray[np.float64], valid_mask: NDArray[np.bool_]
 ) -> NDArray[np.float32]:
-    """Replace invalid storage values while retaining their mask semantics."""
+    """用有效中位数替换无效存储值，同时由 mask 保留真实无效语义。"""
 
     valid_values = height[valid_mask]
     if valid_values.size == 0:
@@ -110,10 +378,11 @@ def _finite_placeholder(
 def _exclude_invalid_margin(
     valid_mask: NDArray[np.bool_], margin_samples: int
 ) -> NDArray[np.bool_]:
-    """Exclude a square safety margin around known invalid instrument pixels."""
+    """在已知仪器无效像素周围排除方形安全带。"""
 
     if margin_samples <= 0:
         return valid_mask
+    # 两次前缀和以 O(N) 计算方形窗口内是否存在无效点，无需大型卷积依赖。
     window = 2 * margin_samples + 1
     invalid = (~valid_mask).astype(np.int32)
     padded_x = np.pad(invalid, ((0, 0), (margin_samples, margin_samples)))
@@ -152,11 +421,12 @@ def _robust_plane(
     *,
     maximum_fit_points: int = 200_000,
 ) -> tuple[NDArray[np.float32], list[float]]:
-    """Remove a rigid plane with three deterministic MAD-rejection iterations."""
+    """用三轮确定性 MAD 异常值剔除拟合并移除刚体平面。"""
 
     rows, columns = np.nonzero(valid_mask)
     if rows.size < 3:
         raise TerrainConfigurationError("at least three valid points are needed to level")
+    # 大图按固定 stride 取样，限制最小二乘矩阵规模且保持可复现。
     stride = max(1, math.ceil(rows.size / maximum_fit_points))
     rows = rows[::stride]
     columns = columns[::stride]
@@ -197,6 +467,8 @@ def _robust_plane(
 
 
 def _parse_hirox(path: Path) -> tuple[NDArray[np.float64], float, float, dict[str, Any]]:
+    """解析 Hirox 五行 key/value 头和随后高度矩阵，并转换为 metre。"""
+
     try:
         with path.open("r", encoding="utf-8-sig", newline="") as stream:
             header_lines = [stream.readline().strip() for _ in range(5)]
@@ -245,6 +517,8 @@ def _parse_hirox(path: Path) -> tuple[NDArray[np.float64], float, float, dict[st
 
 
 def _read_ascii_ply_vertices(path: Path) -> NDArray[np.float64]:
+    """读取 ASCII PLY 的 x/y/z 顶点；二进制格式交给可选后端。"""
+
     with path.open("r", encoding="ascii", errors="strict") as stream:
         if stream.readline().strip() != "ply":
             raise TerrainConfigurationError("PLY file does not start with 'ply'")
@@ -288,7 +562,7 @@ def _read_ascii_ply_vertices(path: Path) -> NDArray[np.float64]:
 
 
 def _read_stl_vertices(path: Path) -> NDArray[np.float64]:
-    """Read ASCII or binary STL vertex coordinates."""
+    """读取 ASCII 或二进制 STL 顶点坐标。"""
 
     with path.open("rb") as stream:
         prefix = stream.read(84)
@@ -330,6 +604,8 @@ def _points_to_grid(
     spacing_y_m: float | None,
     maximum_missing_fraction: float,
 ) -> tuple[NDArray[np.float64], NDArray[np.bool_], float, float, dict[str, Any]]:
+    """把规则点表或不规则点云/mesh 栅格化为单值 2.5D 上包络。"""
+
     if points_m.ndim != 2 or points_m.shape[1] < 3:
         raise TerrainConfigurationError("point source must contain x, y, z columns")
     points_m = points_m[:, :3]
@@ -355,6 +631,7 @@ def _points_to_grid(
         height = np.full((unique_y.size, unique_x.size), np.nan)
         height[iy, ix] = points_m[:, 2]
     else:
+        # 不规则/重复 x-y 位置按请求 spacing 分箱，并保留每箱最高 z 作为 2.5D 表面。
         if spacing_x_m is None or spacing_y_m is None:
             raise TerrainConfigurationError(
                 "irregular XYZ/mesh input requires spacing_x_m and spacing_y_m"
@@ -388,7 +665,7 @@ def _points_to_grid(
 def _fill_sparse_invalid(
     height: NDArray[np.float64], valid: NDArray[np.bool_]
 ) -> NDArray[np.float64]:
-    """Fill only sparse gaps by deterministic row/column linear interpolation."""
+    """仅用确定性的先行后列线性插值填补稀疏小缺口。"""
 
     result = np.array(height, dtype=np.float64, copy=True)
     x = np.arange(result.shape[1])
@@ -428,11 +705,10 @@ def load_measured_surface(
     maximum_missing_fraction: float = 0.05,
     provenance: Mapping[str, Any] | None = None,
 ) -> MeasuredSurface:
-    """Load NPY/CSV/TXT/XYZ/PLY/STL or supported metrology data.
+    """加载 NPY/CSV/TXT/XYZ/PLY/STL 或支持的计量格式。
 
-    ``dataset_zero_is_invalid`` is deliberately opt-in.  It is used for the
-    public Hirox files because their zero-height wedges are treated as an
-    instrument-boundary assumption; generic zero height remains valid.
+    ``dataset_zero_is_invalid`` 刻意设计为 opt-in：公开 Hirox 数据中的零高度楔形区
+    可按仪器边界假设排除，但普通数据中的真实零高度仍应保持有效。
     """
 
     source = Path(path).resolve()
@@ -440,6 +716,7 @@ def load_measured_surface(
         raise FileNotFoundError(source)
     selected = format.lower()
     suffix = source.suffix.lower()
+    # 阶段 1：由显式 format 或后缀/首行识别 parser；不根据文件内容做宽松猜测。
     if selected == "auto":
         if suffix == ".csv":
             first_line = source.open(
@@ -495,7 +772,7 @@ def load_measured_surface(
                 "XYZ/PLY/STL input requires the coordinate unit in height_unit"
             )
         points *= _unit_scale(lateral_unit, field_name="lateral unit")
-        # Permit a distinct z scale when an exporter used mixed units.
+        # 允许导出器对横向坐标和 z 高度使用不同单位。
         points[:, 2] *= _unit_scale(height_unit, field_name="height unit") / _unit_scale(
             lateral_unit, field_name="lateral unit"
         )
@@ -530,6 +807,7 @@ def load_measured_surface(
 
     if dx_m <= 0 or dy_m <= 0:
         raise TerrainConfigurationError("measured grid spacing must be positive")
+    # 阶段 2：建立显式 valid mask；零值策略、无效值和安全带都保留在 metadata。
     for invalid_value in invalid_values:
         valid &= height != float(invalid_value)
     zero_policy = "zero_is_valid"
@@ -546,6 +824,7 @@ def load_measured_surface(
             f"source has {missing_fraction:.1%} invalid samples, above "
             f"maximum_missing_fraction={maximum_missing_fraction:.1%}"
         )
+    # 数组存储保持全有限，真正有效性始终由 mask 表达，后续算法不得读取 placeholder 语义。
     finite_height = _finite_placeholder(height, valid)
     preprocessing: dict[str, Any] = {
         "invalid_policy": {
@@ -562,6 +841,7 @@ def load_measured_surface(
         "leveling": level,
     }
     if level == "robust_plane":
+        # 阶段 3：默认只移除刚体平面并重新零均值，不改变局部形貌起伏。
         finite_height, coefficients = _robust_plane(
             finite_height, valid, dx_m, dy_m
         )
@@ -576,6 +856,7 @@ def load_measured_surface(
         )
     finite_height = np.asarray(finite_height, dtype=np.float32)
     finite_height[~valid] = np.float32(np.median(finite_height[valid]))
+    # 阶段 4：记录原始文件哈希、parser、网格、预处理和当前 unknown-probe 边界。
     metadata = {
         "schema_version": "measured-surface-v1",
         "source": {
@@ -595,6 +876,15 @@ def load_measured_surface(
             ],
         },
         "preprocessing": preprocessing,
+        "measurement_semantics": {
+            "status": "unknown_probe",
+            "probe": None,
+            "measurement_tolerance_m": None,
+            "determinate_mask": None,
+            "bounds": None,
+        },
+        "surface_model": "single_valued_height_field_2_5d",
+        "general_mesh_scope": "OUT_OF_SCOPE",
     }
     return MeasuredSurface(
         height_m=finite_height,
@@ -602,12 +892,20 @@ def load_measured_surface(
         dx_m=dx_m,
         dy_m=dy_m,
         metadata=metadata,
+        measurement_probe=None,
+        measurement_tolerance_m=None,
+        determinate_mask=None,
+        geometry_uncertain_mask=np.asarray(valid, dtype=np.bool_).copy(),
+        geometry_lower_bound_m=None,
+        geometry_upper_bound_m=None,
     )
 
 
 def _box_lowpass(
     values: NDArray[np.float64], window: int, *, axis: int
 ) -> NDArray[np.float64]:
+    """用反射边界和前缀和实现一维滑动箱式低通。"""
+
     if window <= 1:
         return values
     if window % 2 == 0:
@@ -641,7 +939,7 @@ def resample_measured_patch(
     target_dy_m: float,
     allow_upsampling: bool = False,
 ) -> tuple[NDArray[np.float32], NDArray[np.bool_], dict[str, Any]]:
-    """Anti-aliased bilinear resampling for an already selected source patch."""
+    """对已选来源 patch 先抗混叠，再做双线性重采样。"""
 
     if (
         target_dx_m < source_dx_m * (1.0 - 1e-12)
@@ -664,6 +962,7 @@ def resample_measured_patch(
         raise GeometryOutOfDomainError("target y span exceeds selected measured patch")
 
     values = np.asarray(height_m, dtype=np.float64)
+    # 降采样倍率决定箱式低通窗口；上采样默认被上面的契约拒绝。
     window_x = max(1, int(math.floor(target_dx_m / source_dx_m)))
     window_y = max(1, int(math.floor(target_dy_m / source_dy_m)))
     if window_x > 1:
@@ -686,6 +985,7 @@ def resample_measured_patch(
             + tx * values[source_y + 1, x0 + 1]
         )
         result[row] = (1.0 - weight_y) * top + weight_y * bottom
+        # 双线性输出只有在四个来源节点都有效时才有效。
         result_mask[row] = (
             valid_mask[source_y, x0]
             & valid_mask[source_y, x0 + 1]
@@ -716,7 +1016,7 @@ def random_measured_crop(
     maximum_invalid_fraction: float = 0.01,
     attempts: int = 128,
 ) -> tuple[NDArray[np.float32], NDArray[np.bool_], dict[str, Any]]:
-    """Select a reproducible valid ROI, then anti-alias and resample it."""
+    """可复现地选择有效 ROI，然后抗混叠并重采样。"""
 
     required_columns = math.ceil(size_x_m / surface.dx_m) + 2
     required_rows = math.ceil(size_y_m / surface.dy_m) + 2
@@ -728,6 +1028,7 @@ def random_measured_crop(
     best: tuple[float, int, int] | None = None
     max_x0 = surface.shape[1] - required_columns
     max_y0 = surface.shape[0] - required_rows
+    # 固定 RNG 下随机尝试；记录最小无效比例并以 (比例,y,x) 确定性打破平局。
     for _ in range(attempts):
         x0 = int(rng.integers(0, max_x0 + 1))
         y0 = int(rng.integers(0, max_y0 + 1))
@@ -759,7 +1060,7 @@ def random_measured_crop(
         target_dx_m=resolution_m,
         target_dy_m=resolution_m,
     )
-    # Flips retain scale and do not invent unmeasured rotations or directionality.
+    # 翻转保留尺度和网格，不引入未经测量的任意旋转或方向性。
     flip_x = bool(rng.integers(0, 2))
     flip_y = bool(rng.integers(0, 2))
     if flip_x:

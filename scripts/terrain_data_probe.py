@@ -1,9 +1,8 @@
-"""Probe, download, and parse public surface-topography evidence.
+"""探测、下载并解析公开的表面形貌证据。
 
-This Phase 0-1 utility intentionally does not generate terrain and does not
-modify the M1 runtime interface.  Its first supported measured format is
-the Hirox CSV export used by the Sandpaper Wind Turbine Blade Benchmark
-Dataset, DOI 10.17632/hcgcnm269w.2.
+这个 Phase 0–1 工具有意不生成地形，也不修改 M1 运行接口。当前首个受支持的
+实测格式是 Sandpaper Wind Turbine Blade Benchmark Dataset
+（DOI 10.17632/hcgcnm269w.2）采用的 Hirox CSV 导出格式。
 """
 
 from __future__ import annotations
@@ -25,6 +24,8 @@ from urllib.request import Request, urlopen
 import numpy as np
 from numpy.typing import NDArray
 
+from spine_sim.io.files import atomic_write_json, sha256_file
+
 
 LOGGER = logging.getLogger("terrain_data_probe")
 DATASET_ID = "hcgcnm269w"
@@ -43,18 +44,21 @@ CHUNK_BYTES = 1024 * 1024
 
 @dataclass(frozen=True)
 class PublicFile:
+    """公开文件的冻结 ID、字节数和 SHA-256 期望值。"""
+
     file_id: str
     size_bytes: int
     sha256: str
 
     @property
     def download_url(self) -> str:
+        """根据不可变文件 ID 构造下载地址。"""
+
         return DOWNLOAD_URL.format(file_id=self.file_id)
 
 
-# Immutable version-2 identifiers and hashes observed through the public API on
-# 2026-07-29.  P80 images are present in the dataset, but the public file list
-# did not expose a P80.csv ground-truth file; this is treated as a data gap.
+# 2026-07-29 从公共 API 观测到的 v2 不可变标识和哈希。数据集中虽有 P80
+# 图片，但公共文件列表没有 P80.csv 真值文件，因此将其明确记为数据缺口。
 SANDPAPER_FILES: dict[str, PublicFile] = {
     "P40.csv": PublicFile(
         "c14550e5-b38f-4c1a-9c85-e2287c50654b",
@@ -96,6 +100,8 @@ SANDPAPER_FILES: dict[str, PublicFile] = {
 
 @dataclass(frozen=True)
 class HiroxHeader:
+    """Hirox CSV 前五行中与空间解释有关的元数据。"""
+
     measured_date: str
     lateral_calibration_um_per_pixel: float
     height_unit: str
@@ -104,18 +110,12 @@ class HiroxHeader:
 
 
 class EvidenceError(RuntimeError):
-    """Raised when evidence cannot be downloaded, verified, or parsed."""
-
-
-def sha256_file(path: Path) -> str:
-    digest = hashlib.sha256()
-    with path.open("rb") as stream:
-        for chunk in iter(lambda: stream.read(CHUNK_BYTES), b""):
-            digest.update(chunk)
-    return digest.hexdigest()
+    """证据无法下载、校验或解析时抛出的统一业务错误。"""
 
 
 def _open_url(url: str, *, byte_range: str | None = None) -> BinaryIO:
+    """打开公共 URL，并把网络层异常转换为可报告的证据错误。"""
+
     headers = {
         "User-Agent": "Spine-Sim-terrain-evidence/phase01",
         "Accept": "*/*",
@@ -129,6 +129,8 @@ def _open_url(url: str, *, byte_range: str | None = None) -> BinaryIO:
 
 
 def _fetch_json(url: str) -> dict[str, Any]:
+    """下载 JSON，并要求顶层必须是对象。"""
+
     with _open_url(url) as response:
         try:
             value = json.load(response)
@@ -140,6 +142,8 @@ def _fetch_json(url: str) -> dict[str, Any]:
 
 
 def _metadata_pairs(text: str) -> dict[str, str]:
+    """把 Hirox 固定的前五行 ``key,value`` 元数据解析为字典。"""
+
     lines = text.lstrip("\ufeff").splitlines()
     if len(lines) < 5:
         raise EvidenceError("Hirox CSV header has fewer than five lines")
@@ -155,12 +159,15 @@ def _metadata_pairs(text: str) -> dict[str, str]:
 
 
 def parse_hirox_header_text(text: str) -> HiroxHeader:
+    """严格解析 Hirox 头部文本，并规范化微米单位写法。"""
+
     pairs = _metadata_pairs(text)
     required = {"Measured Date", "Calibration", "Height Unit", "X size", "Y size"}
     missing = sorted(required - pairs.keys())
     if missing:
         raise EvidenceError(f"Hirox CSV header is missing fields: {missing}")
 
+    # 接受三种常见的微米字符，但不猜测其它单位或换算关系。
     calibration = re.fullmatch(
         r"([0-9]+(?:\.[0-9]+)?)\s*(?:μm|µm|um)/pxl",
         pairs["Calibration"],
@@ -193,6 +200,8 @@ def parse_hirox_header_text(text: str) -> HiroxHeader:
 
 
 def read_hirox_header(path: Path) -> HiroxHeader:
+    """只读取 CSV 前五行，适合在加载大型高度矩阵前快速探测。"""
+
     try:
         with path.open("r", encoding="utf-8-sig", newline="") as stream:
             text = "".join(stream.readline() for _ in range(5))
@@ -202,6 +211,8 @@ def read_hirox_header(path: Path) -> HiroxHeader:
 
 
 def read_hirox_csv(path: Path) -> tuple[HiroxHeader, NDArray[np.float64]]:
+    """读取完整 Hirox 高度矩阵（单位 μm）并核对头部声明的形状。"""
+
     header = read_hirox_header(path)
     try:
         heights = np.loadtxt(
@@ -228,16 +239,20 @@ def summarize_hirox(
     header: HiroxHeader,
     heights_um: NDArray[np.float64],
 ) -> dict[str, Any]:
+    """把原始 μm 高度转换为 SI 统计摘要，并保留来源与解释边界。"""
+
     finite = np.isfinite(heights_um)
     finite_count = int(np.count_nonzero(finite))
     total_count = int(heights_um.size)
     if finite_count == 0:
         raise EvidenceError("Hirox height matrix contains no finite values")
+    # 统计量只使用有限样本，但缺失数量和比例会显式写入结果。
     values_um = heights_um[finite]
     mean_um = float(np.mean(values_um))
     rms_zero_um = float(np.sqrt(np.mean(np.square(values_um))))
     rms_mean_um = float(np.sqrt(np.mean(np.square(values_um - mean_um))))
     pitch_um = header.lateral_calibration_um_per_pixel
+    # N 个采样节点只有 N-1 个间隔，物理跨度不能写成 N*pitch。
     x_span_um = (header.x_size - 1) * pitch_um
     y_span_um = (header.y_size - 1) * pitch_um
     return {
@@ -286,6 +301,8 @@ def write_preview(
     *,
     max_preview_pixels: int = 900,
 ) -> None:
+    """绘制降采样预览；数值摘要仍使用未经降采样的完整矩阵。"""
+
     try:
         import matplotlib
 
@@ -296,12 +313,14 @@ def write_preview(
             "preview output requires the optional 'plot' dependencies"
         ) from exc
 
+    # 分轴选择步长，将图片限制在可交互尺寸而不改变源数据。
     stride_y = max(1, math.ceil(header.y_size / max_preview_pixels))
     stride_x = max(1, math.ceil(header.x_size / max_preview_pixels))
     preview = heights_um[::stride_y, ::stride_x]
     finite = preview[np.isfinite(preview)]
     if finite.size == 0:
         raise EvidenceError("cannot plot a preview without finite heights")
+    # 色限裁剪只改善显示对比度，不会裁剪写入 NPY 或摘要的高度值。
     lower, upper = np.percentile(finite, [1.0, 99.0])
     if not lower < upper:
         lower = float(np.min(finite))
@@ -332,21 +351,13 @@ def write_preview(
     plt.close(figure)
 
 
-def _atomic_write_json(path: Path, value: dict[str, Any]) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    temporary = path.with_suffix(path.suffix + ".part")
-    temporary.write_text(
-        json.dumps(value, indent=2, sort_keys=True, ensure_ascii=False) + "\n",
-        encoding="utf-8",
-    )
-    os.replace(temporary, path)
-
-
 def _record_download_metadata(
     target_dir: Path,
     filename: str,
     expected: PublicFile,
 ) -> None:
+    """在原始数据旁原子更新来源、许可和已验证文件信息。"""
+
     metadata_path = target_dir / "source_metadata.json"
     metadata: dict[str, Any] = {
         "dataset_id": DATASET_ID,
@@ -376,10 +387,12 @@ def _record_download_metadata(
         **asdict(expected),
         "download_url": expected.download_url,
     }
-    _atomic_write_json(metadata_path, metadata)
+    atomic_write_json(metadata_path, metadata)
 
 
 def probe_sandpaper(output: Path | None) -> dict[str, Any]:
+    """将公共 API 当前元数据与代码中冻结的 v2 文件清单逐项比较。"""
+
     metadata = _fetch_json(PUBLIC_API_URL)
     api_files = {
         item.get("filename"): item
@@ -418,6 +431,7 @@ def probe_sandpaper(output: Path | None) -> dict[str, Any]:
             "download_url": expected.download_url,
         }
         if filename.endswith(".csv"):
+            # Range 请求只取头部 4 KiB，探测格式时无需下载几十 MB 的矩阵。
             with _open_url(expected.download_url, byte_range="bytes=0-4095") as stream:
                 header_bytes = stream.read(4096)
             record["header"] = asdict(
@@ -436,11 +450,13 @@ def probe_sandpaper(output: Path | None) -> dict[str, Any]:
         "files": probes,
     }
     if output is not None:
-        _atomic_write_json(output, result)
+        atomic_write_json(output, result)
     return result
 
 
 def download_file(filename: str, destination_root: Path, max_bytes: int) -> Path:
+    """下载白名单文件，校验长度和 SHA-256 后再原子发布。"""
+
     try:
         expected = SANDPAPER_FILES[filename]
     except KeyError as exc:
@@ -456,6 +472,7 @@ def download_file(filename: str, destination_root: Path, max_bytes: int) -> Path
     target_dir.mkdir(parents=True, exist_ok=True)
     target = target_dir / filename
     if target.exists():
+        # 已存在文件只允许验证和复用；失败时不自动覆盖用户的本地数据。
         actual_hash = sha256_file(target)
         if target.stat().st_size == expected.size_bytes and actual_hash == expected.sha256:
             _record_download_metadata(target_dir, filename, expected)
@@ -465,6 +482,7 @@ def download_file(filename: str, destination_root: Path, max_bytes: int) -> Path
             f"existing file failed verification and was not overwritten: {target}"
         )
 
+    # 下载写入同目录 .part 文件，完全校验后用 os.replace 原子改名。
     temporary = target.with_suffix(target.suffix + ".part")
     if temporary.exists():
         temporary.unlink()
@@ -484,6 +502,7 @@ def download_file(filename: str, destination_root: Path, max_bytes: int) -> Path
         if temporary.exists():
             temporary.unlink()
         raise
+    # 长度和哈希必须同时匹配冻结证据，任一失败即删除临时文件。
     actual_hash = digest.hexdigest()
     if written != expected.size_bytes or actual_hash != expected.sha256:
         temporary.unlink()
@@ -498,6 +517,8 @@ def download_file(filename: str, destination_root: Path, max_bytes: int) -> Path
 
 
 def _parse_command(args: argparse.Namespace) -> dict[str, Any]:
+    """执行本地 Hirox 解析，并按需输出预览、SI 制 NPY 和摘要。"""
+
     path = Path(args.path).resolve()
     header, heights = read_hirox_csv(path)
     summary = summarize_hirox(path, header, heights)
@@ -506,16 +527,19 @@ def _parse_command(args: argparse.Namespace) -> dict[str, Any]:
         write_preview(heights, header, preview)
         summary["preview_path"] = str(preview)
     if args.npy_output is not None:
+        # 原始 CSV 是 μm；规范 NPY 明确转换为 m 且禁用 pickle。
         npy_output = Path(args.npy_output).resolve()
         npy_output.parent.mkdir(parents=True, exist_ok=True)
         np.save(npy_output, heights * 1e-6, allow_pickle=False)
         summary["normalized_height_npy_m"] = str(npy_output)
     if args.summary is not None:
-        _atomic_write_json(Path(args.summary).resolve(), summary)
+        atomic_write_json(Path(args.summary).resolve(), summary)
     return summary
 
 
 def _surface_topography_probe() -> dict[str, Any]:
+    """只探测可选 SurfaceTopography 包，不安装或修改当前环境。"""
+
     try:
         import SurfaceTopography  # type: ignore[import-not-found]
     except ImportError as exc:
@@ -536,6 +560,8 @@ def _surface_topography_probe() -> dict[str, Any]:
 
 
 def build_parser() -> argparse.ArgumentParser:
+    """定义元数据探测、受控下载、本地解析和依赖探测四个子命令。"""
+
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "--log-level",
@@ -569,6 +595,8 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main(argv: list[str] | None = None) -> int:
+    """分派子命令；证据、文件和参数错误统一返回退出码 2。"""
+
     parser = build_parser()
     args = parser.parse_args(argv)
     logging.basicConfig(

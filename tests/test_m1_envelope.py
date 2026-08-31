@@ -7,6 +7,7 @@ import numpy as np
 from spine_sim.terrain.analytic import evaluate_analytic
 from spine_sim.terrain.envelope import (
     check_rod_clearance,
+    check_segmented_tip_rod_clearance,
     compute_sphere_envelope_2d,
     compute_track_geometry,
     forward_cap_gate,
@@ -186,6 +187,123 @@ class EnvelopeTests(unittest.TestCase):
         fine_event = upward_event_position(fine, 5e-6)
         self.assertLess(abs(coarse_event - fine_event), 10e-6)
 
+    def test_invalid_nonwinning_node_invalidates_entire_tip_footprint(self) -> None:
+        region = fixture_region()
+        x, y = axes(region)
+        height = evaluate_analytic("plane", x, y, {"offset_m": 0.0})
+        source_valid = np.ones(region.shape, dtype=np.bool_)
+        target_row = region.shape[0] // 2
+        target_column = region.shape[1] // 2
+        source_valid[target_row, target_column + 4] = False
+        track = compute_track_geometry(
+            height,
+            region,
+            radius_m=50e-6,
+            y_global_m=y[target_row],
+            source_valid_mask=source_valid,
+        )
+        self.assertEqual(track.support_feature_indices_yx[target_column, 0, 1], target_column)
+        self.assertFalse(track.footprint_valid_mask[target_column])
+        self.assertFalse(track.valid_mask[target_column])
+        self.assertTrue(track.geometry_uncertain_mask[target_column])
+
+    def test_cross_slope_track_preserves_y_geometry_and_three_normal_inputs(self) -> None:
+        region = fixture_region()
+        x, y = axes(region)
+        height = evaluate_analytic(
+            "cross_slope", x, y, {"slope_x": 0.2, "slope_y": -0.1}
+        )
+        track = compute_track_geometry(
+            height, region, radius_m=50e-6, y_global_m=0.0
+        )
+        index = region.shape[1] // 2
+        self.assertTrue(track.valid_mask[index])
+        self.assertAlmostEqual(track.envelope_slope_x[index], 0.2, places=11)
+        self.assertAlmostEqual(track.envelope_slope_y[index], -0.1, places=11)
+        expected = np.array([-0.2, 0.1, 1.0])
+        expected /= np.linalg.norm(expected)
+        np.testing.assert_allclose(
+            track.envelope_normals[index], expected, atol=1e-11
+        )
+        np.testing.assert_allclose(
+            track.surface_normals[index, 0], expected, atol=1e-11
+        )
+        self.assertTrue(np.all(np.isfinite(track.contact_normals[index, 0])))
+
+    def test_exact_tie_preserves_two_supports_and_marks_feature_switch(self) -> None:
+        region = fixture_region()
+        height = np.full(region.shape, -100e-6, dtype=np.float64)
+        row = region.shape[0] // 2
+        column = region.shape[1] // 2
+        height[row, column - 2] = 40e-6
+        height[row, column + 2] = 40e-6
+        track = compute_track_geometry(
+            height,
+            region,
+            radius_m=50e-6,
+            y_global_m=0.0,
+            near_tie_tolerance_m=0.0,
+        )
+        self.assertTrue(track.near_tie_flag[column])
+        self.assertEqual(track.support_value_gap_m[column], 0.0)
+        supports = track.support_feature_indices_yx[column, :, 1]
+        self.assertEqual(set(supports.tolist()), {column - 2, column + 2})
+        self.assertTrue(track.feature_switch_flag[column])
+        self.assertTrue(np.isnan(track.envelope_normals[column]).all())
+
+    def test_height_bounds_propagate_to_track_and_mark_uncertainty(self) -> None:
+        region = fixture_region()
+        x, y = axes(region)
+        height = evaluate_analytic("plane", x, y, {"offset_m": 0.0})
+        track = compute_track_geometry(
+            height,
+            region,
+            radius_m=50e-6,
+            y_global_m=0.0,
+            source_uncertain_mask=np.ones(region.shape, dtype=np.bool_),
+            height_lower_bound_m=height - 1e-6,
+            height_upper_bound_m=height + 2e-6,
+        )
+        index = region.shape[1] // 2
+        self.assertTrue(track.geometry_uncertain_mask[index])
+        self.assertAlmostEqual(
+            track.envelope_height_m[index]
+            - track.envelope_height_lower_m[index],
+            1e-6,
+        )
+        self.assertAlmostEqual(
+            track.envelope_height_upper_m[index]
+            - track.envelope_height_m[index],
+            2e-6,
+        )
+
+    def test_uncertainty_propagates_through_the_normal_difference_stencil(self) -> None:
+        region = fixture_region()
+        height = np.zeros(region.shape, dtype=np.float64)
+        source_uncertain = np.zeros(region.shape, dtype=np.bool_)
+        row = region.shape[0] // 2
+        column = region.shape[1] // 2
+        source_uncertain[row, column + 2] = True
+
+        full = compute_sphere_envelope_2d(
+            height,
+            region,
+            radius_m=region.resolution_x_m,
+            source_uncertain_mask=source_uncertain,
+        )
+        track = compute_track_geometry(
+            height,
+            region,
+            radius_m=region.resolution_x_m,
+            y_global_m=0.0,
+            source_uncertain_mask=source_uncertain,
+        )
+
+        self.assertTrue(full.valid_mask[row, column])
+        self.assertTrue(track.valid_mask[column])
+        self.assertTrue(full.geometry_uncertain_mask[row, column])
+        self.assertTrue(track.geometry_uncertain_mask[column])
+
 
 class GateTests(unittest.TestCase):
     def test_forward_cap_gate(self) -> None:
@@ -219,6 +337,42 @@ class GateTests(unittest.TestCase):
         )
         self.assertFalse(checked.collision)
         self.assertGreater(checked.minimum_clearance_m or 0.0, 0.0)
+
+    def test_segmented_clearance_uses_pose_and_unknown_source_mask(self) -> None:
+        region = fixture_region()
+        height = np.zeros(region.shape, dtype=np.float64)
+        common = {
+            "height_m": height,
+            "region": region,
+            "sphere_center_xyz_m": (0.2e-3, 0.0, 0.2e-3),
+            "tip_axis": (1.0, 0.0, 0.0),
+            "tip_radius_m": 50e-6,
+            "spherical_cap_axial_length_m": 25e-6,
+            "cone_length_m": 50e-6,
+            "exposed_rod_length_m": 100e-6,
+            "rod_radius_m": 30e-6,
+        }
+        clear = check_segmented_tip_rod_clearance(**common)
+        self.assertFalse(clear.collision)
+        self.assertGreater(clear.minimum_clearance_m or 0.0, 0.0)
+        colliding = check_segmented_tip_rod_clearance(
+            **{
+                **common,
+                "sphere_center_xyz_m": (0.2e-3, 0.0, 20e-6),
+            }
+        )
+        self.assertTrue(colliding.collision)
+        source_valid = np.ones(region.shape, dtype=np.bool_)
+        row = region.shape[0] // 2
+        column = int(
+            round((0.2e-3 - region.origin_x_m) / region.resolution_x_m)
+        )
+        source_valid[row : row + 2, column : column + 2] = False
+        unknown = check_segmented_tip_rod_clearance(
+            **common, source_valid_mask=source_valid
+        )
+        self.assertIsNone(unknown.collision)
+        self.assertIn("unknown_terrain", unknown.model_warning[0])
 
 
 if __name__ == "__main__":

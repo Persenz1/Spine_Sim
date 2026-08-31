@@ -1,1 +1,1 @@
-"""Non-physical smoke module used only to validate M0."""
+"""只用于验证 M0 运行链的非物理冒烟示例。"""

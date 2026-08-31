@@ -1,1 +1,1 @@
-"""Units, frames, identity, configuration, states and errors."""
+"""单位、坐标系、稳定身份、配置、状态枚举和公共错误。"""

@@ -10,15 +10,18 @@ from pathlib import Path
 
 import numpy as np
 
+from spine_sim.geometry import SurfaceState
 from spine_sim.terrain.errors import GeometryOutOfDomainError
 from spine_sim.terrain.errors import TerrainConfigurationError
-from spine_sim.terrain.heightmap import (
+from spine_sim.terrain.measured import (
     FileHeightMapSource,
     register_heightmap_source,
     sample_file_heightmap,
 )
 from spine_sim.terrain.library import TerrainLibrary
 from spine_sim.terrain.models import (
+    ENVELOPE_ALGORITHM_VERSION,
+    TRACK_SCHEMA_VERSION,
     CampaignDesignSpace,
     RegionSpec,
     TerrainRecipe,
@@ -57,6 +60,10 @@ class TerrainLibraryTests(unittest.TestCase):
             generated = library.generate_region(
                 self.recipe, self.region, tile_rows=7
             )
+            self.assertEqual(
+                generated["measurement_semantics"]["status"],
+                "not_applicable",
+            )
             mapped = library.open_region(
                 self.recipe.terrain_recipe_id,
                 self.region.region_id,
@@ -78,6 +85,21 @@ class TerrainLibraryTests(unittest.TestCase):
                 50e-6,
                 track.track_id,
             )
+            SurfaceState(
+                loaded,
+                self.region,
+                np.array(mapped, copy=True),
+                np.ones(self.region.shape, dtype=np.bool_),
+            )
+            with self.assertRaisesRegex(
+                ValueError, "height_m does not match track.source_data_sha256"
+            ):
+                SurfaceState(
+                    loaded,
+                    self.region,
+                    mapped[::-1],
+                    np.ones(self.region.shape, dtype=np.bool_),
+                )
             np.testing.assert_array_equal(
                 loaded.envelope_height_m, track.envelope_height_m
             )
@@ -127,18 +149,160 @@ class TerrainLibraryTests(unittest.TestCase):
                     self.recipe.terrain_recipe_id, self.region.region_id
                 )
 
+    def test_track_cache_requires_canonical_measurement_semantics(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            library = TerrainLibrary(temporary)
+            library.generate_region(self.recipe, self.region)
+            metadata_path = (
+                library.region_dir(
+                    self.recipe.terrain_recipe_id,
+                    self.region.region_id,
+                )
+                / "metadata.json"
+            )
+            metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+            del metadata["measurement_semantics"]
+            metadata_path.write_text(json.dumps(metadata), encoding="utf-8")
+
+            with self.assertRaisesRegex(
+                TerrainConfigurationError,
+                "measurement_semantics.*rebuild",
+            ):
+                library.cache_track(
+                    self.recipe,
+                    self.region,
+                    radius_m=50e-6,
+                    y_global_m=0.0,
+                )
+
     def test_track_identity_ignores_binary_unit_arithmetic_noise(self) -> None:
         common = {
             "terrain_recipe_id": self.recipe.terrain_recipe_id,
             "region_id": self.region.region_id,
             "y_global_m": 0.0,
-            "envelope_algorithm_version": "finite-sphere-envelope-v1",
+            "track_schema_version": TRACK_SCHEMA_VERSION,
+            "envelope_algorithm_version": ENVELOPE_ALGORITHM_VERSION,
+            "near_tie_tolerance_m": 1e-10,
             "resolution_m": 10e-6,
+            "source_data_sha256": "1" * 64,
+            "source_valid_mask_sha256": "2" * 64,
+            "measurement_semantics_hash": "3" * 64,
         }
         self.assertEqual(
             TrackGeometry.make_id(radius_m=100e-6, **common),
             TrackGeometry.make_id(radius_m=100.0 * 1e-6, **common),
         )
+
+    def test_track_identity_changes_with_geometry_semantics(self) -> None:
+        common = {
+            "terrain_recipe_id": self.recipe.terrain_recipe_id,
+            "region_id": self.region.region_id,
+            "radius_m": 50e-6,
+            "y_global_m": 0.0,
+            "track_schema_version": TRACK_SCHEMA_VERSION,
+            "envelope_algorithm_version": ENVELOPE_ALGORITHM_VERSION,
+            "resolution_m": 10e-6,
+            "source_data_sha256": "1" * 64,
+            "source_valid_mask_sha256": "2" * 64,
+            "measurement_semantics_hash": "3" * 64,
+        }
+        baseline = TrackGeometry.make_id(
+            near_tie_tolerance_m=1e-10, **common
+        )
+        self.assertNotEqual(
+            baseline,
+            TrackGeometry.make_id(near_tie_tolerance_m=2e-10, **common),
+        )
+        self.assertNotEqual(
+            baseline,
+            TrackGeometry.make_id(
+                near_tie_tolerance_m=1e-10,
+                **{**common, "source_valid_mask_sha256": "4" * 64},
+            ),
+        )
+        self.assertNotEqual(
+            baseline,
+            TrackGeometry.make_id(
+                near_tie_tolerance_m=1e-10,
+                **{**common, "source_data_sha256": "5" * 64},
+            ),
+        )
+        self.assertNotEqual(
+            baseline,
+            TrackGeometry.make_id(
+                near_tie_tolerance_m=1e-10,
+                **{**common, "measurement_semantics_hash": "6" * 64},
+            ),
+        )
+
+    def test_obsolete_track_schema_requires_explicit_rebuild(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            library = TerrainLibrary(temporary)
+            library.generate_region(self.recipe, self.region)
+            track = library.cache_track(
+                self.recipe,
+                self.region,
+                radius_m=50e-6,
+                y_global_m=0.0,
+            )
+            sidecar = library.track_path(
+                self.recipe.terrain_recipe_id,
+                self.region.region_id,
+                50e-6,
+                track.track_id,
+            ).with_suffix(".json")
+            metadata = json.loads(sidecar.read_text(encoding="utf-8"))
+            metadata["schema_version"] = "1"
+            sidecar.write_text(json.dumps(metadata), encoding="utf-8")
+            with self.assertRaisesRegex(
+                TerrainConfigurationError, "obsolete.*rebuild"
+            ):
+                library.load_track(
+                    self.recipe.terrain_recipe_id,
+                    self.region.region_id,
+                    50e-6,
+                    track.track_id,
+                )
+            with self.assertRaisesRegex(
+                TerrainConfigurationError, "obsolete.*rebuild"
+            ):
+                library.cache_track(
+                    self.recipe,
+                    self.region,
+                    radius_m=50e-6,
+                    y_global_m=0.0,
+                )
+
+    def test_obsolete_envelope_algorithm_requires_explicit_rebuild(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            library = TerrainLibrary(temporary)
+            library.generate_region(self.recipe, self.region)
+            track = library.cache_track(
+                self.recipe,
+                self.region,
+                radius_m=50e-6,
+                y_global_m=0.0,
+            )
+            sidecar = library.track_path(
+                self.recipe.terrain_recipe_id,
+                self.region.region_id,
+                50e-6,
+                track.track_id,
+            ).with_suffix(".json")
+            metadata = json.loads(sidecar.read_text(encoding="utf-8"))
+            metadata["envelope_algorithm_version"] = (
+                "finite-sphere-envelope-v2-footprint-support2"
+            )
+            sidecar.write_text(json.dumps(metadata), encoding="utf-8")
+            with self.assertRaisesRegex(
+                TerrainConfigurationError, "algorithm is obsolete.*rebuild"
+            ):
+                library.load_track(
+                    self.recipe.terrain_recipe_id,
+                    self.region.region_id,
+                    50e-6,
+                    track.track_id,
+                )
 
     @unittest.skipUnless(importlib.util.find_spec("cupy"), "CuPy/GPU is unavailable")
     def test_cuda_library_region_matches_cpu_and_records_backend(self) -> None:
@@ -210,6 +374,11 @@ class CampaignRegionTests(unittest.TestCase):
         design = CampaignDesignSpace()
         report = compute_campaign_region(recipe, design)
         region = report.region
+        self.assertEqual(
+            recipe.terrain_recipe_id,
+            "terrain_recipe_cfc48e797b16d2de07a6",
+        )
+        self.assertEqual(region.region_id, "region_623dc96822e5324f17e9")
         self.assertGreater(region.size_x_m, 0.140)
         self.assertLess(region.size_x_m, 0.151)
         self.assertGreater(region.size_y_m, 0.039)

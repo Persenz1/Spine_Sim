@@ -1,7 +1,7 @@
-"""Extract a reproducible material-profile calibration artifact from a scan.
+"""从一次表面扫描中提取可复现的材料剖面标定候选。
 
-This command does not modify the raw scan or silently update a production
-profile.  The JSON output is a reviewable input for a new profile revision.
+本命令不会修改原始扫描，也不会静默覆盖生产剖面。输出 JSON 仅是一份可审查的
+新版本输入，状态固定为单样本拟合；必须经过多试件总体验证后才能升级为标定值。
 """
 
 from __future__ import annotations
@@ -17,6 +17,8 @@ from spine_sim.terrain.measured import load_measured_surface
 
 
 def build_parser() -> argparse.ArgumentParser:
+    """定义扫描格式、单位、无效值语义和来源信息等命令行参数。"""
+
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("path", type=Path)
     parser.add_argument("output", type=Path)
@@ -42,6 +44,9 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def calibrate(args: argparse.Namespace) -> dict[str, Any]:
+    """加载并整平扫描，计算描述符，返回不落盘的标定候选文档。"""
+
+    # 只记录用户实际提供的可追踪字段，避免用 null 冒充已知来源信息。
     provenance = {
         key: value
         for key, value in {
@@ -51,6 +56,7 @@ def calibrate(args: argparse.Namespace) -> dict[str, Any]:
         }.items()
         if value is not None
     }
+    # 所有微米输入在边界处转换为米；模块内部统一采用 SI 制。
     surface = load_measured_surface(
         args.path,
         format=args.format,
@@ -68,6 +74,7 @@ def calibrate(args: argparse.Namespace) -> dict[str, Any]:
         level=args.level,
         provenance=provenance,
     )
+    # 曲线描述符也一并输出，供后续比较相关尺度和高度分布，而不只比较 RMS。
     descriptors = compute_descriptors(
         surface.height_m,
         dx_m=surface.dx_m,
@@ -79,6 +86,7 @@ def calibrate(args: argparse.Namespace) -> dict[str, Any]:
         "schema_version": "material-profile-calibration-v1",
         "material": args.material,
         "subtype": args.subtype,
+        # 明确禁止下游把这份单扫描输出当作总体已验证参数。
         "status": "single_sample_fit",
         "population_validation": False,
         "source": surface.metadata,
@@ -98,6 +106,8 @@ def calibrate(args: argparse.Namespace) -> dict[str, Any]:
 
 
 def main(argv: Sequence[str] | None = None) -> int:
+    """执行 CLI、原子化前置目录创建，并把预期错误映射为退出码 2。"""
+
     args = build_parser().parse_args(argv)
     try:
         result = calibrate(args)

@@ -1,4 +1,8 @@
-"""Render representative 5 mm material terrains with the M1 plotting API."""
+"""用 M1 绘图接口渲染代表性的 5 mm 材料地形画廊。
+
+每种表面同时输出三维斜视图、二维高度图、原始 NPZ 和可追踪的地形库记录；
+可选 HTML 只是图片排版，不参与物理计算。
+"""
 
 from __future__ import annotations
 
@@ -32,9 +36,12 @@ def _write_visualization(
     path: Path,
     records: list[dict[str, Any]],
 ) -> None:
+    """复制画廊图片到 HTML 旁，并生成可独立嵌入的响应式片段。"""
+
     path.parent.mkdir(parents=True, exist_ok=True)
     figures: list[str] = []
     for record in records:
+        # 使用相对图片名，使整个 HTML 目录移动后仍能显示。
         asset_stem = str(record["stem"])
         three_d_name = f"{asset_stem}-3d-oblique.png"
         two_d_name = f"{asset_stem}-2d-heightmap.png"
@@ -57,6 +64,7 @@ def _write_visualization(
     </div>
   </section>"""
         )
+    # CSS 限定在组件 id 下，避免嵌入现有页面后污染全局样式。
     fragment = f"""<div id="material-terrain-gallery">
   <style>
     #material-terrain-gallery {{
@@ -102,6 +110,8 @@ def _write_visualization(
 
 
 def main(argv: Sequence[str] | None = None) -> int:
+    """生成四种代表表面，渲染双视图并写出统一 manifest。"""
+
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--visualization-html", type=Path)
@@ -111,6 +121,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     library_root = output / "terrain_library"
     records: list[dict[str, Any]] = []
     for material, subtype, seed, label in SURFACES:
+        # 1. 用冻结种子生成 5 mm 方形表面，保证画廊可以逐次复现。
         terrain = generate_terrain(
             material=material,
             subtype=subtype,
@@ -121,6 +132,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             mode="synthetic",
         )
         stem = f"{material}-{subtype}".replace("_", "-")
+        # 2. NPZ 便于独立交换；地形库注册则供规范渲染 API 按身份读取。
         artifact = save_terrain(output / f"{stem}.npz", terrain)
         recipe, region, _ = register_terrain(
             library_root,
@@ -129,6 +141,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             overwrite=True,
         )
         view_output = output / stem
+        # 3. 所有表面共享视窗、球半径和采样上限，保证视觉比较公平。
         views = render_terrain_views(
             library_root,
             recipe.terrain_recipe_id,
@@ -145,6 +158,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             Path(views["metadata_path"]).read_text(encoding="utf-8")
         )
         values_um = np.asarray(terrain.height, dtype=np.float64) * 1e6
+        # 4. 统计量直接由未降采样高度图计算，渲染抽样不会影响数值。
         records.append(
             {
                 "material": material,
@@ -168,6 +182,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 "two_d_path": views["files"]["heightmap_2d"],
             }
         )
+    # manifest 是机器可读索引，HTML 仅在用户显式指定时生成。
     manifest = {
         "schema_version": "material-terrain-gallery-v1",
         "renderer": "spine_sim.terrain.render_terrain_views",

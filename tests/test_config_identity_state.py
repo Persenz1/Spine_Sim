@@ -1,18 +1,13 @@
 from __future__ import annotations
 
-import tempfile
 import unittest
-from pathlib import Path
 
-from spine_sim.core.config import (
-    BaseCaseSpec,
-    CampaignSpec,
-    ProjectConfig,
-    TerrainRegionSpec,
-)
+from spine_sim import BackendConfig as PublicBackendConfig
+from spine_sim.core.config import BaseCaseSpec, CampaignSpec
 from spine_sim.core.errors import ConfigurationError
-from spine_sim.core.identity import identity, stable_hash, track_id
-from spine_sim.core.states import StateBundle
+from spine_sim.core.identity import identity, stable_hash
+from spine_sim.core.versions import PARAMETER_REGISTRY_VERSION
+from spine_sim.runtime.backend import BackendConfig
 
 
 class IdentityTests(unittest.TestCase):
@@ -27,47 +22,17 @@ class IdentityTests(unittest.TestCase):
             identity("case", {"x": 1}, module_version="1"),
             identity("case", {"x": 1}, module_version="2"),
         )
-        self.assertEqual(track_id({"region": "r", "x": [0, 1]}), track_id({"x": [0, 1], "region": "r"}))
 
 
 class ConfigTests(unittest.TestCase):
-    def test_project_relative_path_is_resolved_portably(self) -> None:
-        with tempfile.TemporaryDirectory() as temporary:
-            base = Path(temporary)
-            config = ProjectConfig.from_mapping(
-                {
-                    "schema_version": "1",
-                    "module_version": "m0",
-                    "results_root": "results/data",
-                },
-                base_dir=base,
-            )
-            self.assertEqual(config.results_root, (base / "results" / "data").resolve())
-
-    def test_region_units_and_range(self) -> None:
-        region = TerrainRegionSpec.from_mapping(
-            {
-                "terrain_recipe_id": "terrain_recipe_x",
-                "origin_x": {"value": 0, "unit": "mm"},
-                "origin_y": 0.0,
-                "size_x": {"value": 10, "unit": "mm"},
-                "size_y": {"value": 5, "unit": "mm"},
-                "resolution": {"value": 10, "unit": "um"},
-            }
+    def test_backend_config_is_runtime_owned_and_validated(self) -> None:
+        self.assertIs(PublicBackendConfig, BackendConfig)
+        self.assertEqual(
+            BackendConfig.from_mapping({"preference": "cpu"}).preference,
+            "cpu",
         )
-        self.assertAlmostEqual(region.size_x_m, 0.01)
-        self.assertAlmostEqual(region.resolution_m, 1e-5)
         with self.assertRaises(ConfigurationError):
-            TerrainRegionSpec.from_mapping(
-                {
-                    "terrain_recipe_id": "x",
-                    "origin_x": 0,
-                    "origin_y": 0,
-                    "size_x": 0,
-                    "size_y": 1,
-                    "resolution": 1,
-                }
-            )
+            BackendConfig.from_mapping({"unknown": True})
 
     def test_case_and_campaign_identity_are_deterministic(self) -> None:
         raw = {
@@ -80,23 +45,21 @@ class ConfigTests(unittest.TestCase):
             {**raw, "parameters": {"radius_m": 5e-5, "seed": 3}}
         )
         self.assertEqual(one.case_id, two.case_id)
+        self.assertEqual(one.normalized_input_hash, two.normalized_input_hash)
+        changed_semantics = BaseCaseSpec.from_mapping(
+            {**raw, "solver_semantics_version": "different"}
+        )
+        self.assertNotEqual(one.case_id, changed_semantics.case_id)
+        self.assertEqual(
+            one.parameter_registry_version,
+            PARAMETER_REGISTRY_VERSION,
+        )
+        changed_registry = BaseCaseSpec.from_mapping(
+            {**raw, "parameter_registry_version": "different"}
+        )
+        self.assertNotEqual(one.case_id, changed_registry.case_id)
         campaign = CampaignSpec("x", "1", "spine_sim.examples.fake_module:run_case", (one,))
         self.assertTrue(campaign.campaign_id.startswith("campaign_"))
-
-
-class StateTests(unittest.TestCase):
-    def test_dimensions_cannot_be_mixed_or_omitted(self) -> None:
-        with self.assertRaises(ConfigurationError):
-            StateBundle.from_mapping(
-                {
-                    "physical_state": "converged",
-                    "numerical_state": "free",
-                    "model_state": "covered",
-                    "run_state": "complete",
-                }
-            )
-        with self.assertRaises(ConfigurationError):
-            StateBundle.from_mapping({"physical_state": "free"})
 
 
 if __name__ == "__main__":

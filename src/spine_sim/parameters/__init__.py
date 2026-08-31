@@ -1,0 +1,43 @@
+"""带证据来源的规范工程参数注册表。"""
+
+from .registry import (
+    ArrayGeometry,
+    CanonicalDesign,
+    EvidenceValue,
+    ImportedLegacyDesign,
+    Installation,
+    LegacyDesign,
+    MigrationField,
+    MigrationReport,
+    ParameterRegistry,
+    Protocol,
+    REGISTRY_SCHEMA_VERSION,
+    SelectionSet,
+    SpinePackage,
+    TerminalPreset,
+    axis_from_pitch_yaw,
+    equal_height_length_m,
+    legacy_design_id,
+    load_registry,
+)
+
+__all__ = [
+    "ArrayGeometry",
+    "CanonicalDesign",
+    "EvidenceValue",
+    "ImportedLegacyDesign",
+    "Installation",
+    "LegacyDesign",
+    "MigrationField",
+    "MigrationReport",
+    "ParameterRegistry",
+    "Protocol",
+    "REGISTRY_SCHEMA_VERSION",
+    "SelectionSet",
+    "SpinePackage",
+    "TerminalPreset",
+    "axis_from_pitch_yaw",
+    "equal_height_length_m",
+    "legacy_design_id",
+    "load_registry",
+]

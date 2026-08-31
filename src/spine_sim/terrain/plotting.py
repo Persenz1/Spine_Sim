@@ -1,4 +1,8 @@
-"""Lightweight, read-only terrain previews and finite-tip comparison plots."""
+"""只读、轻量的地形预览与有限球尖对比绘图。
+
+本模块中的 groove 选择和球落位仅服务可视化，不替代正式的 TrackGeometry/
+ContactCandidate 求解链。
+"""
 
 from __future__ import annotations
 
@@ -11,7 +15,7 @@ from typing import Any
 import numpy as np
 from numpy.typing import ArrayLike, NDArray
 
-from spine_sim.io.results import atomic_write_json
+from spine_sim.io.files import atomic_write_json
 
 from .library import TerrainLibrary
 from .models import RegionSpec
@@ -19,7 +23,7 @@ from .models import RegionSpec
 
 @dataclass(frozen=True)
 class TerrainPatch:
-    """A bounded in-memory sample from a potentially large terrain map."""
+    """从潜在大型地形 memmap 中复制出的有界内存 patch。"""
 
     x_global_m: NDArray[np.float64]
     y_global_m: NDArray[np.float64]
@@ -30,20 +34,26 @@ class TerrainPatch:
 
     @property
     def shape(self) -> tuple[int, int]:
+        """返回 patch 高度数组 shape。"""
+
         return self.height_m.shape
 
     @property
     def size_x_m(self) -> float:
+        """返回 patch 实际 x 节点跨度。"""
+
         return float(self.x_global_m[-1] - self.x_global_m[0])
 
     @property
     def size_y_m(self) -> float:
+        """返回 patch 实际 y 节点跨度。"""
+
         return float(self.y_global_m[-1] - self.y_global_m[0])
 
 
 @dataclass(frozen=True)
 class SpherePlacement:
-    """Lowest non-penetrating placement of a sphere at a fixed x-y centre."""
+    """固定 x-y 中心处不穿透离散地形的最低球体放置。"""
 
     radius_m: float
     center_xyz_m: tuple[float, float, float]
@@ -54,7 +64,7 @@ class SpherePlacement:
 
 @dataclass(frozen=True)
 class GrooveSelection:
-    """A locally low terrain site with higher surrounding terrain."""
+    """中心较低、外围较高的可视化 groove 位置。"""
 
     center_x_m: float
     center_y_m: float
@@ -73,6 +83,8 @@ def _bounded_node_indices(
     *,
     maximum_points: int | None,
 ) -> NDArray[np.int64]:
+    """围绕中心截取有界节点，并可等距降采样到最大点数。"""
+
     start = center - intervals // 2
     stop = start + intervals + 1
     if start < 0:
@@ -99,7 +111,7 @@ def extract_centered_patch(
     window_size_y_m: float | None = None,
     maximum_axis_points: int | None = None,
 ) -> TerrainPatch:
-    """Sample a rectangular crop without materializing the full terrain."""
+    """不物化完整地形，仅复制一个矩形裁剪。"""
 
     window_y = window_size_x_m if window_size_y_m is None else window_size_y_m
     for name, value in (
@@ -147,6 +159,7 @@ def extract_centered_patch(
         region.shape[0] - 1,
     )
     source_shape = (intervals_y + 1, intervals_x + 1)
+    # source_shape 记录原始窗口节点数，row/column_indices 可进一步降采样用于绘图。
     row_indices = _bounded_node_indices(
         center_row,
         intervals_y,
@@ -192,7 +205,7 @@ def place_sphere_on_patch(
     center_x_m: float | None = None,
     center_y_m: float | None = None,
 ) -> SpherePlacement:
-    """Place a sphere as low as possible while clearing every sampled node."""
+    """把球体降到恰好清除 footprint 内所有采样节点的最低位置。"""
 
     if not math.isfinite(radius_m) or radius_m <= 0.0:
         raise ValueError("radius_m must be positive and finite")
@@ -206,6 +219,7 @@ def place_sphere_on_patch(
         raise ValueError("terrain patch contains no nodes below the sphere footprint")
 
     cap = np.sqrt(np.maximum(0.0, radius_m * radius_m - radial_squared))
+    # 对每个 footprint 节点，h+sqrt(R²-rho²) 是不穿透所需球心高度；取最大值。
     required_center_height = np.where(
         inside, patch.height_m + cap, -np.inf
     )
@@ -230,6 +244,8 @@ def place_sphere_on_patch(
 def _centered_box_sum(
     values: NDArray[np.float64], half_width: int
 ) -> NDArray[np.float64]:
+    """用二维积分图计算每个可容纳中心的方形窗口和。"""
+
     width = 2 * half_width + 1
     integral = np.pad(
         np.cumsum(np.cumsum(values, axis=0), axis=1),
@@ -254,7 +270,7 @@ def select_groove_center(
     *,
     sphere_radius_m: float,
 ) -> GrooveSelection:
-    """Select a broad local depression suitable for a finite spherical tip."""
+    """选择适合展示有限球尖的宽局部凹陷。"""
 
     if sphere_radius_m <= 0.0 or not math.isfinite(sphere_radius_m):
         raise ValueError("sphere_radius_m must be positive and finite")
@@ -283,6 +299,7 @@ def select_groove_center(
     surrounding_mean = (outer_sum - inner_sum) / (
         outer_count - inner_count
     )
+    # 只在中心和内区都处于较低 35% 的位置中，最大化“外围均值-内区均值”。
     depth_score = surrounding_mean - inner_mean
     valid = np.isfinite(depth_score)
     valid_values = inner_mean[valid]
@@ -315,10 +332,14 @@ def select_groove_center(
 def _downsample_patch(
     patch: TerrainPatch, *, maximum_axis_points: int
 ) -> tuple[NDArray[np.float64], NDArray[np.float64], NDArray[np.float64]]:
+    """沿两轴等距选择节点，限制 3D surface 绘制规模。"""
+
     if maximum_axis_points < 2:
         raise ValueError("maximum_axis_points must be at least 2")
 
     def indices(count: int) -> NDArray[np.int64]:
+        """包含首尾节点的唯一等距整数索引。"""
+
         sample_count = min(count, maximum_axis_points)
         return np.unique(
             np.rint(np.linspace(0, count - 1, sample_count)).astype(np.int64)
@@ -334,6 +355,8 @@ def _downsample_patch(
 
 
 def _nice_scale_bar(span_um: float) -> float:
+    """为给定跨度选择约 20% 长度的 1/2/5 系列比例尺。"""
+
     target = max(span_um * 0.2, np.finfo(float).tiny)
     power = 10.0 ** math.floor(math.log10(target))
     factor = target / power
@@ -342,6 +365,8 @@ def _nice_scale_bar(span_um: float) -> float:
 
 
 def _save_figure(figure: Any, path: Path, *, dpi: int) -> None:
+    """先写同目录临时图片，再原子替换目标。"""
+
     temporary = path.with_name(f".{path.stem}.tmp{path.suffix}")
     try:
         figure.savefig(
@@ -364,6 +389,8 @@ def _render_oblique(
     maximum_axis_points: int,
     dpi: int,
 ) -> float:
+    """渲染地形斜视图，并返回自动限制后的垂直夸张倍数。"""
+
     import matplotlib.pyplot as plt
 
     x, y, height = _downsample_patch(
@@ -449,6 +476,8 @@ def _render_heightmap(
     sphere_radius_m: float,
     dpi: int,
 ) -> None:
+    """渲染二维高度图，并标出所选 groove 和球尖 footprint。"""
+
     import matplotlib.pyplot as plt
     from matplotlib.patches import Circle
     from mpl_toolkits.axes_grid1.anchored_artists import AnchoredSizeBar
@@ -523,6 +552,8 @@ def _render_true_scale_sphere(
     sphere_transparency: float,
     dpi: int,
 ) -> None:
+    """以三轴物理 1:1 尺度渲染局部地形、球尖和离散支撑半径。"""
+
     import matplotlib.pyplot as plt
     from matplotlib.lines import Line2D
     from matplotlib.patches import Patch
@@ -693,7 +724,7 @@ def render_terrain_views(
     dpi: int = 180,
     prefix: str = "terrain",
 ) -> dict[str, Any]:
-    """Render two overviews and a local true-scale sphere comparison."""
+    """渲染两个全局视图和一个局部真实比例球尖对比。"""
 
     if dpi < 72:
         raise ValueError("dpi must be at least 72")
@@ -711,6 +742,7 @@ def render_terrain_views(
         ) from error
     matplotlib.use("Agg", force=True)
 
+    # 阶段 1：只读打开大型 region，复制有界 overview/局部 patch 后立即关闭 memmap。
     library = TerrainLibrary(library_root)
     region = library.load_region_spec(terrain_recipe_id, region_id)
     mapped = library.open_region(terrain_recipe_id, region_id, verify_hash=False)
@@ -741,6 +773,7 @@ def render_terrain_views(
         mapped._mmap.close()
         del mapped
 
+    # 阶段 2：在所选 groove 上执行仅用于展示的离散最低不穿透球放置。
     placement = place_sphere_on_patch(
         sphere_patch,
         radius_m=sphere_radius_m,
@@ -754,6 +787,7 @@ def render_terrain_views(
         "heightmap_2d": output / f"{prefix}-2d-heightmap.png",
         "sphere_true_scale": output / f"{prefix}-sphere-true-scale.png",
     }
+    # 阶段 3：分别渲染斜视、二维高度图和无 z 夸张的局部球尖图。
     vertical_exaggeration = _render_oblique(
         overview_patch,
         paths["oblique_3d"],

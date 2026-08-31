@@ -1,1 +1,1 @@
-"""Backend discovery and isolated case/campaign execution."""
+"""计算后端探测，以及隔离的单案例/批案例执行。"""
