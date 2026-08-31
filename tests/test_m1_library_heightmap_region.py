@@ -3,7 +3,10 @@ from __future__ import annotations
 import json
 import gc
 import importlib.util
+import multiprocessing
+import os
 import tempfile
+import time
 import unittest
 from concurrent.futures import ProcessPoolExecutor
 from pathlib import Path
@@ -35,6 +38,28 @@ from spine_sim.terrain.suite import generate_terrain_suite
 def _mmap_checksum(path: str) -> float:
     mapped = np.load(path, mmap_mode="r", allow_pickle=False)
     return float(np.sum(mapped, dtype=np.float64))
+
+
+def _cache_track_after_barrier(
+    payload: tuple[str, dict, dict, str, int],
+) -> str:
+    root, recipe_mapping, region_mapping, barrier_root, worker_count = payload
+    barrier_directory = Path(barrier_root)
+    barrier_directory.mkdir(parents=True, exist_ok=True)
+    (barrier_directory / f"ready-{multiprocessing.current_process().pid}").touch()
+    deadline = time.monotonic() + 15.0
+    while len(tuple(barrier_directory.glob("ready-*"))) < worker_count:
+        if time.monotonic() > deadline:
+            raise TimeoutError("workers did not reach the cache migration barrier")
+        time.sleep(0.01)
+    library = TerrainLibrary(root)
+    track = library.cache_track(
+        TerrainRecipe.from_mapping(recipe_mapping),
+        RegionSpec.from_mapping(region_mapping),
+        radius_m=50e-6,
+        y_global_m=0.0,
+    )
+    return track.track_id
 
 
 class TerrainLibraryTests(unittest.TestCase):
@@ -130,7 +155,10 @@ class TerrainLibraryTests(unittest.TestCase):
                 self.recipe.terrain_recipe_id, self.region.region_id
             )
             expected = _mmap_checksum(str(path))
-            with ProcessPoolExecutor(max_workers=2) as executor:
+            with ProcessPoolExecutor(
+                max_workers=2,
+                mp_context=multiprocessing.get_context("spawn"),
+            ) as executor:
                 values = list(
                     executor.map(_mmap_checksum, [str(path), str(path)])
                 )
@@ -149,7 +177,7 @@ class TerrainLibraryTests(unittest.TestCase):
                     self.recipe.terrain_recipe_id, self.region.region_id
                 )
 
-    def test_track_cache_requires_canonical_measurement_semantics(self) -> None:
+    def test_track_cache_rejects_malformed_measurement_semantics(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             library = TerrainLibrary(temporary)
             library.generate_region(self.recipe, self.region)
@@ -161,7 +189,7 @@ class TerrainLibraryTests(unittest.TestCase):
                 / "metadata.json"
             )
             metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
-            del metadata["measurement_semantics"]
+            del metadata["measurement_semantics"]["probe"]
             metadata_path.write_text(json.dumps(metadata), encoding="utf-8")
 
             with self.assertRaisesRegex(
@@ -174,6 +202,133 @@ class TerrainLibraryTests(unittest.TestCase):
                     radius_m=50e-6,
                     y_global_m=0.0,
                 )
+
+    def test_track_cache_migrates_legacy_defined_metadata_directly(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            library = TerrainLibrary(temporary)
+            library.generate_region(self.recipe, self.region)
+            directory = library.region_dir(
+                self.recipe.terrain_recipe_id, self.region.region_id
+            )
+            metadata_path = directory / "metadata.json"
+            manifest_path = library.region_manifest_path(
+                self.recipe.terrain_recipe_id, self.region.region_id
+            )
+            for path in (metadata_path, manifest_path):
+                metadata = json.loads(path.read_text(encoding="utf-8"))
+                del metadata["measurement_semantics"]
+                path.write_text(json.dumps(metadata), encoding="utf-8")
+            migration_lock = directory / ".metadata-migration.lock"
+            migration_lock.write_text("interrupted writer", encoding="ascii")
+            stale_time = time.time() - 10.0
+            os.utime(migration_lock, (stale_time, stale_time))
+
+            track = library.cache_track(
+                self.recipe,
+                self.region,
+                radius_m=50e-6,
+                y_global_m=0.0,
+            )
+
+            self.assertGreater(track.x_global_m.size, 0)
+            self.assertFalse(migration_lock.exists())
+            for path in (metadata_path, manifest_path):
+                migrated = json.loads(path.read_text(encoding="utf-8"))
+                self.assertEqual(
+                    migrated["measurement_semantics"]["status"],
+                    "not_applicable",
+                )
+                self.assertIn("metadata_migrated_at_utc", migrated)
+
+            split_manifest = json.loads(
+                manifest_path.read_text(encoding="utf-8")
+            )
+            split_manifest["metadata_migrated_at_utc"] = "concurrent-split"
+            manifest_path.write_text(
+                json.dumps(split_manifest), encoding="utf-8"
+            )
+            library.cache_track(
+                self.recipe,
+                self.region,
+                radius_m=50e-6,
+                y_global_m=0.0,
+            )
+            self.assertEqual(
+                json.loads(metadata_path.read_text(encoding="utf-8")),
+                json.loads(manifest_path.read_text(encoding="utf-8")),
+            )
+
+    def test_concurrent_track_cache_publishes_one_migration_document(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            library = TerrainLibrary(temporary)
+            library.generate_region(self.recipe, self.region)
+            directory = library.region_dir(
+                self.recipe.terrain_recipe_id, self.region.region_id
+            )
+            metadata_path = directory / "metadata.json"
+            manifest_path = library.region_manifest_path(
+                self.recipe.terrain_recipe_id, self.region.region_id
+            )
+            for path in (metadata_path, manifest_path):
+                metadata = json.loads(path.read_text(encoding="utf-8"))
+                del metadata["measurement_semantics"]
+                path.write_text(json.dumps(metadata), encoding="utf-8")
+
+            context = multiprocessing.get_context("spawn")
+            worker_count = 8
+            payload = (
+                temporary,
+                self.recipe.normalized(),
+                self.region.normalized(),
+                str(Path(temporary) / "migration-barrier"),
+                worker_count,
+            )
+            with ProcessPoolExecutor(
+                max_workers=worker_count,
+                mp_context=context,
+            ) as executor:
+                track_ids = list(
+                    executor.map(
+                        _cache_track_after_barrier,
+                        [payload] * worker_count,
+                    )
+                )
+
+            self.assertEqual(len(set(track_ids)), 1)
+            metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+            self.assertEqual(metadata, manifest)
+            self.assertEqual(
+                metadata["measurement_semantics"]["status"],
+                "not_applicable",
+            )
+            self.assertFalse((directory / ".metadata-migration.lock").exists())
+
+    def test_generate_region_migrates_legacy_defined_metadata(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            library = TerrainLibrary(temporary)
+            library.generate_region(self.recipe, self.region)
+            directory = library.region_dir(
+                self.recipe.terrain_recipe_id, self.region.region_id
+            )
+            metadata_path = directory / "metadata.json"
+            metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+            del metadata["measurement_semantics"]
+            metadata_path.write_text(json.dumps(metadata), encoding="utf-8")
+
+            migrated = library.generate_region(self.recipe, self.region)
+            self.assertEqual(
+                migrated["measurement_semantics"]["status"],
+                "not_applicable",
+            )
+            self.assertIn("metadata_migrated_at_utc", migrated)
+            track = library.cache_track(
+                self.recipe,
+                self.region,
+                radius_m=50e-6,
+                y_global_m=0.0,
+            )
+            self.assertGreater(track.x_global_m.size, 0)
 
     def test_track_identity_ignores_binary_unit_arithmetic_noise(self) -> None:
         common = {

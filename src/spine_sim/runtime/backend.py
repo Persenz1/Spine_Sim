@@ -9,6 +9,7 @@ from __future__ import annotations
 import importlib.util
 import platform
 import sys
+import tempfile
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any, Mapping
@@ -31,8 +32,12 @@ class BackendConfig:
 
         if self.preference not in {"auto", "cpu", "cuda"}:
             raise ConfigurationError("backend preference must be auto, cpu or cuda")
-        if self.device_index < 0:
-            raise ConfigurationError("device_index must be non-negative")
+        if (
+            isinstance(self.device_index, bool)
+            or not isinstance(self.device_index, int)
+            or self.device_index < 0
+        ):
+            raise ConfigurationError("device_index must be a non-negative integer")
 
     @classmethod
     def from_mapping(cls, data: Mapping[str, Any]) -> "BackendConfig":
@@ -90,6 +95,17 @@ def discover_backend(config: BackendConfig | None = None) -> BackendCapabilities
     if config.preference == "cuda" and not cuda_available:
         raise ConfigurationError("CUDA was requested but is not available")
     selected = "cuda" if cuda_available and config.preference in {"auto", "cuda"} else "cpu"
+    if selected == "cuda":
+        device_counts = [
+            int(note.removeprefix("cupy_device_count="))
+            for note in notes
+            if note.startswith("cupy_device_count=")
+        ]
+        if device_counts and config.device_index >= device_counts[-1]:
+            raise ConfigurationError(
+                f"CUDA device_index {config.device_index} is out of range for "
+                f"{device_counts[-1]} detected device(s)"
+            )
     return BackendCapabilities(
         cpu_available=True,
         cuda_available=cuda_available,
@@ -106,7 +122,7 @@ def validate_environment(
     *,
     writable_path: str | Path | None = None,
 ) -> dict[str, Any]:
-    """检查 Python/NumPy 版本、输出父目录和计算后端。"""
+    """检查 Python/NumPy 版本、输出路径实际可写性和计算后端。"""
 
     checks = [
         {
@@ -122,12 +138,35 @@ def validate_environment(
         },
     ]
     if writable_path is not None:
-        path = Path(writable_path)
+        path = Path(writable_path).resolve()
+        if path.exists():
+            probe_directory = path
+            writable = path.is_dir()
+        else:
+            # ResultStore 使用 mkdir(parents=True)；多级目标尚不存在时，应探测
+            # 最近的现存祖先，而不是误要求直接父目录已经存在。
+            probe_directory = path.parent
+            while not probe_directory.exists():
+                parent = probe_directory.parent
+                if parent == probe_directory:
+                    break
+                probe_directory = parent
+            writable = probe_directory.is_dir()
+        if writable:
+            try:
+                with tempfile.NamedTemporaryFile(
+                    prefix=".spine-sim-write-probe-",
+                    dir=probe_directory,
+                ) as probe:
+                    probe.write(b"ok")
+                    probe.flush()
+            except OSError:
+                writable = False
         checks.append(
             {
-                "name": "results_parent_exists",
-                "passed": path.resolve().parent.exists(),
-                "value": str(path.resolve().parent),
+                "name": "results_path_writable",
+                "passed": writable,
+                "value": str(path),
             }
         )
     capabilities = discover_backend(backend)

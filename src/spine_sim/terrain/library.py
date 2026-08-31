@@ -39,6 +39,20 @@ if TYPE_CHECKING:
     from .api import Terrain
 
 
+def _defined_geometry_measurement_semantics() -> dict[str, Any]:
+    """返回解析/随机定义地形可安全推断的非测量语义。"""
+
+    return {
+        "status": "not_applicable",
+        "probe": None,
+        "measurement_tolerance_m": None,
+        "determinate_mask": False,
+        "bounds": False,
+        "surface_model": "single_valued_height_field_2_5d",
+        "general_mesh_scope": "OUT_OF_SCOPE",
+    }
+
+
 def _close_memmap(array: np.ndarray | None) -> None:
     """显式释放 NumPy memmap 句柄，尤其用于 Windows 删除/替换前。"""
 
@@ -137,6 +151,104 @@ class TerrainLibrary:
             / _safe_id(terrain_recipe_id, "terrain_recipe_id")
             / f"{_safe_id(region_id, 'region_id')}.json"
         )
+
+    def _migrate_legacy_defined_region_metadata(
+        self,
+        recipe: TerrainRecipe,
+        region: RegionSpec,
+        metadata: dict[str, Any],
+    ) -> dict[str, Any]:
+        """为 0.3.0 defined-region COMPLETE 缓存补齐可推断语义。"""
+
+        if recipe.generator_name != "defined_geometry":
+            return metadata
+        directory = self.region_dir(recipe.terrain_recipe_id, region.region_id)
+        metadata_path = directory / "metadata.json"
+        manifest_path = self.region_manifest_path(
+            recipe.terrain_recipe_id, region.region_id
+        )
+        if "measurement_semantics" in metadata:
+            # 正常新缓存不需要额外 I/O；迁移过的缓存则顺手修复旧实现可能
+            # 留下的 metadata/manifest 并发分叉。
+            if "metadata_migrated_at_utc" not in metadata:
+                return metadata
+            try:
+                if json.loads(manifest_path.read_text(encoding="utf-8")) == metadata:
+                    return metadata
+            except (OSError, UnicodeError, json.JSONDecodeError):
+                pass
+        complete_path = directory / "COMPLETE"
+        if not complete_path.is_file():
+            return metadata
+        lock_path = directory / ".metadata-migration.lock"
+        lock_started = time.monotonic()
+        while True:
+            try:
+                descriptor = os.open(
+                    lock_path,
+                    os.O_CREAT | os.O_EXCL | os.O_WRONLY,
+                )
+            except FileExistsError:
+                try:
+                    lock_age_s = time.time() - lock_path.stat().st_mtime
+                except FileNotFoundError:
+                    continue
+                if lock_age_s > 5.0:
+                    try:
+                        lock_path.unlink()
+                    except FileNotFoundError:
+                        pass
+                    continue
+                if time.monotonic() - lock_started > 30.0:
+                    raise TerrainConfigurationError(
+                        "timed out waiting for legacy region metadata migration"
+                    )
+                time.sleep(0.01)
+                continue
+            else:
+                with os.fdopen(descriptor, "w", encoding="ascii") as handle:
+                    handle.write(
+                        f"pid={os.getpid()} created={time.time():.6f}\n"
+                    )
+                    handle.flush()
+                    os.fsync(handle.fileno())
+                break
+
+        try:
+            # CAS：等待锁期间另一个进程可能已经迁移，必须在锁内重读。
+            current = json.loads(metadata_path.read_text(encoding="utf-8"))
+            if complete_path.read_text(encoding="ascii").strip() != current.get(
+                "data_sha256"
+            ):
+                raise TerrainConfigurationError(
+                    "region COMPLETE marker does not match metadata"
+                )
+            if "measurement_semantics" in current:
+                migrated = current
+                try:
+                    retained = json.loads(
+                        manifest_path.read_text(encoding="utf-8")
+                    )
+                except (OSError, UnicodeError, json.JSONDecodeError):
+                    retained = None
+                if retained == migrated:
+                    return migrated
+            else:
+                migrated = dict(current)
+                migrated["measurement_semantics"] = (
+                    _defined_geometry_measurement_semantics()
+                )
+                migrated["metadata_migrated_at_utc"] = utc_now()
+            # cache metadata 是后续是否仍需迁移的判据，因此最后发布它：若前一次
+            # manifest 写入或进程在两步之间失败，下次调用仍会安全重试两步。
+            atomic_write_json(manifest_path, migrated)
+            atomic_write_json(metadata_path, migrated)
+            return migrated
+        finally:
+            try:
+                lock_path.unlink()
+            except FileNotFoundError:
+                pass
 
     def track_path(
         self,
@@ -336,7 +448,7 @@ class TerrainLibrary:
         backend: Literal["cpu", "cuda"] = "cpu",
         overwrite: bool = False,
     ) -> dict[str, Any]:
-        """原子生成原始 region；所有数据和 metadata 完成后才写 ``COMPLETE``。"""
+        """原子生成原始 region；同一 region 只支持一个 writer。"""
 
         region.validate_against(recipe)
         # 材料 recipe 由统一 API 生成后注册；defined geometry 才走坐标可寻址 tile 路径。
@@ -367,7 +479,10 @@ class TerrainLibrary:
         metadata_path = directory / "metadata.json"
         complete_path = directory / "COMPLETE"
         if complete_path.is_file() and not overwrite:
-            return json.loads(metadata_path.read_text(encoding="utf-8"))
+            metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+            return self._migrate_legacy_defined_region_metadata(
+                recipe, region, metadata
+            )
         if complete_path.exists():
             complete_path.unlink()
         # 移除旧 marker 后，任何中断都会留下“不完整”而非可被误读的旧完整缓存。
@@ -414,15 +529,7 @@ class TerrainLibrary:
             "coordinate_storage": "origin_spacing_shape_only_no_meshgrid",
             "generation_backend": backend,
             "production_sampling": "canonical_even_indices_stride2_nodal",
-            "measurement_semantics": {
-                "status": "not_applicable",
-                "probe": None,
-                "measurement_tolerance_m": None,
-                "determinate_mask": False,
-                "bounds": False,
-                "surface_model": "single_valued_height_field_2_5d",
-                "general_mesh_scope": "OUT_OF_SCOPE",
-            },
+            "measurement_semantics": _defined_geometry_measurement_semantics(),
             "created_at_utc": utc_now(),
             **metrics,
         }
@@ -805,6 +912,9 @@ class TerrainLibrary:
             )
         region_metadata = json.loads(
             metadata_path_region.read_text(encoding="utf-8")
+        )
+        region_metadata = self._migrate_legacy_defined_region_metadata(
+            recipe, region, region_metadata
         )
         measurement_semantics = region_metadata.get("measurement_semantics")
         required_measurement_fields = {

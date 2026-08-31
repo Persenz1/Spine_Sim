@@ -10,6 +10,7 @@ from spine_sim.geometry import (
     SpinePath,
     SpinePose,
     SurfaceState,
+    drive_candidate_path,
     query_next_candidate,
 )
 from spine_sim.terrain.envelope import compute_track_geometry
@@ -96,6 +97,10 @@ def test_first_encounter_cursor_preserves_feature_order() -> None:
     assert [item.path_position_m for item in all_candidates] == sorted(
         item.path_position_m for item in all_candidates
     )
+    driven = list(drive_candidate_path(state, path, pose))
+    assert [item.candidate_id for item in driven] == [
+        item.candidate_id for item in all_candidates
+    ]
 
 
 @pytest.mark.parametrize(

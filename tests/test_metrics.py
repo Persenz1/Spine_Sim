@@ -45,10 +45,11 @@ def test_zero_contact_average_is_undefined_and_unknown_force_propagates() -> Non
     assert unknown.P_sum_N is None
     assert unknown.P_avg_N is None
 
-    underflow = compute_array_counts(
-        (SpineMetricInput(True, 0.0, True, True, 1e-200, 1e-200),),
-        gap_tolerance_m=0.0,
-    )
+    with np.errstate(all="raise"):
+        underflow = compute_array_counts(
+            (SpineMetricInput(True, 0.0, True, True, 1e-200, 1e-200),),
+            gap_tolerance_m=0.0,
+        )
     assert underflow.n_share_normal is None
     assert underflow.n_share_tangent_positive is None
 

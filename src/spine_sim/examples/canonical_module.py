@@ -1,7 +1,7 @@
-"""用于贯通规范生产链的命名解析测试目录。
+"""用于贯通规范求解与结果链的命名解析测试目录。
 
 该模块有意采用平面壁面和人工参数，只用于验证“几何候选 → 单杆接触 → 阵列
-平衡 → 结果持久化”的接口闭环，不代表经过标定的硬件模型。所有物理值都会在
+平衡 → 结果持久化”的接口闭环；它不查询 TerrainLibrary，也不代表经过标定的硬件模型。所有物理值都会在
 结果来源中标为 ``analytic_test_fixture``；正式研究应从实测或有出处的记录构造
 公开的几何、单杆和阵列输入。
 """
@@ -299,6 +299,11 @@ def run_case(parameters: Mapping[str, Any], context: RunContext) -> CaseOutput:
     # 3. 提交只推进接受态修订号，不会重新求解或改变 trial 中的力学结果。
     committed = commit_array_trial(accepted, trial)
     result = trial.result
+    if result.counts.n_active < 1:
+        raise RuntimeError(
+            "analytic canonical fixture reached equilibrium without any active "
+            "spine contact"
+        )
     per_spine = _per_spine_rows(result)
     # 4. 把版本、坐标系、假设与适用边界随结果保存，保证结果可解释。
     metadata = CanonicalResultMetadata(
@@ -391,20 +396,39 @@ def run_case(parameters: Mapping[str, Any], context: RunContext) -> CaseOutput:
         "dynamic_stability": result.dynamic_stability.value,
         "per_spine": per_spine,
     }
+    output_config = parameters.get("output", {})
+    if not isinstance(output_config, Mapping):
+        raise ValueError("output must be a mapping")
+    output_level = output_config.get("level", "full")
+    if output_level not in {"full", "summary"}:
+        raise ValueError("output.level must be full or summary")
+    summary_only = output_level == "summary"
     return CaseOutput(
         summary=summary,
-        arrays={
-            "q_C": np.asarray(result.q_C, dtype=np.float64),
-            "total_wrench": result.total_wrench.vector,
-        },
-        trace_rows=[trace_row],
-        events=[event.as_dict() for event in result.events],
+        arrays=(
+            {}
+            if summary_only
+            else {
+                "q_C": np.asarray(result.q_C, dtype=np.float64),
+                "total_wrench": result.total_wrench.vector,
+            }
+        ),
+        trace_rows=[] if summary_only else [trace_row],
+        events=(
+            []
+            if summary_only
+            else [event.as_dict() for event in result.events]
+        ),
         validation={
             "status": "passed",
             "checks": [
                 "canonical_result_schema",
                 "array_equilibrium",
-                "result_trace_round_trip",
+                (
+                    "summary_only_output"
+                    if summary_only
+                    else "result_trace_round_trip"
+                ),
             ],
         },
     )

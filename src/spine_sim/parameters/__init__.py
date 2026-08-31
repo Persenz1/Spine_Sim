@@ -17,6 +17,10 @@ from .registry import (
     TerminalPreset,
     axis_from_pitch_yaw,
     equal_height_length_m,
+    generate_legacy_full_scan,
+    generate_source_defined_m3a,
+    generate_source_defined_m3b,
+    import_legacy_design,
     legacy_design_id,
     load_registry,
 )
@@ -38,6 +42,10 @@ __all__ = [
     "TerminalPreset",
     "axis_from_pitch_yaw",
     "equal_height_length_m",
+    "generate_legacy_full_scan",
+    "generate_source_defined_m3a",
+    "generate_source_defined_m3b",
+    "import_legacy_design",
     "legacy_design_id",
     "load_registry",
 ]

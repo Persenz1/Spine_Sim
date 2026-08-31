@@ -11,6 +11,9 @@ from spine_sim.core.versions import PARAMETER_REGISTRY_VERSION
 from spine_sim.parameters import (
     Installation,
     equal_height_length_m,
+    generate_legacy_full_scan,
+    generate_source_defined_m3a,
+    generate_source_defined_m3b,
     legacy_design_id,
     load_registry,
 )
@@ -72,6 +75,19 @@ def test_registry_is_one_valid_machine_readable_source_with_evidence() -> None:
                 assert "value" in field
                 assert field["evidence_status"]
                 assert field["source"]
+
+
+def test_module_level_design_generators_match_registry_methods() -> None:
+    registry = load_registry()
+    assert (
+        generate_source_defined_m3a()
+        == registry.generate_source_defined_m3a()
+    )
+    assert (
+        generate_source_defined_m3b()
+        == registry.generate_source_defined_m3b()
+    )
+    assert generate_legacy_full_scan() == registry.generate_legacy_full_scan()
 
 
 def test_candidate_axes_do_not_implicitly_materialize_a_cartesian_scan() -> None:

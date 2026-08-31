@@ -36,6 +36,7 @@ from .geometry import (
     SpinePath,
     SpinePose,
     SurfaceState,
+    drive_candidate_path,
     query_next_candidate,
 )
 from .single_spine import (
@@ -88,6 +89,7 @@ __all__ = [
     "Wrench",
     "commit_array_trial",
     "commit_single_spine_trial",
+    "drive_candidate_path",
     "identity",
     "query_next_candidate",
     "solve_array_equilibrium",
@@ -95,4 +97,4 @@ __all__ = [
     "stable_hash",
 ]
 
-__version__ = "0.3.0"
+__version__ = "0.4.0"

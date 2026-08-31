@@ -10,6 +10,7 @@ import hashlib
 import json
 import os
 import tempfile
+import time
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Mapping
@@ -17,6 +18,22 @@ from typing import Any, Mapping
 import numpy as np
 
 from spine_sim.core.identity import canonicalize
+
+
+def _atomic_replace(source: Path, target: Path) -> None:
+    """原子替换文件，并容忍 Windows 读句柄造成的瞬时共享冲突。"""
+
+    deadline = time.monotonic() + 1.0
+    delay_s = 0.005
+    while True:
+        try:
+            os.replace(source, target)
+            return
+        except PermissionError:
+            if os.name != "nt" or time.monotonic() >= deadline:
+                raise
+            time.sleep(delay_s)
+            delay_s = min(delay_s * 2.0, 0.05)
 
 
 def utc_now() -> str:
@@ -40,7 +57,7 @@ def atomic_write_bytes(path: str | Path, data: bytes) -> None:
             handle.write(data)
             handle.flush()
             os.fsync(handle.fileno())
-        os.replace(temporary_path, target)
+        _atomic_replace(temporary_path, target)
     finally:
         if temporary_path.exists():
             temporary_path.unlink()
@@ -76,7 +93,7 @@ def atomic_write_npz(
             np.savez_compressed(handle, **arrays)
             handle.flush()
             os.fsync(handle.fileno())
-        os.replace(temporary_path, target)
+        _atomic_replace(temporary_path, target)
     finally:
         if temporary_path.exists():
             temporary_path.unlink()

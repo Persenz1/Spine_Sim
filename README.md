@@ -1,6 +1,6 @@
 # Spine Sim
 
-Spine Sim 是一套面向钩爪式爬壁机器人微刺抓附的仿真程序，当前版本为 `0.3.0`。
+Spine Sim 是一套面向钩爪式爬壁机器人微刺抓附的仿真程序，当前版本为 `0.4.0`。
 
 当前物理链：
 
@@ -52,13 +52,19 @@ python -m pip install -e ".[test,plot,parquet]"
 ```powershell
 spine-sim validate-env --output results
 spine-sim run-case examples/smoke_campaign.json --output results
-spine-sim run-campaign campaign.json --output results --workers 2
+spine-sim run-case examples/canonical_campaign.json --output results --backend cpu
+spine-sim run-campaign campaign.json --output results --workers 2 --backend cpu
 spine-sim resume campaign.json --output results
 spine-sim retry-failed campaign.json --output results
 spine-sim summarize results/<campaign_id>
 ```
 
-`examples/smoke_campaign.json` 只验证通用 runner 和结果存储，不运行完整物理链。项目需要通过 case callable 连接地形、几何、单刺和阵列；`spine_sim.examples.canonical_module` 是解析平墙 smoke fixture，不是已标定硬件模型。
+运行命令支持 `--backend auto|cpu|cuda` 和 `--device-index`。CUDA 当前固定要求
+`--workers 1`；worker 会在执行 case callable 前绑定所选 CuPy device。
+
+`examples/smoke_campaign.json` 只验证通用 runner 和结果存储，不运行物理链。`examples/canonical_campaign.json` 会运行解析平墙候选、单刺和阵列承载，但不查询真实地形。项目仍需要通过 production case callable 连接地形、几何、单刺和阵列；`spine_sim.examples.canonical_module` 是解析 smoke fixture，不是已标定硬件模型。
+
+> **生产运行边界：** 当前仓库不包含把 `TerrainLibrary` 的逐站候选连续接入单刺/阵列求解器的 production full-scan adapter 或可直接运行的完整扫描 campaign。`generate_legacy_full_scan()` 只生成历史设计点，不能单独启动物理仿真。在补齐并验证该 adapter、装配尺寸和初始间隙前，不应把 smoke fixture 的成功解释为完整仿真已经可运行。
 
 地形入口示例：
 

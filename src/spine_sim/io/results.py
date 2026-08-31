@@ -12,13 +12,14 @@ import os
 import sqlite3
 import tempfile
 from contextlib import contextmanager
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, replace
 from pathlib import Path
 from typing import Any, Iterable, Mapping
 
 import numpy as np
 
 from spine_sim.core.identity import canonical_json, canonicalize, stable_hash
+from spine_sim.core.states import Event
 from spine_sim.io.files import (
     atomic_write_bytes,
     atomic_write_json,
@@ -221,6 +222,35 @@ def _case_record(document: Mapping[str, Any]) -> CaseRecord:
     )
 
 
+def _integrity_error_record(
+    case_id: str,
+    message: str,
+    record: CaseRecord | None = None,
+) -> CaseRecord:
+    """把损坏/不完整的持久化记录显式暴露为非成功状态。"""
+
+    if record is None:
+        return CaseRecord(
+            case_id=case_id,
+            run_state="execution_error",
+            result_hash="",
+            wall_time_s=0.0,
+            peak_ram_bytes=0,
+            peak_python_bytes=0,
+            error_category="execution",
+            error_type="ResultIntegrityError",
+            error_message=message,
+        )
+    return replace(
+        record,
+        case_id=case_id,
+        run_state="execution_error",
+        error_category="execution",
+        error_type="ResultIntegrityError",
+        error_message=message,
+    )
+
+
 def write_campaign_index(
     root: str | Path, records: Iterable[CaseRecord]
 ) -> str:
@@ -294,7 +324,6 @@ class ResultStore:
         self.root.mkdir(parents=True, exist_ok=True)
         (self.root / "config").mkdir(exist_ok=True)
         self.cases_dir.mkdir(exist_ok=True)
-        atomic_write_json(self.root / "manifest.json", manifest)
         atomic_write_json(self.root / "config" / "original.json", raw_config)
         atomic_write_json(self.root / "config" / "normalized.json", normalized_config)
         atomic_write_json(self.root / "lineage.json", lineage)
@@ -302,6 +331,21 @@ class ResultStore:
             atomic_write_bytes(self.root / "events.jsonl", b"")
         if not (self.root / "validation.json").exists():
             atomic_write_json(self.root / "validation.json", {"status": "not_run", "checks": []})
+        # manifest 是初始化完成标记；最后发布，进程中断时下次调用可安全重建骨架。
+        atomic_write_json(self.root / "manifest.json", manifest)
+
+    def is_initialized(self) -> bool:
+        """检查目录式 store 的初始化骨架是否完整。"""
+
+        required = (
+            self.root / "manifest.json",
+            self.root / "config" / "original.json",
+            self.root / "config" / "normalized.json",
+            self.root / "lineage.json",
+            self.root / "events.jsonl",
+            self.root / "validation.json",
+        )
+        return self.cases_dir.is_dir() and all(path.is_file() for path in required)
 
     def case_dir(self, case_id: str) -> Path:
         """返回受限于 ``paths`` 下的 case 目录，拒绝路径分隔符。"""
@@ -412,7 +456,7 @@ class ResultStore:
         summary: Mapping[str, Any],
         arrays: Mapping[str, np.ndarray] | None = None,
         trace_rows: Iterable[Mapping[str, Any]] = (),
-        events: Iterable[Mapping[str, Any]] = (),
+        events: Iterable[Event | Mapping[str, Any]] = (),
         validation: Mapping[str, Any] | None = None,
     ) -> CaseRecord:
         """写入一个 case；仅在全部内容完成后发布 ``COMPLETE`` marker。"""
@@ -437,7 +481,7 @@ class ResultStore:
         )
         event_lines = []
         for event in events:
-            value = dict(event)
+            value = event.as_dict() if isinstance(event, Event) else dict(event)
             event_lines.append(
                 json.dumps(
                     canonicalize(value), ensure_ascii=False, sort_keys=True
@@ -490,24 +534,75 @@ class ResultStore:
         return json.loads(path.read_text(encoding="utf-8"))
 
     def list_records(self) -> list[CaseRecord]:
-        """扫描已有 summary，并按目录名稳定返回 campaign 索引记录。"""
+        """扫描记录，并把声称完成但未通过附件复核的 case 标为损坏。"""
 
         records: list[CaseRecord] = []
         if not self.cases_dir.exists():
             return records
         for directory in sorted(self.cases_dir.iterdir()):
-            if not directory.is_dir() or not (directory / "summary.json").is_file():
+            if not directory.is_dir():
                 continue
-            data = json.loads((directory / "summary.json").read_text(encoding="utf-8"))
-            records.append(_case_record(data))
+            summary_path = directory / "summary.json"
+            if not summary_path.is_file():
+                records.append(
+                    _integrity_error_record(
+                        directory.name, "case directory has no summary.json"
+                    )
+                )
+                continue
+            try:
+                data = json.loads(summary_path.read_text(encoding="utf-8"))
+                if not isinstance(data, Mapping):
+                    raise TypeError("case summary must be a mapping")
+                record = _case_record(data)
+            except (OSError, KeyError, TypeError, ValueError) as exc:
+                records.append(
+                    _integrity_error_record(
+                        directory.name,
+                        f"case summary is unreadable or malformed: {type(exc).__name__}",
+                    )
+                )
+                continue
+            if record.case_id != directory.name:
+                record = _integrity_error_record(
+                    directory.name,
+                    "summary case_id does not match its directory",
+                    record,
+                )
+            elif record.run_state == "complete" and not self.is_complete(
+                directory.name
+            ):
+                record = _integrity_error_record(
+                    directory.name,
+                    "complete case failed marker/attachment/hash verification",
+                    record,
+                )
+            elif record.run_state not in {"complete", "execution_error"}:
+                record = _integrity_error_record(
+                    directory.name,
+                    f"unsupported persisted run_state: {record.run_state!r}",
+                    record,
+                )
+            records.append(record)
         return records
 
-    def rebuild_event_index(self) -> None:
-        """汇总逐 case 事件，并在缺失时补上所属 case ID。"""
+    def rebuild_event_index(
+        self, allowed_case_ids: set[str] | None = None
+    ) -> None:
+        """只汇总完整性复核通过的 case 事件，并补上所属 case ID。"""
 
         lines: list[str] = []
         if self.cases_dir.exists():
             for directory in sorted(self.cases_dir.iterdir()):
+                if (
+                    not directory.is_dir()
+                    or (
+                        allowed_case_ids is not None
+                        and directory.name not in allowed_case_ids
+                    )
+                    or not self.is_complete(directory.name)
+                ):
+                    continue
                 source = directory / "events.jsonl"
                 if source.is_file():
                     for line in source.read_text(encoding="utf-8").splitlines():
@@ -570,7 +665,6 @@ class CompactResultStore:
         compact_manifest["result_storage"] = (
             "sqlite_transactional_summary_v1"
         )
-        atomic_write_json(self.root / "manifest.json", compact_manifest)
         atomic_write_json(
             self.root / "config" / "original.json", raw_config
         )
@@ -622,6 +716,37 @@ class CompactResultStore:
                 )
                 """
             )
+        # SQLite schema 和所有配置先闭合，最后才发布 manifest 完成标记。
+        atomic_write_json(self.root / "manifest.json", compact_manifest)
+
+    def is_initialized(self) -> bool:
+        """检查紧凑 store 的文件骨架和 SQLite 摘要表是否完整。"""
+
+        required = (
+            self.root / "manifest.json",
+            self.root / "config" / "original.json",
+            self.root / "config" / "normalized.json",
+            self.root / "lineage.json",
+            self.root / "events.jsonl",
+            self.root / "validation.json",
+            self.database_path,
+        )
+        if not all(path.is_file() for path in required):
+            return False
+        try:
+            connection = sqlite3.connect(
+                f"file:{self.database_path}?mode=ro", uri=True
+            )
+            try:
+                row = connection.execute(
+                    "SELECT 1 FROM sqlite_master "
+                    "WHERE type='table' AND name='case_summary'"
+                ).fetchone()
+            finally:
+                connection.close()
+            return row is not None
+        except sqlite3.Error:
+            return False
 
     @staticmethod
     def _payload_sha256(
@@ -688,7 +813,7 @@ class CompactResultStore:
         summary: Mapping[str, Any],
         arrays: Mapping[str, np.ndarray] | None = None,
         trace_rows: Iterable[Mapping[str, Any]] = (),
-        events: Iterable[Mapping[str, Any]] = (),
+        events: Iterable[Event | Mapping[str, Any]] = (),
         validation: Mapping[str, Any] | None = None,
     ) -> CaseRecord:
         """原子 upsert 一个纯 summary case，并拒绝该模式不支持的附件。"""
@@ -795,7 +920,7 @@ class CompactResultStore:
         return json.loads(row[0])
 
     def list_records(self) -> list[CaseRecord]:
-        """按 case ID 查询轻量索引字段，不反序列化完整 summary。"""
+        """批量查询索引并复核事务载荷摘要，损坏记录不冒充成功。"""
 
         if not self.database_path.is_file():
             return []
@@ -804,27 +929,62 @@ class CompactResultStore:
                 """
                 SELECT case_id, run_state, result_hash, wall_time_s,
                        peak_ram_bytes, peak_python_bytes, error_category,
-                       error_type, error_message
+                       error_type, error_message, summary_json,
+                       validation_json, payload_sha256, complete
                 FROM case_summary
                 ORDER BY case_id
                 """
             ).fetchall()
-        return [
-            CaseRecord(
-                case_id=row[0],
-                run_state=row[1],
-                result_hash=row[2],
-                wall_time_s=float(row[3]),
-                peak_ram_bytes=int(row[4]),
-                peak_python_bytes=int(row[5]),
-                error_category=row[6],
-                error_type=row[7],
-                error_message=row[8],
-            )
-            for row in rows
-        ]
+        records: list[CaseRecord] = []
+        for row in rows:
+            case_id = str(row[0])
+            try:
+                record = CaseRecord(
+                    case_id=case_id,
+                    run_state=str(row[1]),
+                    result_hash=str(row[2]),
+                    wall_time_s=float(row[3]),
+                    peak_ram_bytes=int(row[4]),
+                    peak_python_bytes=int(row[5]),
+                    error_category=row[6],
+                    error_type=row[7],
+                    error_message=row[8],
+                )
+                summary_json = str(row[9])
+                validation_json = str(row[10])
+                summary = json.loads(summary_json)
+                validation = json.loads(validation_json)
+                intact = bool(
+                    self._payload_sha256(summary_json, validation_json)
+                    == row[11]
+                    and isinstance(summary, Mapping)
+                    and isinstance(validation, Mapping)
+                    and summary.get("case_id") == record.case_id
+                    and summary.get("run_state") == record.run_state
+                    and summary.get("result_hash") == record.result_hash
+                    and summary.get("validation_sha256")
+                    == stable_hash(validation)
+                    and int(row[12]) == int(record.run_state == "complete")
+                    and record.run_state in {"complete", "execution_error"}
+                )
+            except (TypeError, ValueError):
+                record = _integrity_error_record(
+                    case_id,
+                    "compact case contains malformed index field types",
+                )
+                intact = False
+            if not intact:
+                record = _integrity_error_record(
+                    record.case_id,
+                    "compact case failed transaction payload/hash verification",
+                    record,
+                )
+            records.append(record)
+        return records
 
-    def rebuild_event_index(self) -> None:
+    def rebuild_event_index(
+        self, allowed_case_ids: set[str] | None = None
+    ) -> None:
         """紧凑模式不接受逐 case 事件，因此聚合事件文件始终为空。"""
 
         atomic_write_bytes(self.root / "events.jsonl", b"")

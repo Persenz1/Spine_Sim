@@ -5,11 +5,11 @@
 """
 
 PROJECT_SCHEMA_VERSION = "2"
-MODEL_SCHEMA_VERSION = "canonical-single-array-1"
+MODEL_SCHEMA_VERSION = "canonical-single-array-2"
 RESULT_SCHEMA_VERSION = "canonical-result-2"
-SOLVER_SEMANTICS_VERSION = "single-array-event-v1"
-GEOMETRY_SCHEMA_VERSION = "contact-candidate-2"
-PARAMETER_REGISTRY_VERSION = "canonical-parameters-1"
+SOLVER_SEMANTICS_VERSION = "single-array-event-v2"
+GEOMETRY_SCHEMA_VERSION = "contact-candidate-3"
+PARAMETER_REGISTRY_VERSION = "canonical-parameters-2"
 
 # 结果中使用的模型层级标签，用于区分单刺和刚性背板阵列输出契约。
 SINGLE_SPINE_MODEL_LEVEL = "single_spine_quasistatic"

@@ -391,6 +391,22 @@ def test_contact_reject_does_not_commit_contact_or_reengagement_history() -> Non
     assert committed.completed_detach_cycles == 0
 
 
+def test_zero_reaction_candidate_is_retained_without_advancing_cursor() -> None:
+    accepted = SpineAcceptedState.initial("spine-1")
+    retained = solve(
+        accepted,
+        motion(displacement=(0.0, 0.0, 0.0)),
+    )
+
+    assert retained.committable
+    assert retained.result.physical_state is PhysicalState.SEARCH
+    assert retained.result.events == ()
+    assert retained.result.assumptions == ("zero_reaction_candidate_retained",)
+    committed = commit_single_spine_trial(accepted, retained)
+    assert committed.search_cursor is None
+    assert committed.candidate_id is None
+
+
 @pytest.mark.parametrize(
     ("candidate", "reason"),
     [
@@ -412,7 +428,7 @@ def test_unresolved_contact_normal_is_parameter_unclosed(
     assert trial.result.events[0].details["reason"] == reason
 
 
-def test_3d_friction_cone_slip_force_opposes_tangential_velocity() -> None:
+def test_3d_friction_cone_opposes_spine_velocity_relative_to_wall() -> None:
     accepted = SpineAcceptedState.initial("spine-1")
     trial = solve(
         accepted,
@@ -425,7 +441,8 @@ def test_3d_friction_cone_slip_force_opposes_tangential_velocity() -> None:
     assert result.physical_state is PhysicalState.SLIP
     tangent = np.asarray(result.tangential_force_N)
     velocity = np.array([1e-3, 0.3e-3, 0.0])
-    assert np.dot(tangent, velocity) < 0.0
+    # BaseMotion 保存“墙面约束相对刺根”的速度；刺根相对墙面的真实速度符号相反。
+    assert np.dot(tangent, velocity) > 0.0
     assert np.linalg.norm(tangent) == pytest.approx(
         0.35 * result.normal_force_N
     )

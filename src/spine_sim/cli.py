@@ -5,12 +5,33 @@ from __future__ import annotations
 import argparse
 import json
 from pathlib import Path
-from typing import Sequence
+from typing import Mapping, Sequence
 
 from spine_sim.core.config import CampaignSpec
 from spine_sim.io.results import open_result_store
-from spine_sim.runtime.backend import discover_backend, validate_environment
+from spine_sim.runtime.backend import (
+    BackendConfig,
+    discover_backend,
+    validate_environment,
+)
 from spine_sim.runtime.runner import CampaignRunner
+
+
+def _expected_case_ids(campaign_dir: Path) -> set[str] | None:
+    """从受 provenance 保护的 lineage 读取精确预期 case ID 集。"""
+
+    path = campaign_dir / "lineage.json"
+    try:
+        lineage = json.loads(path.read_text(encoding="utf-8"))
+        case_lineage = lineage["case_lineage"]
+        if not isinstance(case_lineage, Mapping) or not case_lineage or not all(
+            isinstance(case_id, str) and case_id
+            for case_id in case_lineage
+        ):
+            return None
+        return set(case_lineage)
+    except (OSError, KeyError, TypeError, ValueError):
+        return None
 
 
 def _runner(args: argparse.Namespace) -> CampaignRunner:
@@ -34,11 +55,17 @@ def _runner(args: argparse.Namespace) -> CampaignRunner:
             workers=1,
             mode="small",
         )
-    backend = discover_backend()
+    backend = discover_backend(
+        BackendConfig(
+            preference=args.backend,
+            device_index=args.device_index,
+        )
+    )
     target = args.output / campaign.campaign_id
     runner = CampaignRunner(campaign, target, backend)
-    if not (target / "manifest.json").exists():
-        runner.initialize(raw)
+    if args.command == "retry-failed" and not (target / "manifest.json").is_file():
+        raise SystemExit("retry-failed requires an existing campaign manifest")
+    runner.prepare(raw)
     return runner
 
 
@@ -54,6 +81,10 @@ def build_parser() -> argparse.ArgumentParser:
         command = sub.add_parser(name)
         command.add_argument("config", type=Path)
         command.add_argument("--output", type=Path, default=Path("results"))
+        command.add_argument(
+            "--backend", choices=("auto", "cpu", "cuda"), default="auto"
+        )
+        command.add_argument("--device-index", type=int, default=0)
         if name == "run-case":
             command.add_argument("--case-id")
         else:
@@ -73,12 +104,52 @@ def main(argv: Sequence[str] | None = None) -> int:
         print(json.dumps(report, ensure_ascii=False, indent=2))
         return 0 if report["passed"] else 2
     if args.command == "summarize":
+        if not (args.campaign_dir / "manifest.json").is_file():
+            raise SystemExit("summarize requires an existing campaign manifest")
         records = open_result_store(args.campaign_dir).list_records()
+        expected_ids = _expected_case_ids(args.campaign_dir)
+        actual_ids = {record.case_id for record in records}
+        missing_ids = (
+            None if expected_ids is None else expected_ids - actual_ids
+        )
+        unexpected_ids = (
+            None if expected_ids is None else actual_ids - expected_ids
+        )
         counts: dict[str, int] = {}
         for record in records:
-            counts[record.run_state] = counts.get(record.run_state, 0) + 1
-        print(json.dumps({"case_count": len(records), "status_counts": counts}, indent=2))
-        return 0
+            # 未由 lineage 声明的完整目录也不能出现在成功计数中。
+            state = (
+                "execution_error"
+                if unexpected_ids is not None
+                and record.case_id in unexpected_ids
+                else record.run_state
+            )
+            counts[state] = counts.get(state, 0) + 1
+        print(
+            json.dumps(
+                {
+                    "case_count": len(records),
+                    "expected_case_count": (
+                        None if expected_ids is None else len(expected_ids)
+                    ),
+                    "case_ids_match": expected_ids == actual_ids,
+                    "missing_case_count": (
+                        None if missing_ids is None else len(missing_ids)
+                    ),
+                    "unexpected_case_count": (
+                        None if unexpected_ids is None else len(unexpected_ids)
+                    ),
+                    "status_counts": counts,
+                },
+                indent=2,
+            )
+        )
+        return (
+            0
+            if expected_ids == actual_ids
+            and all(record.run_state == "complete" for record in records)
+            else 1
+        )
 
     runner = _runner(args)
     if args.command == "run-case":
@@ -93,7 +164,13 @@ def main(argv: Sequence[str] | None = None) -> int:
     for record in records:
         counts[record.run_state] = counts.get(record.run_state, 0) + 1
     print(json.dumps({"campaign_dir": str(runner.store.root), "status_counts": counts}, indent=2))
-    return 0 if counts.get("execution_error", 0) == 0 else 1
+    return (
+        0
+        if {record.case_id for record in records}
+        == {case.case_id for case in runner.campaign.cases}
+        and all(record.run_state == "complete" for record in records)
+        else 1
+    )
 
 
 if __name__ == "__main__":

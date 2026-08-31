@@ -19,7 +19,11 @@ from spine_sim.core.versions import (
     SOLVER_SEMANTICS_VERSION,
 )
 from spine_sim.examples.canonical_module import CATALOG_NAME
-from spine_sim.io.results import read_trace_table
+from spine_sim.io.results import (
+    CompactResultStore,
+    open_result_store,
+    read_trace_table,
+)
 from spine_sim.io.schema import validate_canonical_summary
 
 
@@ -33,7 +37,9 @@ def _parameters(seed: int, spacing_m: float) -> dict[str, Any]:
     return {
         "catalog": CATALOG_NAME,
         "seed": seed,
-        "initial_gaps_m": [0.0, 0.0],
+        # 从开放侧给一个极小装配间隙，让阵列 active-set seed 负责闭合接触；
+        # 恰好零间隙且零初始反力只会测试 loader 自平衡，而不会测试微刺承载。
+        "initial_gaps_m": [1e-6, 1e-6],
         "spacing_m": spacing_m,
         "spine_length_m": 0.004,
         "spine_diameter_m": 0.0008,
@@ -168,6 +174,7 @@ def _assert_versioned_campaign_metadata(
     assert manifest["model_schema_version"] == MODEL_SCHEMA_VERSION
     assert manifest["result_schema_version"] == RESULT_SCHEMA_VERSION
     assert manifest["solver_semantics_version"] == SOLVER_SEMANTICS_VERSION
+    assert manifest["geometry_schema_version"] == GEOMETRY_SCHEMA_VERSION
     assert manifest["parameter_registry_version"] == PARAMETER_REGISTRY_VERSION
     assert manifest["index_format"] == "parquet"
     case_index = pq.read_table(campaign_dir / "cases.parquet").to_pylist()
@@ -220,6 +227,8 @@ def _assert_canonical_case_round_trip(
     assert summary["parameter_registry_version"] == PARAMETER_REGISTRY_VERSION
     assert summary["trace_file"] == "trace.parquet"
     assert summary["trace_format"] == "parquet"
+    assert summary["counts"]["n_active"] == 2
+    assert summary["counts"]["n_contact"] == 2
 
     trace_path = case_dir / summary["trace_file"]
     assert read_trace_table(trace_path) == [
@@ -295,6 +304,35 @@ def test_generic_cli_runs_one_canonical_case_with_parquet_trace(
     )
 
 
+def test_shipped_canonical_example_runs_active_contact_chain(
+    tmp_path: Path,
+    capsys: Any,
+) -> None:
+    catalog = (
+        Path(__file__).resolve().parents[1]
+        / "examples"
+        / "canonical_campaign.json"
+    )
+    campaign = CampaignSpec.from_mapping(_read_json(catalog))
+
+    report, campaign_dir = _run_cli(
+        capsys, "run-case", catalog, tmp_path / "example-output"
+    )
+
+    assert report["status_counts"] == {"complete": 1}
+    summary = _read_json(
+        campaign_dir
+        / "paths"
+        / campaign.cases[0].case_id
+        / "summary.json"
+    )
+    validate_canonical_summary(summary)
+    assert summary["case_id"] == campaign.cases[0].case_id
+    assert summary["terrain_version"] == campaign.cases[0].terrain_version
+    assert summary["counts"]["n_active"] == 2
+    assert summary["counts"]["n_contact"] == 2
+
+
 def test_generic_cli_runs_two_paired_seeds_and_round_trips_summaries(
     tmp_path: Path,
     capsys: Any,
@@ -324,3 +362,39 @@ def test_generic_cli_runs_two_paired_seeds_and_round_trips_summaries(
         }
         assert {case.parameters["spacing_m"] for case in pair} == {0.002, 0.003}
         assert pair[0].case_id != pair[1].case_id
+
+
+def test_canonical_formal_summary_uses_compact_store_without_attachments(
+    tmp_path: Path,
+    capsys: Any,
+) -> None:
+    source = _campaign(17)
+    campaign = replace(
+        source,
+        cases=tuple(
+            replace(
+                case,
+                parameters={
+                    **case.parameters,
+                    "output": {"level": "summary"},
+                },
+            )
+            for case in source.cases
+        ),
+        mode="formal",
+    )
+    catalog = tmp_path / "canonical_formal_summary.json"
+    _write_catalog(catalog, campaign)
+
+    report, campaign_dir = _run_cli(
+        capsys, "run-campaign", catalog, tmp_path / "formal-output"
+    )
+
+    assert report["status_counts"] == {"complete": 2}
+    store = open_result_store(campaign_dir)
+    assert isinstance(store, CompactResultStore)
+    assert not (campaign_dir / "paths").exists()
+    assert [record.run_state for record in store.list_records()] == [
+        "complete",
+        "complete",
+    ]

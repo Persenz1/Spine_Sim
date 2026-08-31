@@ -32,7 +32,15 @@ from spine_sim.core.states import (
     PhysicalState,
     SpringBranch,
 )
-from spine_sim.geometry import CandidateCursor, ContactCandidate, GEOMETRY_VERSION
+from spine_sim.geometry import (
+    CandidateCursor,
+    ContactCandidate,
+    GEOMETRY_VERSION,
+    SpinePath,
+    SpinePose,
+    SurfaceState,
+    query_next_candidate,
+)
 from spine_sim.single_spine import (
     BaseMotion,
     FailurePayload,
@@ -47,6 +55,8 @@ from spine_sim.single_spine import (
     solve_single_spine,
 )
 from spine_sim.terrain.envelope import RodClearanceResult
+from spine_sim.terrain.library import TerrainLibrary
+from spine_sim.terrain.models import RegionSpec, TerrainRecipe
 
 
 def _candidate(
@@ -575,6 +585,79 @@ def test_array_accepted_state_owns_its_local_integrity_boundary() -> None:
         )
 
 
+@pytest.mark.parametrize(
+    ("control_change", "message"),
+    [
+        ({"frame": "another-frame"}, "frame does not match control.frame"),
+        (
+            {"backplate_object": "another-backplate"},
+            "backplate_object does not match control.backplate_object",
+        ),
+    ],
+)
+def test_array_rejects_geometry_control_semantic_mismatch(
+    control_change: Mapping[str, str], message: str
+) -> None:
+    spine = _spine("semantic-mismatch")
+    control = replace(_control(), **control_change)
+
+    with pytest.raises(ConfigurationError, match=message):
+        solve_array_equilibrium(
+            [spine],
+            ArrayAcceptedState.initial([spine]),
+            control,
+            load_parameter=1.0,
+        )
+
+
+def test_candidate_continuation_requires_one_valid_version_lineage() -> None:
+    spine = _spine("candidate-version")
+    wrong_terrain = replace(
+        _candidate("candidate-version-next", candidate_index=1),
+        terrain_version="another-terrain-version",
+    )
+    with pytest.raises(ConfigurationError, match="share one terrain_version"):
+        replace(spine, continuation_candidates=(wrong_terrain,))
+
+    missing_terrain = replace(
+        _candidate("candidate-version-empty", candidate_index=1),
+        terrain_version=" ",
+    )
+    with pytest.raises(ConfigurationError, match="non-empty string"):
+        replace(spine, continuation_candidates=(missing_terrain,))
+
+    stale_geometry = _candidate("candidate-version-stale", candidate_index=1)
+    object.__setattr__(stale_geometry, "geometry_version", "stale-geometry")
+    with pytest.raises(ConfigurationError, match="current geometry_version"):
+        replace(spine, continuation_candidates=(stale_geometry,))
+
+
+def test_array_candidates_require_one_terrain_version_but_allow_distinct_tracks() -> None:
+    first = _spine("terrain-first")
+    second = _spine("terrain-second")
+    accepted = ArrayAcceptedState.initial([first, second])
+
+    # Different track/lineage identities are normal for distinct spines.
+    solve_array_equilibrium(
+        [first, second], accepted, _control(), load_parameter=1.0
+    )
+
+    assert second.candidate is not None
+    mixed = replace(
+        second,
+        candidate=replace(
+            second.candidate, terrain_version="another-terrain-version"
+        ),
+    )
+    with pytest.raises(ConfigurationError, match="share one terrain_version"):
+        solve_array_equilibrium(
+            [first, mixed],
+            ArrayAcceptedState.initial([first, mixed]),
+            _control(),
+            load_parameter=1.0,
+        )
+
+
 def test_active_candidate_missing_from_instance_is_data_integrity_error() -> None:
     spine = _spine("missing-active")
     initial = ArrayAcceptedState.initial([spine])
@@ -724,6 +807,122 @@ def test_force_control_seeds_initially_open_contacts_and_matches_two_spine_close
         [1000.0 * (expected_q - 0.001), 2000.0 * (expected_q - 0.002)]
     )
     assert trial.result.diagnostics.iterations >= 3
+
+
+def test_real_contact_seed_clears_coarse_force_tolerance() -> None:
+    spine = _spine("coarse-tolerance", initial_gap_m=1e-6)
+    coarse = replace(
+        _single_tolerances(),
+        force_N=1e-2,
+        friction_N=1e-2,
+        spring_N=1e-2,
+    )
+    spine = replace(spine, tolerances=coarse)
+
+    trial = solve_array_equilibrium(
+        [spine],
+        ArrayAcceptedState.initial([spine]),
+        _control(required={0: 0.1}, F_ref_N=1.0, L_ref_m=0.01),
+        load_parameter=1.0,
+    )
+
+    assert trial.committable
+    assert trial.result.equilibrium_status is EquilibriumStatus.SOLVED
+    assert trial.result.counts.n_active == 1
+    assert trial.result.per_spine[0].single_result.physical_state is PhysicalState.STICK
+
+
+def test_force_control_seeds_candidate_at_exact_zero_gap() -> None:
+    spine = _spine("exact-zero-gap")
+    accepted = ArrayAcceptedState.initial([spine])
+
+    trial = solve_array_equilibrium(
+        [spine],
+        accepted,
+        _control(required={0: 0.1}, F_ref_N=1.0, L_ref_m=0.01),
+        load_parameter=1.0,
+    )
+
+    assert trial.committable
+    assert trial.result.equilibrium_status is EquilibriumStatus.SOLVED
+    assert trial.result.counts.n_active == 1
+    assert trial.result.total_wrench.force_N[0] == pytest.approx(0.1)
+    assert EventType.CONTACT_REJECT not in {
+        event.event_type for event in trial.result.events
+    }
+
+
+def test_small_terrain_library_candidate_runs_through_real_array_solver(
+    tmp_path: Any,
+) -> None:
+    recipe = TerrainRecipe(
+        seed=7,
+        target_rms_height_m=0.0,
+        correlation_length_x_m=20e-6,
+        correlation_length_y_m=20e-6,
+        kernel_truncate_sigma=2.0,
+    )
+    region = RegionSpec(
+        terrain_recipe_id=recipe.terrain_recipe_id,
+        origin_x_m=-0.3e-3,
+        origin_y_m=-0.2e-3,
+        size_x_m=0.6e-3,
+        size_y_m=0.4e-3,
+        purpose="debug",
+    )
+    library = TerrainLibrary(tmp_path / "terrain")
+    library.generate_region(recipe, region, tile_rows=7)
+    track = library.cache_track(
+        recipe, region, radius_m=50e-6, y_global_m=0.0
+    )
+    mapped = library.open_region(
+        recipe.terrain_recipe_id, region.region_id, verify_hash=True
+    )
+    raw_height = np.array(mapped, copy=True)
+    mapped._mmap.close()
+    valid_mask = np.ones(region.shape, dtype=np.bool_)
+    center_index = track.x_global_m.size // 2
+    path = SpinePath.from_track(
+        track,
+        track.envelope_height_m[[center_index]],
+        track_indices=np.array([center_index]),
+    )
+    pose = SpinePose(
+        tip_axis=np.array([0.0, 0.0, -1.0]),
+        spherical_cap_axial_length_m=25e-6,
+        cone_length_m=50e-6,
+        rod_radius_m=30e-6,
+        exposed_rod_length_m=100e-6,
+    )
+    candidate, _cursor = query_next_candidate(
+        SurfaceState(track, region, raw_height, valid_mask),
+        path,
+        CandidateCursor(),
+        pose,
+    )
+    assert candidate is not None
+    assert candidate.valid
+    assert candidate.rod_clearance.collision is False
+
+    spine = replace(
+        _spine(
+            "terrain-pipeline",
+            normal=(0.0, 0.0, -1.0),
+            initial_gap_m=1e-6,
+        ),
+        candidate=candidate,
+    )
+    trial = solve_array_equilibrium(
+        [spine],
+        ArrayAcceptedState.initial([spine]),
+        _control(required={2: 0.1}, F_ref_N=1.0, L_ref_m=0.01),
+        load_parameter=1.0,
+    )
+
+    assert trial.committable
+    assert trial.result.equilibrium_status is EquilibriumStatus.SOLVED
+    assert trial.result.counts.n_active == 1
+    assert trial.result.total_wrench.force_N[2] == pytest.approx(0.1)
 
 
 def test_partly_engaged_array_can_seed_a_remaining_open_candidate(
@@ -1243,8 +1442,8 @@ def test_inadmissible_slip_is_not_given_directional_status(
 @pytest.mark.parametrize(
     ("velocity_y", "expected"),
     [
-        (-1.0, QuasistaticStability.DIRECTIONALLY_ADMISSIBLE_QUASISTATIC),
-        (1.0, QuasistaticStability.NOT_EVALUATED),
+        (1.0, QuasistaticStability.DIRECTIONALLY_ADMISSIBLE_QUASISTATIC),
+        (-1.0, QuasistaticStability.NOT_EVALUATED),
     ],
 )
 def test_slip_direction_must_be_dissipative(
@@ -1280,6 +1479,31 @@ def test_slip_direction_must_be_dissipative(
 
     assert trial.result.quasistatic_stability is expected
     assert trial.result.dynamic_stability is ModelState.OUT_OF_SCOPE
+
+
+def test_real_sliding_contact_opposes_physical_backplate_velocity() -> None:
+    spine = _spine("physical-drag-sign")
+    q_rate = np.array([0.0, 1e-3, 0.0, 0.0, 0.0, 0.0])
+    trial = solve_array_equilibrium(
+        [spine],
+        ArrayAcceptedState.initial([spine]),
+        _control(
+            q=(1e-6, 1e-4, 0.0, 0.0, 0.0, 0.0),
+            q_rate=tuple(q_rate),
+        ),
+        load_parameter=1.0,
+    )
+
+    single = trial.result.per_spine[0].single_result
+    assert single.physical_state is PhysicalState.SLIP
+    physical_backplate_velocity = -q_rate[:3]
+    assert (
+        np.dot(single.tangential_force_N, physical_backplate_velocity) < 0.0
+    )
+    assert (
+        trial.result.quasistatic_stability
+        is QuasistaticStability.DIRECTIONALLY_ADMISSIBLE_QUASISTATIC
+    )
 
 
 def test_invalid_local_numerical_state_blocks_directional_stability(
@@ -1579,6 +1803,41 @@ def test_contact_reject_advances_candidate_cursor_before_re_equilibration(
     assert trial.committable
     committed = commit_array_trial(accepted, trial)
     assert committed.spine_states[0].search_cursor == next_cursor
+
+
+def test_parameter_unclosed_rejection_survives_candidate_exhaustion() -> None:
+    spine = _spine("unclosed-candidate")
+    assert spine.candidate is not None
+    unresolved = replace(
+        spine.candidate,
+        geometry_uncertain=True,
+        rod_clearance=RodClearanceResult(
+            collision=None,
+            minimum_clearance_m=None,
+            sample_count=0,
+            model_warning=("missing complete body geometry",),
+        ),
+    )
+    spine = replace(spine, candidate=unresolved)
+    accepted = ArrayAcceptedState.initial([spine])
+    loader = np.zeros((6, 6), dtype=float)
+    loader[0, 0] = 1000.0
+
+    trial = solve_array_equilibrium(
+        [spine],
+        accepted,
+        _control(required={0: 0.1}, loader=loader),
+        load_parameter=1.0,
+    )
+
+    assert trial.result.equilibrium_status is EquilibriumStatus.SOLVED
+    assert trial.result.model_state is ModelState.PARAMETER_UNCLOSED
+    assert trial.result.counts.n_active == 0
+    assert [event.details.get("reason") for event in trial.result.events] == [
+        "rod_clearance_unclosed"
+    ]
+    assert not trial.committable
+    assert trial.proposed_state == accepted
 
 
 def test_permanent_failure_cannot_revive_during_same_load_redistribution(

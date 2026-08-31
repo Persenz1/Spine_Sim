@@ -1,6 +1,6 @@
 {
   "schema_version": "spine-parameter-registry-v1",
-  "registry_version": "canonical-parameters-1",
+  "registry_version": "canonical-parameters-2",
   "coordinate_contract": {
     "wall_frame": {
       "value": {

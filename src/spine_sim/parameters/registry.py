@@ -1145,6 +1145,32 @@ def load_registry(path: str | Path | None = None) -> ParameterRegistry:
     return ParameterRegistry(document)
 
 
+def generate_source_defined_m3a() -> tuple[SpinePackage, ...]:
+    """用随包 registry 生成有来源定义的 M3-A 针杆方案。"""
+
+    return load_registry().generate_source_defined_m3a()
+
+
+def generate_source_defined_m3b() -> tuple[ArrayGeometry, ...]:
+    """用随包 registry 生成有来源定义的 M3-B 阵列方案。"""
+
+    return load_registry().generate_source_defined_m3b()
+
+
+def generate_legacy_full_scan() -> tuple[LegacyDesign, ...]:
+    """生成冻结的旧 full-scan 设计表，仅作为迁移与 provenance 输入。"""
+
+    return load_registry().generate_legacy_full_scan()
+
+
+def import_legacy_design(
+    value: Mapping[str, Any], *, protocol_id: str = "legacy_full_scan"
+) -> ImportedLegacyDesign:
+    """通过随包 registry 把一个旧设计映射到当前规范参数。"""
+
+    return load_registry().import_legacy_design(value, protocol_id=protocol_id)
+
+
 __all__ = [
     "ArrayGeometry",
     "CanonicalDesign",
@@ -1162,6 +1188,10 @@ __all__ = [
     "TerminalPreset",
     "axis_from_pitch_yaw",
     "equal_height_length_m",
+    "generate_legacy_full_scan",
+    "generate_source_defined_m3a",
+    "generate_source_defined_m3b",
+    "import_legacy_design",
     "legacy_design_id",
     "load_registry",
 ]

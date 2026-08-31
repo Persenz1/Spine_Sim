@@ -24,7 +24,7 @@ from .core.states import (
     NumericalState,
     PhysicalState,
 )
-from .geometry import ContactCandidate
+from .geometry import ContactCandidate, GEOMETRY_VERSION
 from .metrics import ArrayCounts, SpineMetricInput, compute_array_counts
 from .single_spine import (
     BaseMotion,
@@ -37,6 +37,7 @@ from .single_spine import (
     SpineMaterial,
     SuspensionParameters,
     solve_single_spine,
+    spine_linear_compliance,
 )
 
 
@@ -247,7 +248,7 @@ class SpineInstance:
     search_distance_increment_m: float = 0.0
 
     def __post_init__(self) -> None:
-        """校验间隙、搜索增量及候选 ID/序号的严格有序性。"""
+        """校验间隙、搜索增量及候选 continuation 的谱系一致性。"""
 
         if not math.isfinite(self.initial_gap_m) or self.initial_gap_m < 0.0:
             raise ConfigurationError("initial_gap_m must be finite and non-negative")
@@ -269,6 +270,26 @@ class SpineInstance:
             raise ConfigurationError(
                 "candidate continuation must have unique IDs and increasing indices"
             )
+        if candidates:
+            terrain_versions = tuple(item.terrain_version for item in candidates)
+            if any(
+                not isinstance(version, str) or not version.strip()
+                for version in terrain_versions
+            ):
+                raise ConfigurationError(
+                    "candidate terrain_version must be a non-empty string"
+                )
+            if len(set(terrain_versions)) != 1:
+                raise ConfigurationError(
+                    "candidate continuation must share one terrain_version"
+                )
+            geometry_versions = tuple(item.geometry_version for item in candidates)
+            if any(
+                version != GEOMETRY_VERSION for version in geometry_versions
+            ):
+                raise ConfigurationError(
+                    "candidate continuation must use the current geometry_version"
+                )
 
     @property
     def spine_id(self) -> str:
@@ -746,10 +767,6 @@ def _predict_contact_seed(
     desired_mode = -admissible_basis.T @ (row_scale * residual)
     best_score = 0.0
     best: tuple[Vector6, tuple[int, str]] | None = None
-    probe = max(
-        1e-9,
-        16.0 * max(spine.tolerances.gap_m for spine in spines),
-    )
     for index, (spine, state) in enumerate(zip(spines, states, strict=True)):
         if state.physical_state is not PhysicalState.SEARCH:
             continue
@@ -765,6 +782,27 @@ def _predict_contact_seed(
             continue
         normal = candidate.selected_normal / np.linalg.norm(
             candidate.selected_normal
+        )
+        compliance = spine_linear_compliance(
+            spine.geometry, spine.material, spine.suspension
+        )
+        normal_compliance = float(normal @ compliance @ normal)
+        spring_stiffness = spine.suspension.axial_spring_stiffness_N_per_m
+        if spring_stiffness is not None:
+            compression_direction = -np.asarray(
+                spine.geometry.axis_root_to_tip, dtype=np.float64
+            )
+            compression_direction /= np.linalg.norm(compression_direction)
+            normal_compliance += (
+                float(np.dot(normal, compression_direction)) ** 2
+                / spring_stiffness
+            )
+        # seed 不仅要越过几何 gap 容差，还必须产生高于单刺力容差的试探反力；
+        # 否则 CONTACT 会被当成零反力拒绝并推进 cursor，粗容差正式算例将永久漏接触。
+        probe = max(
+            1e-9,
+            16.0 * spine.tolerances.gap_m,
+            2.0 * spine.tolerances.force_N * normal_compliance,
         )
         point = (
             candidate.sphere_center_m
@@ -1070,10 +1108,12 @@ def _stability(
                     single.evaluated_motion.relative_tangential_velocity_m_per_s,
                     dtype=np.float64,
                 )
-                dissipation = float(
+                # physical_backplate_velocity = -constraint_relative_velocity；
+                # 因此墙面支撑力在背板上的物理功率为 -F_t·v_rel，耗散要求其不为正。
+                physical_power = -float(
                     np.dot(single.tangential_force_N, velocity)
                 )
-                admissible &= dissipation <= local_tolerance.force_N * max(
+                admissible &= physical_power <= local_tolerance.force_N * max(
                     local_tolerance.velocity_m_per_s,
                     float(np.linalg.norm(velocity)),
                 )
@@ -1139,6 +1179,26 @@ def solve_array_equilibrium(
     state_ids = [state.spine_id for state in accepted.spine_states]
     if ids != state_ids or len(ids) != len(set(ids)):
         raise ConfigurationError("array spine IDs/order must be unique and stable")
+    for spine in spines:
+        if spine.geometry.frame != control.frame:
+            raise ConfigurationError(
+                f"spine {spine.spine_id!r} frame does not match control.frame"
+            )
+        if spine.geometry.backplate_object != control.backplate_object:
+            raise ConfigurationError(
+                f"spine {spine.spine_id!r} backplate_object does not match "
+                "control.backplate_object"
+            )
+    terrain_versions = {
+        candidate.terrain_version
+        for spine in spines
+        for candidate in (spine.candidate, *spine.continuation_candidates)
+        if candidate is not None
+    }
+    if len(terrain_versions) > 1:
+        raise ConfigurationError(
+            "array candidates must share one terrain_version"
+        )
     load_parameter = float(load_parameter)
     if not math.isfinite(load_parameter):
         raise ConfigurationError("load_parameter must be finite")
@@ -1192,6 +1252,7 @@ def solve_array_equilibrium(
     )
     failed_indices: set[int] = set()
     cascade_events: list[Event] = []
+    parameter_unclosed_encountered = False
     last_event_results: dict[int, SingleSpineResult] = {}
     cascade_released: list[Mapping[str, Any]] = []
     rebalance_predictions: list[Mapping[str, Any]] = []
@@ -1345,6 +1406,10 @@ def solve_array_equilibrium(
             failure = trial.result.failure
             if index in selected_event_indices:
                 # 只提交全局最早事件；其余刺的 trial 仍基于旧状态，下一轮重新计算。
+                if trial.result.model_state is ModelState.PARAMETER_UNCLOSED:
+                    # 候选拒绝可能推进 cursor，后续无候选装配本身会返回
+                    # CLOSED；未闭合原因必须跨事件级联保留到阵列结果。
+                    parameter_unclosed_encountered = True
                 event_fraction = _trial_event_location(trial)[1]
                 if not math.isfinite(event_fraction):
                     event_fraction = 1.0
@@ -1557,7 +1622,7 @@ def solve_array_equilibrium(
     model_state = ModelState.CLOSED
     if equilibrium_status is EquilibriumStatus.MODEL_LIMIT:
         model_state = ModelState.OUT_OF_SCOPE
-    elif any(
+    elif parameter_unclosed_encountered or any(
         trial.result.model_state is ModelState.PARAMETER_UNCLOSED
         for trial in assembly.trials
     ):
@@ -1641,7 +1706,11 @@ def solve_array_equilibrium(
         QuasistaticStability.NO_FREE_MODE,
         QuasistaticStability.DIRECTIONALLY_ADMISSIBLE_QUASISTATIC,
     }
-    committable = solution_accepted and acceptable_stability
+    committable = (
+        solution_accepted
+        and acceptable_stability
+        and model_state is ModelState.CLOSED
+    )
     # 不可提交 trial 返回原 accepted state，调用方仍可读取完整失败诊断而不会污染状态。
     if committable:
         proposed_states = tuple(

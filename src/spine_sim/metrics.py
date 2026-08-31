@@ -63,7 +63,10 @@ def _inverse_simpson(values: Sequence[float]) -> float | None:
     total = float(np.sum(array))
     if total <= 0.0:
         return None
-    denominator = float(np.dot(array, array))
+    # 极小力平方下溢在这里的语义就是“无法分辨分担根数”，
+    # 不应因调用方全局开启 ``numpy.seterr(all="raise")`` 而改变接口结果。
+    with np.errstate(under="ignore"):
+        denominator = float(np.dot(array, array))
     if denominator <= 0.0:
         return None
     return total * total / denominator

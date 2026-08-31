@@ -7,7 +7,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Literal
+from typing import Iterator, Literal
 
 import numpy as np
 from numpy.typing import ArrayLike, NDArray
@@ -727,6 +727,24 @@ def query_next_candidate(
     )
 
 
+def drive_candidate_path(
+    surface_state: SurfaceState,
+    spine_path: SpinePath,
+    spine_pose: SpinePose,
+    cursor: CandidateCursor | None = None,
+) -> Iterator[ContactCandidate]:
+    """沿唯一 continuation cursor 依次生成不同表面 feature 的候选。"""
+
+    current = CandidateCursor() if cursor is None else cursor
+    while not current.exhausted:
+        candidate, current = query_next_candidate(
+            surface_state, spine_path, current, spine_pose
+        )
+        if candidate is None:
+            break
+        yield candidate
+
+
 __all__ = [
     "CandidateCursor",
     "ContactCandidate",
@@ -734,5 +752,6 @@ __all__ = [
     "SpinePath",
     "SpinePose",
     "SurfaceState",
+    "drive_candidate_path",
     "query_next_candidate",
 ]

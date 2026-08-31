@@ -657,6 +657,17 @@ def _beam_compliance(
     return compliance
 
 
+def spine_linear_compliance(
+    geometry: SpineGeometry,
+    material: SpineMaterial,
+    suspension: SuspensionParameters,
+) -> Matrix3:
+    """返回单刺梁与线性悬架在其声明坐标系中的三维柔度矩阵。"""
+
+    axis = _unit3(geometry.axis_root_to_tip, "axis_root_to_tip")
+    return _beam_compliance(geometry, material, suspension, axis)
+
+
 def _branch_compliance(
     base_compliance: Matrix3,
     compression_direction: Vector3,
@@ -760,7 +771,8 @@ def _solve_contact_for_branch(
         )
 
     if velocity_norm > tolerances.velocity_m_per_s:
-        # 动摩擦方向与接触约束的相对切向速度相反。
+        # 这里的速度是“墙面接触约束相对刺根”的速度；墙面对刺/背板的摩擦力
+        # 与它同向，因而与刺根相对墙面的真实速度反向。
         slip_direction = velocity / velocity_norm
     else:
         tangent_norm = float(np.linalg.norm(required_tangent))
@@ -776,9 +788,9 @@ def _solve_contact_for_branch(
                 np.zeros(3, dtype=np.float64),
                 PhysicalState.STICK,
             )
-        slip_direction = -required_tangent / tangent_norm
-    cone_direction = normal - friction.kinetic_coefficient * slip_direction
-    # F=Fn(n-μ_k v̂)，再由法向位移相容条件求唯一 Fn。
+        slip_direction = required_tangent / tangent_norm
+    cone_direction = normal + friction.kinetic_coefficient * slip_direction
+    # F=Fn(n+μ_k v̂_constraint/root)，再由法向位移相容条件求唯一 Fn。
     denominator = float(normal @ compliance @ cone_direction)
     if denominator <= 0.0 or not math.isfinite(denominator):
         raise np.linalg.LinAlgError("sliding contact has no positive normal compliance")
@@ -1944,8 +1956,8 @@ def solve_single_spine(
 
     # 阶段 3：建立梁/悬架柔度，在目标位移上求活动集，并定位步内最早事件。
     compression_direction = -axis
-    base_compliance = _beam_compliance(
-        geometry, material, suspension, axis
+    base_compliance = spine_linear_compliance(
+        geometry, material, suspension
     )
     start_displacement = np.asarray(
         accepted.relative_displacement_m, dtype=np.float64
@@ -2036,6 +2048,32 @@ def solve_single_spine(
     if mechanical.normal_force_N <= tolerances.force_N:
         # 单边接触不能提供拉向表面的负法向反力。
         if accepted.physical_state is PhysicalState.SEARCH:
+            if mechanical.normal_force_N >= -tolerances.force_N:
+                # 候选恰好闭合但还没有反力时不是几何拒绝：力控阵列需要
+                # 保留它，才能在秩不足后生成越过力容差的 contact seed。
+                # 此处不产生 CONTACT_REJECT，也不推进 continuation cursor。
+                proposed = replace(
+                    accepted,
+                    relative_displacement_m=motion.relative_displacement_m,
+                    last_load_parameter=motion.load_parameter,
+                    revision=accepted.revision + 1,
+                )
+                result = _zero_result(
+                    geometry,
+                    motion,
+                    PhysicalState.SEARCH,
+                    accepted.spring_branch,
+                    ModelState.CLOSED,
+                    NumericalState.CONVERGED,
+                    assumptions=("zero_reaction_candidate_retained",),
+                )
+                return SingleSpineTrial(
+                    geometry.spine_id,
+                    accepted.revision,
+                    proposed,
+                    result,
+                    True,
+                )
             return _rejected_search_trial(
                 geometry,
                 accepted,
@@ -2406,4 +2444,5 @@ __all__ = [
     "solve_single_spine",
     "solve_unilateral_spring",
     "solve_wedge_2d",
+    "spine_linear_compliance",
 ]
