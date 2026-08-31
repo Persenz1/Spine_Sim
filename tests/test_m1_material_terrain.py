@@ -368,6 +368,72 @@ class MaterialGenerationTests(unittest.TestCase):
             self.assertFalse(second.footprint_valid_mask[column])
             self.assertFalse(second.valid_mask[column])
 
+    def test_cache_track_migrates_legacy_synthetic_material_metadata(self) -> None:
+        terrain = self._generate("concrete", "rough_wall")
+        with tempfile.TemporaryDirectory() as temporary:
+            library = TerrainLibrary(temporary)
+            recipe, region, _ = register_terrain(temporary, terrain)
+            directory = library.region_dir(
+                recipe.terrain_recipe_id, region.region_id
+            )
+            metadata_path = directory / "metadata.json"
+            manifest_path = library.region_manifest_path(
+                recipe.terrain_recipe_id, region.region_id
+            )
+            # 2026-07 的 synthetic material region 只有 height/valid mask，尚未
+            # 保存规范测量语义和 geometry-uncertain 零掩码。
+            uncertain_path = directory / "geometry_uncertain_mask.npy"
+            uncertain_path.unlink()
+            for path in (metadata_path, manifest_path):
+                metadata = json.loads(path.read_text(encoding="utf-8"))
+                del metadata["measurement_semantics"]
+                metadata.pop("geometry_uncertain_mask_file")
+                metadata.pop("geometry_uncertain_mask_sha256")
+                metadata["material_metadata"].pop("measurement_semantics")
+                path.write_text(json.dumps(metadata), encoding="utf-8")
+
+            track = library.cache_track(
+                recipe, region, radius_m=50e-6, y_global_m=0.2e-3
+            )
+
+            self.assertGreater(np.count_nonzero(track.valid_mask), 0)
+            for path in (metadata_path, manifest_path):
+                migrated = json.loads(path.read_text(encoding="utf-8"))
+                self.assertEqual(
+                    migrated["measurement_semantics"]["status"],
+                    "not_applicable",
+                )
+                self.assertIn("metadata_migrated_at_utc", migrated)
+
+    def test_legacy_measured_material_metadata_is_not_inferred(self) -> None:
+        terrain = self._generate("concrete", "rough_wall")
+        with tempfile.TemporaryDirectory() as temporary:
+            library = TerrainLibrary(temporary)
+            recipe, region, _ = register_terrain(temporary, terrain)
+            directory = library.region_dir(
+                recipe.terrain_recipe_id, region.region_id
+            )
+            metadata_path = directory / "metadata.json"
+            manifest_path = library.region_manifest_path(
+                recipe.terrain_recipe_id, region.region_id
+            )
+            (directory / "geometry_uncertain_mask.npy").unlink()
+            for path in (metadata_path, manifest_path):
+                metadata = json.loads(path.read_text(encoding="utf-8"))
+                del metadata["measurement_semantics"]
+                metadata.pop("geometry_uncertain_mask_file")
+                metadata.pop("geometry_uncertain_mask_sha256")
+                metadata["material_metadata"]["resolved_mode"] = "measured"
+                path.write_text(json.dumps(metadata), encoding="utf-8")
+
+            with self.assertRaisesRegex(
+                TerrainConfigurationError,
+                "measurement_semantics.*rebuild",
+            ):
+                library.cache_track(
+                    recipe, region, radius_m=50e-6, y_global_m=0.2e-3
+                )
+
     def test_registered_geometry_bounds_round_trip_into_track(self) -> None:
         terrain = self._generate("sandpaper", "P200")
         bounded = Terrain(

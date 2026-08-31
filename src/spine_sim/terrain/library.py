@@ -53,6 +53,40 @@ def _defined_geometry_measurement_semantics() -> dict[str, Any]:
     }
 
 
+def _infer_legacy_region_measurement_semantics(
+    recipe: TerrainRecipe,
+    metadata: dict[str, Any],
+) -> dict[str, Any] | None:
+    """只为身份闭合的非测量旧 region 推断规范测量语义。"""
+
+    if recipe.generator_name == "defined_geometry":
+        return _defined_geometry_measurement_semantics()
+    if recipe.generator_name != "material_hybrid":
+        return None
+    material_metadata = metadata.get("material_metadata")
+    if not isinstance(material_metadata, dict):
+        return None
+    # synthetic 输出不携带探针、反卷积或测量公差语义；只有材料、seed、
+    # profile 和实际生成模式都与 recipe 对齐时，才可安全补成 not_applicable。
+    identity_matches = (
+        recipe.generation_mode == "synthetic"
+        and material_metadata.get("resolved_mode") == "synthetic"
+        and metadata.get("material") == recipe.material
+        and metadata.get("subtype") == recipe.subtype
+        and metadata.get("seed") == recipe.seed
+        and material_metadata.get("profile_hash") == recipe.profile_hash
+    )
+    optional_geometry_fields = {
+        "geometry_uncertain_mask_file",
+        "determinate_mask_file",
+        "geometry_lower_bound_file",
+        "geometry_upper_bound_file",
+    }
+    if not identity_matches or optional_geometry_fields & metadata.keys():
+        return None
+    return _defined_geometry_measurement_semantics()
+
+
 def _close_memmap(array: np.ndarray | None) -> None:
     """显式释放 NumPy memmap 句柄，尤其用于 Windows 删除/替换前。"""
 
@@ -152,15 +186,18 @@ class TerrainLibrary:
             / f"{_safe_id(region_id, 'region_id')}.json"
         )
 
-    def _migrate_legacy_defined_region_metadata(
+    def _migrate_legacy_region_metadata(
         self,
         recipe: TerrainRecipe,
         region: RegionSpec,
         metadata: dict[str, Any],
     ) -> dict[str, Any]:
-        """为 0.3.0 defined-region COMPLETE 缓存补齐可推断语义。"""
+        """为可证明非测量的旧 COMPLETE region 补齐规范语义。"""
 
-        if recipe.generator_name != "defined_geometry":
+        inferred_semantics = _infer_legacy_region_measurement_semantics(
+            recipe, metadata
+        )
+        if inferred_semantics is None:
             return metadata
         directory = self.region_dir(recipe.terrain_recipe_id, region.region_id)
         metadata_path = directory / "metadata.json"
@@ -235,9 +272,12 @@ class TerrainLibrary:
                     return migrated
             else:
                 migrated = dict(current)
-                migrated["measurement_semantics"] = (
-                    _defined_geometry_measurement_semantics()
+                locked_semantics = _infer_legacy_region_measurement_semantics(
+                    recipe, current
                 )
+                if locked_semantics is None:
+                    return current
+                migrated["measurement_semantics"] = locked_semantics
                 migrated["metadata_migrated_at_utc"] = utc_now()
             # cache metadata 是后续是否仍需迁移的判据，因此最后发布它：若前一次
             # manifest 写入或进程在两步之间失败，下次调用仍会安全重试两步。
@@ -480,7 +520,7 @@ class TerrainLibrary:
         complete_path = directory / "COMPLETE"
         if complete_path.is_file() and not overwrite:
             metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
-            return self._migrate_legacy_defined_region_metadata(
+            return self._migrate_legacy_region_metadata(
                 recipe, region, metadata
             )
         if complete_path.exists():
@@ -586,7 +626,10 @@ class TerrainLibrary:
         metadata_path = directory / "metadata.json"
         complete_path = directory / "COMPLETE"
         if complete_path.is_file() and not overwrite:
-            return json.loads(metadata_path.read_text(encoding="utf-8"))
+            metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+            return self._migrate_legacy_region_metadata(
+                recipe, region, metadata
+            )
         if complete_path.exists():
             complete_path.unlink()
 
@@ -913,7 +956,7 @@ class TerrainLibrary:
         region_metadata = json.loads(
             metadata_path_region.read_text(encoding="utf-8")
         )
-        region_metadata = self._migrate_legacy_defined_region_metadata(
+        region_metadata = self._migrate_legacy_region_metadata(
             recipe, region, region_metadata
         )
         measurement_semantics = region_metadata.get("measurement_semantics")
