@@ -40,9 +40,9 @@ T/P、预载和平面摩擦参考应一起解释，不把简单超过0.2 N当成
 
 ## 命令
 
-从仓库根目录使用项目环境。正式结果目录是持久数据，示例取
-`E:\Agent_Tmp_WS\ijms_small_20260910_run`，这是明确保留的研究结果目录，不能按临时文件清理；不要放在 PDrive 或源码目录。
-临时写入缓冲由程序放在独立的 `E:\Agent_Tmp_WS\ijms_small_runtime` 子目录中并正常清理。
+从仓库根目录使用项目环境。用户指定过程产物和结果统一存入
+`E:\TestData\IJMS`，这也是CLI默认目录；源码和现有环境仍留在仓库。
+其中`campaigns/`保存生成配置，`surfaces/`保存共享地形，`results/`保存仿真结果，`logs/`保存运行日志，`tmp/`保存临时写入缓冲。程序将TEMP/TMP指向此tmp子目录，worker继承设置。研究数据必须保留，不得把整个IJMS目录按临时文件清理。
 
 ```powershell
 Set-Location D:\Code\Spine_Sim
@@ -51,19 +51,19 @@ $env:OMP_NUM_THREADS = '1'
 $env:OPENBLAS_NUM_THREADS = '1'
 $env:MKL_NUM_THREADS = '1'
 .\.venv\Scripts\python.exe -B scripts/run_ijms_small.py prepare --dry-run
-.\.venv\Scripts\python.exe -B scripts/run_ijms_small.py run --output-dir E:\Agent_Tmp_WS\ijms_small_20260910_run --workers 4
+.\.venv\Scripts\python.exe -B scripts/run_ijms_small.py run --output-dir E:\TestData\IJMS --workers 4
 ```
 
 `run` 包含按需准备，通常无需先 `prepare`。只准备第一个分片而不运行可用：
 
 ```powershell
-.\.venv\Scripts\python.exe -B scripts/run_ijms_small.py prepare --output-dir E:\Agent_Tmp_WS\ijms_small_20260910_run --max-shards 1
+.\.venv\Scripts\python.exe -B scripts/run_ijms_small.py prepare --output-dir E:\TestData\IJMS --max-shards 1
 ```
 
 独立查看已有进度：
 
 ```powershell
-.\.venv\Scripts\python.exe -B scripts/run_ijms_small.py status --output-dir E:\Agent_Tmp_WS\ijms_small_20260910_run
+.\.venv\Scripts\python.exe -B scripts/run_ijms_small.py status --output-dir E:\TestData\IJMS
 ```
 
 该命令分别报告执行状态和物理终止状态、尚无结果数、最近结果时间及累计 case 耗时。
@@ -78,7 +78,7 @@ $env:MKL_NUM_THREADS = '1'
 `--max-shards N` 仅限制这次访问的队列前缀，`--start-shard K` 用于零起点的明确任务分片。
 它们不缩减正式样本表。完成前缀后恢复完整队列应去掉 `--max-shards`。
 不要让两个进程同时运行同一分片；可调整 workers，不能擅改科学参数来提高吞吐量。
-如通过 PowerShell 后台启动，使用 `Start-Process -WindowStyle Hidden`，重定向日志至结果目录。
+如通过PowerShell后台启动，使用`Start-Process -WindowStyle Hidden`，先创建`E:\TestData\IJMS\logs`，将stdout/stderr重定向到该目录。
 
 ## 给 DeepSeek 的任务
 

@@ -31,7 +31,8 @@ from .terrain.models import MATERIAL_TERRAIN_VERSION
 
 
 DEFAULT_CONFIG = Path(__file__).resolve().parents[2] / "experiments" / "ijms_small_array.json"
-TEMP_ROOT = Path("E:/Agent_Tmp_WS/ijms_small_runtime")
+DEFAULT_OUTPUT = Path("E:/TestData/IJMS")
+TEMP_ROOT = DEFAULT_OUTPUT / "tmp"
 
 
 def read_config(path: Path = DEFAULT_CONFIG) -> dict[str, Any]:
@@ -40,8 +41,7 @@ def read_config(path: Path = DEFAULT_CONFIG) -> dict[str, Any]:
 
 def _write_json(path: Path, value: Any) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    # These are persistent configurations. All disposable write buffers stay
-    # under the user's temporary-workspace root, even for a results folder on D:.
+    # The user assigned both process files and results to the IJMS data root.
     TEMP_ROOT.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix="ijms-small-write-", dir=TEMP_ROOT) as directory:
         temporary = Path(directory) / path.name
@@ -259,6 +259,9 @@ def status(output: Path, config: Mapping[str, Any]) -> dict[str, Any]:
 def execute(config: Mapping[str, Any], output: Path, *, prepare_only: bool, workers: int,
             max_shards: int | None = None, start_shard: int = 0) -> dict[str, int]:
     output = output.resolve()
+    TEMP_ROOT.mkdir(parents=True, exist_ok=True)
+    os.environ["TEMP"] = os.environ["TMP"] = str(TEMP_ROOT)
+    tempfile.tempdir = str(TEMP_ROOT)
     freeze_config(output, config)
     designs = design_table(config)
     backend = None if prepare_only else discover_backend(BackendConfig(preference="cpu", allow_gpu=False))
@@ -294,7 +297,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("action", choices=("prepare", "run", "status"))
     parser.add_argument("--config", type=Path, default=DEFAULT_CONFIG)
-    parser.add_argument("--output-dir", type=Path)
+    parser.add_argument("--output-dir", type=Path, default=DEFAULT_OUTPUT,
+                        help="process files and results root (default: E:/TestData/IJMS)")
     parser.add_argument("--workers", type=int, default=max(1, min(4, (os.cpu_count() or 2)//2)))
     parser.add_argument("--max-shards", type=int, help="execution prefix only; does not change the registered 64-realization design")
     parser.add_argument("--start-shard", type=int, default=0, help="zero-based operational partition; use the same output directory")
@@ -304,8 +308,6 @@ def main(argv: Sequence[str] | None = None) -> int:
     if args.dry_run:
         print(json.dumps(describe(config), ensure_ascii=False, indent=2))
         return 0
-    if args.output_dir is None:
-        parser.error("--output-dir is required unless --dry-run is used")
     if args.workers < 1 or args.start_shard < 0 or (args.max_shards is not None and args.max_shards < 1):
         parser.error("workers/max-shards must be positive and start-shard non-negative")
     if args.action == "status":

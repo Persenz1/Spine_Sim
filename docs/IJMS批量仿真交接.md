@@ -14,12 +14,12 @@ runner 已按这个 callable 接入新版模型、求解器、几何与装配版
 
 ## 1. 准备一个独立任务目录
 
-在仓库根目录执行以下 PowerShell。`ijms_batch_20260910` 应改为本次任务名。过程配置、先导结果、临时文件都放在 `E:\Agent_Tmp_WS` 下；仓库源码和已有 `.venv` 留在原处。不要在 PDrive 建临时目录。
+在仓库根目录执行以下PowerShell。用户指定本项目过程产物与结果统一放在`E:\TestData\IJMS`；临时缓冲使用其`tmp`子目录。仓库源码和已有`.venv`留在原处，不在PDrive建临时目录。小阵列自动入口直接遵循[启动说明](IJMS小阵列启动.md)，以下是手动配置接口示例。
 
 ```powershell
 Set-Location -LiteralPath 'D:\Code\Spine_Sim'
 $ijmsPython = 'D:\Code\Spine_Sim\.venv\Scripts\python.exe'
-$ijmsTask = 'E:\Agent_Tmp_WS\ijms_batch_20260910'
+$ijmsTask = 'E:\TestData\IJMS'
 New-Item -ItemType Directory -Force -Path "$ijmsTask\config", "$ijmsTask\tmp" | Out-Null
 $env:TEMP = "$ijmsTask\tmp"
 $env:TMP = "$ijmsTask\tmp"
@@ -165,7 +165,7 @@ Get-ChildItem -LiteralPath "$ijmsResultRoot\input_configs\shards" -Filter 'campa
 
 恢复粒度是 case：已完整落盘的 case 跳过，被中断而未完整保存的 case 从头运行，不从某个拖动站点继续。可对所有原分片逐个调用 `resume`。`retry-failed` 仅重跑已有执行错误记录，不会自动重跑正常返回的 `NUMERICAL_FAILURE`、模型边界或未建立承载的物理结果。
 
-改了设计、网格、步长或目标协议后，用新配置和新输出任务进行比较。调整 worker 数可通过命令行覆盖；不要修改求解参数后把重算称为同一次断点恢复。完成后保留正式结果、输入配置及其引用的数据；只有确认它们不依赖任务临时目录后，才清理该任务在 `E:\Agent_Tmp_WS` 下的专属子目录。
+改了设计、网格、步长或目标协议后，用新配置和明确的独立输出子目录进行比较。调整worker数可通过命令行覆盖；不要修改求解参数后把重算称为同一次断点恢复。保留正式结果、输入配置及引用数据，仅在确认无依赖后清理`E:\TestData\IJMS\tmp`中的本任务缓冲，不清理整个IJMS目录。
 
 ## 5. 输出与状态解释
 
