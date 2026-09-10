@@ -7,7 +7,9 @@ discretization, not a cantilever stiffness updated with the current length.
 Its accuracy is controlled by segment refinement.
 
 The dimensionless state is ``[s / l0, beta_1, gamma_1, ...]``. The spring stores
-``k*s**2/2`` and the bending energy scales with ``1/(l0-s)``. Differentiating
+``k*s**2/2``. A tapered needle integrates its actual section rigidity over
+each exposed material interval; the taper does not stretch during retraction.
+Differentiating
 the SAME energy and kinematics retains the moving-boundary configurational
 force. The lower compression bound does not generate an anti-pullout reaction
 unless ``lower_stop`` is explicitly enabled by the assembly definition.
@@ -66,13 +68,22 @@ class GuidedRodParameters:
     segments: int = 3
     lower_stop: bool = False
     allowable_stress_Pa: float | None = None
+    taper_length_m: float = 0.0
+    mount_type: str = "spring"
 
     def __post_init__(self) -> None:
         if min(self.free_length_m, self.diameter_m, self.young_modulus_Pa,
-               self.spring_stiffness_N_per_m, self.tip_radius_m) <= 0:
-            raise ValueError("Rod length, diameter, modulus, spring stiffness and radius must be positive")
-        if not 0 <= self.max_compression_m < self.free_length_m:
-            raise ValueError("Compression travel must satisfy 0 <= smax < l0")
+               self.tip_radius_m) <= 0:
+            raise ValueError("Rod length, diameter, modulus and radius must be positive")
+        if self.mount_type not in ("spring", "fixed"):
+            raise ValueError("mount_type must be 'spring' or 'fixed'")
+        if self.mount_type == "spring" and self.spring_stiffness_N_per_m <= 0:
+            raise ValueError("A spring installation requires positive spring stiffness")
+        if self.max_compression_m < 0:
+            raise ValueError("Nominal compression travel must be nonnegative")
+        if self.taper_length_m < 0 or (self.taper_length_m > 0
+                                      and self.tip_radius_m > self.diameter_m / 2):
+            raise ValueError("Taper length must be nonnegative and its tip no wider than the shaft")
         if self.segments < 1:
             raise ValueError("At least one rod segment is required")
         if self.allowable_stress_Pa is not None and self.allowable_stress_Pa <= 0:
@@ -88,7 +99,50 @@ class GuidedRodParameters:
 
     @property
     def bending_rigidity_Nm2(self) -> float:
+        """Main shaft rigidity; a tapered rod does not use this along its whole length."""
         return self.young_modulus_Pa * self.second_moment_m4
+
+    @property
+    def compression_limit_m(self) -> float:
+        """Available compression domain, without changing the rated spring stroke.
+
+        The exposed-length endpoint is open: l=0 is a geometry limit, not a
+        load-carrying hard stop. Fixed installations have no compression DOF.
+        """
+        return 0.0 if self.mount_type == "fixed" else min(self.max_compression_m, self.free_length_m)
+
+    @property
+    def geometry_limited_compression(self) -> bool:
+        return self.mount_type == "spring" and self.max_compression_m >= self.free_length_m
+
+    def section_radius_m(self, distance_from_tip_m: ArrayLike) -> FloatArray:
+        """Section radius at material coordinate u, measured from ball centre toward guide."""
+        u = np.asarray(distance_from_tip_m, dtype=float)
+        if self.taper_length_m == 0:
+            return np.full_like(u, self.diameter_m / 2)
+        fraction = np.clip(u / self.taper_length_m, 0.0, 1.0)
+        return self.tip_radius_m + (self.diameter_m / 2 - self.tip_radius_m) * fraction
+
+    def section_area_m2(self, distance_from_tip_m: ArrayLike) -> FloatArray:
+        return np.pi * self.section_radius_m(distance_from_tip_m)**2
+
+    def section_second_moment_m4(self, distance_from_tip_m: ArrayLike) -> FloatArray:
+        return np.pi * self.section_radius_m(distance_from_tip_m)**4 / 4
+
+    def integrated_second_moment_m5(self, lower_m: ArrayLike, upper_m: ArrayLike) -> FloatArray:
+        """Exact integral of I(u) on exposed material intervals (nonnegative u)."""
+        lo, hi = np.asarray(lower_m, dtype=float), np.asarray(upper_m, dtype=float)
+        if self.taper_length_m == 0 or self.tip_radius_m == self.diameter_m / 2:
+            return self.second_moment_m4 * (hi - lo)
+        slope = (self.diameter_m / 2 - self.tip_radius_m) / self.taper_length_m
+        tlo, thi = np.minimum(lo, self.taper_length_m), np.minimum(hi, self.taper_length_m)
+        alo, ahi = self.tip_radius_m + slope * tlo, self.tip_radius_m + slope * thi
+        # Factoring the difference of fifth powers avoids cancellation in short intervals.
+        fifth_difference = (ahi - alo) * sum(ahi**j * alo**(4-j) for j in range(5))
+        taper_integral = np.pi * fifth_difference / (20 * slope)
+        shaft_integral = self.second_moment_m4 * (np.maximum(hi-self.taper_length_m, 0)
+                                                  - np.maximum(lo-self.taper_length_m, 0))
+        return taper_integral + shaft_integral
 
 
 @dataclass(frozen=True)
@@ -161,7 +215,17 @@ class GuidedRod:
 
     @property
     def compression_bounds(self) -> tuple[float, float]:
-        return (0.0, self.parameters.max_compression_m / self.parameters.free_length_m)
+        return (0.0, self.parameters.compression_limit_m / self.parameters.free_length_m)
+
+    @property
+    def segment_fractions(self) -> FloatArray:
+        """Guide-to-tip node positions; tapered rods resolve their thin end more finely."""
+        fractions = np.linspace(0.0, 1.0, self.parameters.segments + 1)
+        return fractions if self.parameters.taper_length_m == 0 else 1.0 - (1.0-fractions)**2
+
+    def segment_boundaries_m(self, state: ArrayLike) -> FloatArray:
+        """Arc lengths from the guide to all tangent nodes, including the ball centre."""
+        return self.parameters.free_length_m * (1.0 - np.asarray(state)[0]) * self.segment_fractions
 
     def zero_state(self) -> FloatArray:
         return np.zeros(self.dimension)
@@ -177,11 +241,13 @@ class GuidedRod:
         tangent = (np.cos(magnitude)[:, None] * self.axis
                    + np.sinc(magnitude / np.pi)[:, None] * transverse)
         tangent = np.vstack((self.axis, tangent))
-        h = length / p.segments
+        boundaries = self.segment_boundaries_m(state)
+        segment_lengths = np.diff(boundaries)
+        section_integrals = p.integrated_second_moment_m5(length-boundaries[1:], length-boundaries[:-1])
         centerline = [self.guide_position_m.copy()]
         rotation = self.guide_rotation.copy()
-        curvature_sum = 0.0
-        for left, right in zip(tangent[:-1], tangent[1:]):
+        energy = 0.0
+        for left, right, h, integral in zip(tangent[:-1], tangent[1:], segment_lengths, section_integrals):
             cross = np.cross(left, right)
             cosine = float(np.clip(left @ right, -1.0, 1.0))
             if cosine < -1.0 + 1e-9:
@@ -193,9 +259,53 @@ class GuidedRod:
             cross_matrix = _skew(cross)
             rotation = (np.eye(3) + cross_matrix
                         + cross_matrix @ cross_matrix / (1.0 + cosine)) @ rotation
-            curvature_sum += angle**2
-        energy = p.bending_rigidity_Nm2 * curvature_sum / (2.0 * h)
+            energy += p.young_modulus_Pa * integral * angle**2 / (2.0 * h**2)
         return centerline[-1], rotation, float(energy), np.asarray(centerline), tangent
+
+    def _angular_kinematics_batch(self, state: FloatArray, angular_states: FloatArray
+                                  ) -> tuple[FloatArray, FloatArray, FloatArray]:
+        """The same circular arcs for angle trials sharing one compression.
+
+        All central-difference perturbations are evaluated together. Material
+        intervals are shared, while each trial retains its own tangents,
+        ordered frame transport, centre and section-integrated energy.
+        """
+        p = self.parameters
+        count = len(angular_states)
+        angular = angular_states.reshape(count, p.segments, 2)
+        magnitude = np.linalg.norm(angular, axis=2)
+        transverse = angular @ self.guide_rotation[:, 1:].T
+        tangents = np.empty((count, p.segments+1, 3))
+        tangents[:, 0] = self.axis
+        tangents[:, 1:] = (np.cos(magnitude)[:, :, None] * self.axis
+                          + np.sinc(magnitude/np.pi)[:, :, None] * transverse)
+        left, right = tangents[:, :-1], tangents[:, 1:]
+        crosses = np.cross(left, right)
+        cosines = np.clip(np.matmul(left[..., None, :], right[..., :, None])[..., 0, 0], -1., 1.)
+        if np.any(cosines < -1.+1e-9):
+            raise ValueError("Adjacent rod tangents are antipodal; refine the rod discretization")
+        angles = np.arctan2(np.linalg.norm(crosses, axis=2), cosines)
+        factors = .5 + angles**2/24. + angles**4/240.
+        finite = angles >= 1e-4
+        factors[finite] = np.tan(angles[finite]/2.)/angles[finite]
+
+        skew = np.zeros((count, p.segments, 3, 3))
+        skew[:, :, 0, 1], skew[:, :, 0, 2] = -crosses[:, :, 2], crosses[:, :, 1]
+        skew[:, :, 1, 0], skew[:, :, 1, 2] = crosses[:, :, 2], -crosses[:, :, 0]
+        skew[:, :, 2, 0], skew[:, :, 2, 1] = -crosses[:, :, 1], crosses[:, :, 0]
+        rotations = np.eye(3) + skew + (skew @ skew)/(1.+cosines[:, :, None, None])
+        length = p.free_length_m*(1.-state[0])
+        boundaries = self.segment_boundaries_m(state)
+        segment_lengths = np.diff(boundaries)
+        section_integrals = p.integrated_second_moment_m5(length-boundaries[1:], length-boundaries[:-1])
+        centers = np.broadcast_to(self.guide_position_m, (count, 3)).copy()
+        rotation = np.broadcast_to(self.guide_rotation, (count, 3, 3)).copy()
+        energy = np.zeros(count)
+        for j, (h, integral) in enumerate(zip(segment_lengths, section_integrals)):
+            centers += h*factors[:, j, None]*(left[:, j]+right[:, j])
+            rotation = rotations[:, j] @ rotation
+            energy += p.young_modulus_Pa*integral*angles[:, j]**2/(2.*h**2)
+        return centers, rotation, energy
 
     def evaluate(self, state: ArrayLike, derivatives: bool = True) -> RodEvaluation:
         x = np.asarray(state, dtype=float)
@@ -203,28 +313,39 @@ class GuidedRod:
         center, rotation, bending, centerline, tangent = self._kinematics(x)
         compression = p.free_length_m * x[0]
         length = p.free_length_m - compression
-        spring = 0.5 * p.spring_stiffness_N_per_m * compression**2
+        stiffness = p.spring_stiffness_N_per_m if p.mount_type == "spring" else 0.0
+        spring = 0.5 * stiffness * compression**2
         jacobian = rotation_jacobian = gradient = None
         if derivatives:
             jacobian = np.zeros((3, self.dimension))
             rotation_jacobian = np.zeros((3, self.dimension))
             gradient = np.zeros(self.dimension)
             jacobian[:, 0] = -p.free_length_m * (center - self.guide_position_m) / length
-            gradient[0] = (p.spring_stiffness_N_per_m * compression * p.free_length_m
-                           + bending * p.free_length_m / length)
-            for j in range(1, self.dimension):
-                h = self.derivative_step * max(1.0, abs(x[j]))
-                plus, minus = x.copy(), x.copy()
-                plus[j] += h
-                minus[j] -= h
-                cp, rp, up, _, _ = self._kinematics(plus)
-                cm, rm, um, _, _ = self._kinematics(minus)
-                jacobian[:, j] = (cp - cm) / (2.0 * h)
-                spin = ((rp - rm) / (2.0 * h)) @ rotation.T
-                rotation_jacobian[:, j] = np.array((spin[2, 1] - spin[1, 2],
-                                                    spin[0, 2] - spin[2, 0],
-                                                    spin[1, 0] - spin[0, 1])) / 2.0
-                gradient[j] = (up - um) / (2.0 * h)
+            boundaries = self.segment_boundaries_m(x)
+            hi, lo = length-boundaries[:-1], length-boundaries[1:]
+            intervals = p.integrated_second_moment_m5(lo, hi)
+            angles = np.arctan2(np.linalg.norm(np.cross(tangent[:-1], tangent[1:]), axis=1),
+                                np.clip(np.einsum("ij,ij->i", tangent[:-1], tangent[1:]), -1., 1.))
+            # Nodes scale with the exposed domain. I(u) remains attached to the
+            # material: d/dl ∫[lo(l),hi(l)] I(u)du includes both moving endpoints.
+            boundary_derivative = (p.section_second_moment_m4(hi) * hi
+                                   - p.section_second_moment_m4(lo) * lo) / length
+            dbending_dlength = np.sum(p.young_modulus_Pa * angles**2 / (2*np.diff(boundaries)**2)
+                                      * (boundary_derivative - 2*intervals/length))
+            gradient[0] = p.free_length_m * (stiffness * compression - dbending_dlength)
+            n = self.dimension-1
+            steps = self.derivative_step*np.maximum(1., np.abs(x[1:]))
+            angle_trials = np.tile(x[1:], (2*n, 1))
+            indices = np.arange(n)
+            angle_trials[indices, indices] += steps
+            angle_trials[n+indices, indices] -= steps
+            centers, rotations, energies = self._angular_kinematics_batch(x, angle_trials)
+            jacobian[:, 1:] = ((centers[:n]-centers[n:])/(2.*steps[:, None])).T
+            spin = ((rotations[:n]-rotations[n:])/(2.*steps[:, None, None])) @ rotation.T
+            rotation_jacobian[:, 1:] = np.stack((spin[:, 2, 1]-spin[:, 1, 2],
+                                                 spin[:, 0, 2]-spin[:, 2, 0],
+                                                 spin[:, 1, 0]-spin[:, 0, 1]))/2.
+            gradient[1:] = (energies[:n]-energies[n:])/(2.*steps)
         return RodEvaluation(center, rotation, spring + bending, spring, bending,
                              float(compression), float(length), jacobian,
                              rotation_jacobian, gradient, centerline, tangent)
@@ -267,6 +388,11 @@ class GuidedRod:
         p = self.parameters
         s = float(np.asarray(state)[0] * p.free_length_m)
         residual_N = float(np.asarray(residual)[0] / p.free_length_m)
+        if p.mount_type == "fixed":
+            return AxialBoundary("FIXED", residual_N, max(-residual_N, 0.0),
+                                 max(residual_N, 0.0), abs(s) <= compression_tolerance_m)
+        if p.geometry_limited_compression and s >= p.free_length_m - compression_tolerance_m:
+            return AxialBoundary("EXPOSED_LENGTH_LIMIT", residual_N, 0.0, 0.0, False)
         upper = s >= p.max_compression_m - compression_tolerance_m
         lower = s <= compression_tolerance_m
         within = -compression_tolerance_m <= s <= p.max_compression_m + compression_tolerance_m
@@ -280,28 +406,44 @@ class GuidedRod:
     def sample_centerline(self, state: ArrayLike,
                           samples_per_segment: int = 4) -> tuple[FloatArray, FloatArray]:
         """Sample exact circular segments for shaft clearance and stress queries."""
+        boundaries = self.segment_boundaries_m(state)
+        distances = np.concatenate(([0.0], *(np.linspace(left, right, samples_per_segment+1)[1:]
+                                            for left, right in zip(boundaries[:-1], boundaries[1:]))))
+        return self.centerline_at(state, distances)
+
+    def centerline_at(self, state: ArrayLike,
+                      distances_from_guide_m: ArrayLike) -> tuple[FloatArray, FloatArray]:
+        """Evaluate position and unit tangent at arbitrary exposed arc lengths.
+
+        Input distances run from zero at the guide to l at the sphere centre;
+        the corresponding section material coordinate is u=l-distance.
+        """
         x = np.asarray(state, dtype=float)
         _, _, _, nodes, tangents = self._kinematics(x)
-        h = self.parameters.free_length_m * (1.0 - x[0]) / self.parameters.segments
-        points = [nodes[0]]
-        directions = [tangents[0]]
-        for origin, left, right in zip(nodes[:-1], tangents[:-1], tangents[1:]):
+        boundaries = self.segment_boundaries_m(x)
+        distances = np.atleast_1d(np.asarray(distances_from_guide_m, dtype=float))
+        indices = np.clip(np.searchsorted(boundaries, distances, side="right")-1,
+                          0, self.parameters.segments-1)
+        points, directions = np.empty((len(distances), 3)), np.empty((len(distances), 3))
+        for i, (origin, left, right) in enumerate(zip(nodes[:-1], tangents[:-1], tangents[1:])):
+            selected = indices == i
+            if not np.any(selected):
+                continue
+            h = boundaries[i+1] - boundaries[i]
+            u = (distances[selected] - boundaries[i]) / h
             cross = np.cross(left, right)
             sine = float(np.linalg.norm(cross))
             angle = float(np.arctan2(sine, np.clip(left @ right, -1.0, 1.0)))
             if angle < 1e-10:
-                for j in range(1, samples_per_segment + 1):
-                    u = j / samples_per_segment
-                    points.append(origin + h * u * left)
-                    directions.append(left)
+                points[selected] = origin + h * u[:, None] * left
+                directions[selected] = left
             else:
                 bend_direction = np.cross(cross / sine, left)
-                for j in range(1, samples_per_segment + 1):
-                    u = j / samples_per_segment
-                    points.append(origin + h / angle * (np.sin(u * angle) * left
-                                                         + 2 * np.sin(u * angle / 2.0)**2 * bend_direction))
-                    directions.append(np.cos(u * angle) * left + np.sin(u * angle) * bend_direction)
-        return np.asarray(points), np.asarray(directions)
+                points[selected] = origin + h / angle * (np.sin(u*angle)[:, None] * left
+                                                         + 2*np.sin(u*angle/2)[:, None]**2 * bend_direction)
+                directions[selected] = (np.cos(u*angle)[:, None] * left
+                                        + np.sin(u*angle)[:, None] * bend_direction)
+        return points, directions
 
     def clearance_centerline(self, state: ArrayLike, subdivisions: int = 4,
                              tolerance_m: float | None = None) -> tuple[FloatArray, float]:
@@ -316,12 +458,12 @@ class GuidedRod:
         """
         x = np.asarray(state, dtype=float)
         _, _, _, _, tangents = self._kinematics(x)
-        h = self.parameters.free_length_m * (1.0 - x[0]) / self.parameters.segments
+        lengths = np.diff(self.segment_boundaries_m(x))
         angles = np.array([np.arctan2(np.linalg.norm(np.cross(left, right)),
                                      np.clip(left @ right, -1., 1.))
                            for left, right in zip(tangents[:-1], tangents[1:])])
         curved = angles > 1e-10
-        arc_radius = h / angles[curved]
+        arc_radius = lengths[curved] / angles[curved]
         count = max(int(subdivisions), 1)
         if tolerance_m is not None:
             if tolerance_m <= 0:
@@ -349,11 +491,17 @@ class GuidedRod:
         transverse_force = force - axial[:, None] * tangents
         torsion = np.einsum("ij,ij->i", moments, tangents)
         bending_moments = moments - torsion[:, None] * tangents
-        normal_stress = (np.abs(axial) / p.area_m2
-                         + np.linalg.norm(bending_moments, axis=1) * p.diameter_m
-                         / (2.0 * p.second_moment_m4))
-        shear_stress = (4.0 * np.linalg.norm(transverse_force, axis=1) / (3.0 * p.area_m2)
-                        + np.abs(torsion) * p.diameter_m / (4.0 * p.second_moment_m4))
+        boundaries = self.segment_boundaries_m(state)
+        distances = np.concatenate(([0.0], *(np.linspace(left, right, samples_per_segment+1)[1:]
+                                            for left, right in zip(boundaries[:-1], boundaries[1:]))))
+        material_coordinate = e.exposed_length_m - distances
+        radii = p.section_radius_m(material_coordinate)
+        area = p.section_area_m2(material_coordinate)
+        inertia = p.section_second_moment_m4(material_coordinate)
+        normal_stress = (np.abs(axial) / area
+                         + np.linalg.norm(bending_moments, axis=1) * radii / inertia)
+        shear_stress = (4.0 * np.linalg.norm(transverse_force, axis=1) / (3.0 * area)
+                        + np.abs(torsion) * radii / (2.0 * inertia))
         vm = np.sqrt(normal_stress**2 + 3.0 * shear_stress**2)
         maximum = float(np.max(vm))
         utilization = None if p.allowable_stress_Pa is None else maximum / p.allowable_stress_Pa
@@ -371,12 +519,25 @@ def linear_reference_compliance(parameters: GuidedRodParameters, axis: ArrayLike
                                 exposed_length_m: float | None = None) -> FloatArray:
     """Fixed-length small-deflection reference, without the sphere-end moment.
 
-    This reference is valid on the interior spring branch. It is not the
-    tangent of the finite rod under preload and is never used as that tangent.
+    The transverse compliance is ∫u²/[E I(u)]du, with u measured from the tip.
+    The axial term is 1/k on the interior spring branch and zero for a fixed
+    mount. This is not the tangent of the finite rod under preload.
     """
     a = np.asarray(axis, dtype=float)
     a = a / np.linalg.norm(a)
     length = parameters.free_length_m if exposed_length_m is None else exposed_length_m
     axial = np.outer(a, a)
-    transverse_compliance = length**3 / (3.0 * parameters.bending_rigidity_Nm2)
-    return axial / parameters.spring_stiffness_N_per_m + transverse_compliance * (np.eye(3) - axial)
+    p = parameters
+    if p.taper_length_m == 0 or p.tip_radius_m == p.diameter_m / 2:
+        transverse_compliance = length**3 / (3.0 * p.bending_rigidity_Nm2)
+    else:
+        tip_length = min(length, p.taper_length_m)
+        slope = (p.diameter_m / 2-p.tip_radius_m) / p.taper_length_m
+        # ∫u²/(r+b*u)^4 du = u³/[3*r*(r+b*u)^3].
+        # This form also remains stable for a very short exposed tip interval.
+        taper_compliance = (4.0 / (np.pi*p.young_modulus_Pa) * tip_length**3
+                            / (3*p.tip_radius_m*(p.tip_radius_m+slope*tip_length)**3))
+        shaft_compliance = (length**3-tip_length**3) / (3*p.bending_rigidity_Nm2)
+        transverse_compliance = taper_compliance + shaft_compliance
+    axial_compliance = 1.0 / p.spring_stiffness_N_per_m if p.mount_type == "spring" else 0.0
+    return axial_compliance * axial + transverse_compliance * (np.eye(3)-axial)

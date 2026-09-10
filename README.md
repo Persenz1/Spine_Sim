@@ -1,10 +1,12 @@
 # Spine Sim
 
-Spine Sim 是一套面向钩爪式爬壁机器人微刺抓附的仿真程序，当前版本为 `0.5.0`。
+Spine Sim 是一套面向钩爪式爬壁机器人微刺抓附的仿真程序，当前版本为 `0.6.0`。
 
 IJMS 新版入口是 `spine_sim.ijms:run_case`，实现共同背板、轴向压缩弹簧、可回缩空间弯曲杆及连续曲面上的预载—拖动。新研究从 [新版机理与接口](docs/IJMS新版机理与接口.md) 和 [批量仿真交接](docs/IJMS批量仿真交接.md) 开始。`examples/ijms_campaign.json` 是可运行的未标定数值示例。
 
 后续由 DeepSeek / harness 编码时，先读 [AGENTS.md](AGENTS.md) 和 [IJMS 物理约束](docs/IJMS物理约束.md)：可优化实现，保持物理含义；文档末尾提供 harness 任务前缀。
+
+0.6.0已实现50/100 μm圆钝尖、2 mm渐细段与1 mm主体的变截面弯曲、固定安装、梯度角长度补偿和真实杆体检查。小阵列使用 [固定配置](experiments/ijms_small_array.json) 与 [启动说明](docs/IJMS小阵列启动.md)，支持共享材料地形、336000条粗筛队列及恢复。大阵列仍按 [扫描规划](docs/IJMS大规模扫描规划.md) 在小阵列后确定，最多30×30、总P不超过10 N。
 
 ```powershell
 .venv\Scripts\python.exe -B -m spine_sim.cli run-case examples\ijms_campaign.json --backend cpu --output E:\Agent_Tmp_WS\ijms_demo

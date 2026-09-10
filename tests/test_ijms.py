@@ -57,7 +57,7 @@ def test_formal_runner_persists_new_physics_summary_and_resumes(tmp_path):
     assert summary["events"][0]["kind"] == "FIRST_CONTACT"
     assert np.isclose(summary["final_total_force_N"][2], p["load"]["value"], atol=1e-8)
     manifest = json.loads((tmp_path/"formal/manifest.json").read_text())
-    assert manifest["solver_semantics_version"] == "guided-rod-incremental-contact-1"
+    assert manifest["solver_semantics_version"] == "guided-rod-incremental-contact-2"
     resumed = CampaignRunner(campaign, tmp_path/"formal", discover_backend(BackendConfig(preference="cpu")))
     resumed.prepare(raw)
     assert resumed.run(resume=True)[0].result_hash == records[0].result_hash

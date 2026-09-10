@@ -51,7 +51,7 @@ class SphereQuery:
 
 @dataclass(frozen=True)
 class RodClearance:
-    status: Literal["clear", "collision", "out_of_domain", "invalid_surface"]
+    status: Literal["clear", "collision", "out_of_domain", "invalid_surface", "indeterminate"]
     gap_m: float | None
     segment_index: int | None = None
     centerline_point_m: FloatArray | None = None

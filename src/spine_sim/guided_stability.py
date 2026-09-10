@@ -131,7 +131,8 @@ def assess_stick_stability(array, state) -> dict[str, Any]:
         compression_tolerance = cfg.contact_tolerance_m
         at_upper = p.max_compression_m - evaluation.compression_m <= compression_tolerance
         at_lower = evaluation.compression_m <= compression_tolerance
-        strict_stop = ((at_upper and boundary.upper_reaction_N > force_tolerance)
+        fixed_mount = p.mount_type == "fixed"
+        strict_stop = (fixed_mount or (at_upper and boundary.upper_reaction_N > force_tolerance)
                        or (at_lower and p.lower_stop and boundary.lower_reaction_N > force_tolerance))
         if strict_stop:
             stop = np.zeros(nd + ng)

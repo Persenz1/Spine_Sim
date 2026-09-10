@@ -4,6 +4,8 @@ DeepSeek / harness 接手时，先加载仓库 `AGENTS.md` 和 [IJMS物理约束
 
 用户已进一步固定分工：后续模型只处理代码、既定配置的批量执行与动作监控，不自行承担参数估计方案选择、研究范围设计或论文结论解释。以下配置和参数方法供执行已给定方案；示例不是后续模型任意扩展科研范围的授权。
 
+本轮方案见 [IJMS阵列扫描规划](IJMS大规模扫描规划.md) 与 [ijms_scan_plan.json](../experiments/ijms_scan_plan.json)：圆钝尖50/100 μm、2 mm渐细段、直径1 mm主体，均匀角露出4 mm，梯度角按爪跟4 mm补偿。0.6.0已实现实际变截面弯曲/导数/应力、针形接触及无弹簧固定安装。小阵列直接使用[启动说明](IJMS小阵列启动.md)和[已锁定粗筛配置](../experiments/ijms_small_array.json)，不再从旧示例重新挑参数。阵列先小后大、上限30×30，大阵列预载/地形在小阵列后确定；当前JSON不能直接作为campaign运行。
+
 后续任务使用 `spine_sim.ijms:run_case`，模板是 `examples/ijms_campaign.json`。入口执行首次接触、逐步建立总预载、带内部历史拖动和指标计算。不要把旧 `canonical_module` 的平壁单次平衡入口用于新版论文跑批。
 
 runner 已按这个 callable 接入新版模型、求解器、几何与装配版本，并将对应版本写入结果 manifest。生成配置时继承模板版本，不使用旧 canonical 配置拼接新版 parameters。当前搜索距离从预载完成的拖动起点计；接近阶段定位首次接触的 Z，不输出一个尚未声明起始高度的接近行程。
@@ -82,6 +84,8 @@ Copy-Item -LiteralPath 'examples\ijms_campaign.json' -Destination "$ijmsTask\con
 
 - `nx`、`ny` 和 `spacing_x_m`、`spacing_y_m` 定义无载针尖位置；编号为 `index = j * nx + i`，先沿 x，再沿 y。
 - `theta_deg` 可为公共标量、每列列表或 `ny × nx` 矩阵。`per_spine` 可覆盖某根刺的角度、长度、直径、半径、弹簧和材料参数。显式 `tip_positions_xy_m` 决定针数；使用角度矩阵时，矩阵元素数仍须匹配位置列表，标量角会自动广播。
+- `angle_gradient_deg={"toe":60,"heel":80}`和`heel_free_length_m=.004`用于本轮梯度长度补偿；沿+X爪头在前，爪跟在后。
+- `spine.taper_length_m=.002`、`diameter_m=.001`定义渐细钢针；`mount_type`为spring/fixed，弹簧额定行程4 mm，完全縮回是范围停止。
 - `common_mouth_height_m` 根据角度和尖端半径确定各刺长度，不能与显式 `free_length_m` 同时使用。安装关系改变后，孔口间距不必等于针尖间距。
 - `loaded_area_m2` 是受压背板面积；改变刺数或间距时不会自动更新，固定压力试验必须同步给出真实面积。
 - `solver.y_mode` 为 `free` 或 `locked`。`y_bounds_m` 是自由 Y 的模型范围；目前不是实体侧向限位接触模型。

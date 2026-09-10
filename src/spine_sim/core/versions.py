@@ -12,10 +12,10 @@ GEOMETRY_SCHEMA_VERSION = "contact-candidate-3"
 PARAMETER_REGISTRY_VERSION = "canonical-parameters-2"
 
 IJMS_VERSIONS = {
-    "model_schema_version": "ijms-guided-rod-1",
-    "solver_semantics_version": "guided-rod-incremental-contact-1",
-    "geometry_version": "continuous-triangle-sphere-1",
-    "parameter_registry_version": "ijms-assembly-1",
+    "model_schema_version": "ijms-tapered-rod-2",
+    "solver_semantics_version": "guided-rod-incremental-contact-2",
+    "geometry_version": "continuous-tapered-cap-2",
+    "parameter_registry_version": "ijms-assembly-2",
 }
 
 # 结果中使用的模型层级标签，用于区分单刺和刚性背板阵列输出契约。

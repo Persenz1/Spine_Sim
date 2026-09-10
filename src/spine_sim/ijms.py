@@ -6,6 +6,8 @@ The JSON examples are numerical demonstrations, not calibrated device designs.
 from __future__ import annotations
 
 from dataclasses import asdict
+from functools import lru_cache
+import json
 from pathlib import Path
 from time import perf_counter
 from typing import Any, Mapping
@@ -22,6 +24,17 @@ from .research_protocols import EstablishmentProtocol, LoadProtocol, evaluate_es
 from .runtime.runner import CaseOutput, RunContext
 
 
+@lru_cache(maxsize=1)
+def _shared_heightfield(path, dx, dy, origin, mask_path, metadata_path):
+    """Immutable per-worker field, reused by cases on the same saved surface."""
+    height = np.load(Path(path), mmap_mode="r", allow_pickle=False)
+    mask = np.load(Path(mask_path), mmap_mode="r", allow_pickle=False) if mask_path else None
+    surface = HeightFieldSurface(height, dx, dy, origin, valid_mask=mask)
+    surface.metadata = (json.loads(Path(metadata_path).read_text(encoding="utf-8"))
+                        if metadata_path else {"source": str(path), "mode": "saved_heightfield"})
+    return surface
+
+
 def build_surface(config: Mapping[str, Any], sample: Mapping[str, Any] | None = None):
     """Continuous geometry from an analytic plane, sampled field or terrain API."""
     raw = dict(config)
@@ -34,15 +47,37 @@ def build_surface(config: Mapping[str, Any], sample: Mapping[str, Any] | None = 
         return PlaneSurface(**raw)
     origin = tuple(raw.pop("origin_xy_m", (0., 0.)))
     if kind == "heightfield":
+        metadata_path = raw.pop("metadata_path", None)
+        metadata = raw.pop("metadata", None)
+        mask_path = raw.pop("valid_mask_path", None)
         if "path" in raw:
-            height = np.load(Path(raw.pop("path")), mmap_mode="r", allow_pickle=False)
+            path = str(Path(raw.pop("path")).resolve())
+            dx = float(raw.pop("dx_m"))
+            dy = float(raw.pop("dy_m", dx))
+            if not raw and metadata is None:
+                return _shared_heightfield(path, dx, dy, origin, mask_path, metadata_path)
+            height = np.load(Path(path), mmap_mode="r", allow_pickle=False)
+            raw.update(dx_m=dx, dy_m=dy)
         else:
             height = np.asarray(raw.pop("height_m"), float)
-        return HeightFieldSurface(height, origin_xy_m=origin, **raw)
+            raw.setdefault("dy_m", raw["dx_m"])
+        if mask_path:
+            raw["valid_mask"] = np.load(Path(mask_path), mmap_mode="r", allow_pickle=False)
+        surface = HeightFieldSurface(height, origin_xy_m=origin, **raw)
+        surface.metadata = (json.loads(Path(metadata_path).read_text(encoding="utf-8"))
+                            if metadata_path else dict(metadata or {}))
+        return surface
     if kind == "material":
         from .terrain.api import generate_terrain
         terrain = generate_terrain(seed=seed, **raw)
-        return HeightFieldSurface.from_terrain(terrain, origin_xy_m=origin)
+        surface = HeightFieldSurface.from_terrain(terrain, origin_xy_m=origin)
+        surface.metadata = dict(terrain.metadata, material=terrain.material, subtype=terrain.subtype,
+                                seed=terrain.seed, measurement_probe=terrain.measurement_probe,
+                                measurement_tolerance_m=terrain.measurement_tolerance_m,
+                                geometry_uncertain=bool(terrain.geometry_uncertain_mask is not None
+                                                        and np.any(terrain.geometry_uncertain_mask)),
+                                geometry_bounds_provided=terrain.geometry_lower_bound_m is not None)
+        return surface
     dx, dy = float(raw["dx_m"]), float(raw.get("dy_m", raw["dx_m"]))
     ny, nx = map(int, raw["shape"])
     x, y = np.meshgrid(np.arange(nx)*dx, np.arange(ny)*dy)
@@ -81,6 +116,13 @@ def build_rods(config: Mapping[str, Any]) -> list[GuidedRod]:
                      for j in range(ny) for i in range(nx)]
     defaults = dict(config["spine"])
     theta = config.get("theta_deg", 60.)
+    gradient = config.get("angle_gradient_deg")
+    if gradient is not None:
+        if len(positions) != nx*ny or nx < 2:
+            raise ValueError("angle gradient needs a rectangular array with at least two X columns")
+        if "theta_deg" in config or "common_mouth_height_m" in config:
+            raise ValueError("angle_gradient_deg determines the angles and heel-referenced mouth height")
+        theta = np.linspace(float(gradient["heel"]), float(gradient["toe"]), nx)
     theta_array = np.asarray(theta, float)
     theta_values = (np.full(len(positions), float(theta_array)) if theta_array.ndim == 0
                     else np.broadcast_to(theta_array, (ny, nx)).ravel())
@@ -89,6 +131,11 @@ def build_rods(config: Mapping[str, Any]) -> list[GuidedRod]:
     overrides = {int(row["index"]): row for row in config.get("per_spine", [])}
     if set(overrides)-set(range(len(positions))):
         raise ValueError("per_spine index lies outside the declared array")
+    gradient_height = None
+    if gradient is not None:
+        heel_length = float(config.get("heel_free_length_m", defaults.get("free_length_m", 0.004)))
+        heel_radius = float(overrides.get(0, {}).get("tip_radius_m", defaults["tip_radius_m"]))
+        gradient_height = heel_radius+heel_length*np.sin(np.deg2rad(float(gradient["heel"])))
     rods = []
     for i, xy in enumerate(positions):
         local = dict(defaults)
@@ -99,12 +146,16 @@ def build_rods(config: Mapping[str, Any]) -> list[GuidedRod]:
             raise ValueError("guided installation theta_deg must be in (0,90]")
         yaw = np.deg2rad(override.pop("yaw_deg", config.get("yaw_deg", 0.)))
         local.update(override)
+        if gradient_height is not None:
+            if "free_length_m" in overrides.get(i, {}) or "theta_deg" in overrides.get(i, {}):
+                raise ValueError("gradient assembly derives each row's angle and exposed length")
+            local["free_length_m"] = (gradient_height-local["tip_radius_m"])/np.sin(theta_i)
         if "common_mouth_height_m" in config:
             if "free_length_m" in defaults or "free_length_m" in overrides.get(i, {}):
                 raise ValueError("common_mouth_height_m determines free_length_m; omit explicit lengths")
             local["free_length_m"] = (config["common_mouth_height_m"]-local["tip_radius_m"])/np.sin(theta_i)
         p = GuidedRodParameters(**local)
-        if p.max_compression_m <= 0:
+        if p.mount_type == "spring" and p.max_compression_m <= 0:
             raise ValueError("IJMS guided spring requires positive max_compression_m")
         axis = np.array([np.cos(theta_i)*np.cos(yaw), np.cos(theta_i)*np.sin(yaw), -np.sin(theta_i)])
         center0 = np.array([xy[0], xy[1], p.tip_radius_m])
@@ -115,6 +166,9 @@ def build_rods(config: Mapping[str, Any]) -> list[GuidedRod]:
 def approach_position(model: GuidedArray, start_xy_m) -> np.ndarray:
     """First zero-force sphere contact under rigid vertical approach."""
     roots = []
+    if isinstance(model.surface, HeightFieldSurface):
+        surface_min = float(np.nanmin(model.surface.height_m))
+        surface_max = float(np.nanmax(model.surface.height_m))
     for rod in model.rods:
         center0 = rod.evaluate(rod.zero_state(), derivatives=False).center_m
         center0[:2] += start_xy_m
@@ -125,8 +179,8 @@ def approach_position(model: GuidedArray, start_xy_m) -> np.ndarray:
             roots.append((rod.parameters.tip_radius_m - (center0-surface.point_m)@surface.normal)/surface.normal[2])
             continue
         surface = model.surface
-        below = float(np.nanmin(surface.height_m)) - center0[2] - rod.parameters.tip_radius_m
-        above = float(np.nanmax(surface.height_m)) - center0[2] + 2*rod.parameters.tip_radius_m
+        below = surface_min - center0[2] - rod.parameters.tip_radius_m
+        above = surface_max - center0[2] + 2*rod.parameters.tip_radius_m
         def gap(z):
             center = center0 + np.array([0., 0., z])
             query = surface.query_sphere(center, rod.parameters.tip_radius_m)
@@ -145,6 +199,7 @@ def _row(state: PathState, phase: str, origin_x: float, detailed: bool, settings
                                    geometric=True, signed_gap_m=item["gap_m"], engagement=None,
                                    force_tolerance_N=max(state.preload_N/len(state.modes), 1e-4)*settings.residual_tolerance)
         for item in per_spine], gap_tolerance_m=settings.contact_tolerance_m) if per_spine else None
+    positive_loads = [max(p["P_N"], 0.) for p in per_spine]
     result = dict(phase=phase, X_m=float(state.position_m[0]),
                   search_distance_m=float(state.position_m[0]-origin_x),
                   position_m=state.position_m.tolist(), preload_N=state.preload_N,
@@ -152,6 +207,13 @@ def _row(state: PathState, phase: str, origin_x: float, detailed: bool, settings
                   L_N=float(state.forces_N[:, 1].sum()), energy_J=state.energy_J,
                   accepted=True, valid=True,
                   counts=asdict(counts) if counts else None,
+                  spring_energy_J=sum(p["spring_energy_J"] for p in per_spine),
+                  bending_energy_J=sum(p["bending_energy_J"] for p in per_spine),
+                  mean_compression_m=(float(np.mean([p["compression_m"] for p in per_spine])) if per_spine else None),
+                  hard_stop_fraction=(sum("HARDSTOP" in p["mode"] for p in per_spine)/len(per_spine)
+                                      if per_spine else None),
+                  maximum_positive_P_share=(max(positive_loads)/sum(positive_loads)
+                                            if sum(positive_loads) > 0 else None),
                   max_travel_utilization=max((p["travel_utilization"] for p in per_spine), default=0.),
                   max_stress_upper_Pa=max((p["max_stress_upper_Pa"] for p in per_spine), default=0.),
                   max_stress_utilization=(max(p["stress_utilization"] for p in per_spine)
@@ -163,6 +225,69 @@ def _row(state: PathState, phase: str, origin_x: float, detailed: bool, settings
         result["per_spine"] = per_spine
         result["rod_coordinates"] = [x.tolist() for x in state.rod_coordinates]
     return result
+
+
+def evaluate_protocols(x, force, *, preload, distance, metric_config):
+    """Reduce all declared protocols before summary mode discards the path."""
+    protocols, windows = {}, {}
+    for index, specification in enumerate(metric_config.get("protocols", [])):
+        item = dict(specification)
+        name = str(item.pop("name", f"protocol_{index}"))
+        fraction = item.pop("target_fraction_P", None)
+        if fraction is not None:
+            if "target_force_N" in item:
+                raise ValueError("choose absolute or preload-relative target in each protocol")
+            item["target_force_N"] = fraction*preload
+        item.setdefault("search_window_m", (0., distance))
+        item["search_window_m"] = tuple(item["search_window_m"])
+        if not 0 <= item["search_window_m"][0] < item["search_window_m"][1] <= distance:
+            raise ValueError("protocol search window must lie inside the declared drag path")
+        if name in protocols:
+            raise ValueError("protocol names must be unique")
+        protocol = EstablishmentProtocol(**item)
+        value = asdict(evaluate_establishment(x, force, accepted=[True]*len(x),
+                                             valid=[True]*len(x), protocol=protocol))
+        value["protocol"] = asdict(protocol)
+        value["target_basis"] = "fraction_P" if fraction is not None else "absolute_force"
+        protocols[name] = value
+        window = protocol.search_window_m
+        key = f"{window[0]:.12g}:{window[1]:.12g}"
+        if key not in windows:
+            windows[key] = dict(window_m=list(window), **asdict(integrate_path_resistance(
+                x, force, external_normal_preload_N=preload, accepted=[True]*len(x), valid=[True]*len(x),
+                window_m=window, force_quantile=metric_config.get("force_quantile", 0.1))))
+    return protocols, windows
+
+
+def _weighted_path_statistics(rows, windows):
+    """Linear-in-distance summaries, retaining incomplete field coverage."""
+    x = np.array([row["search_distance_m"] for row in rows], dtype=float)
+    fields = ("n_active", "n_contact", "n_share_normal", "n_share_local_normal", "load_sharing_index",
+              "spring_energy_J", "bending_energy_J", "mean_compression_m", "hard_stop_fraction",
+              "maximum_positive_P_share", "max_stress_utilization")
+    statistics = {}
+    for key, item in windows.items():
+        low, high = item["window_m"]
+        dx = np.diff(x)
+        left, right = np.maximum(x[:-1], low), np.minimum(x[1:], high)
+        width = np.maximum(right-left, 0.)
+        denominators = np.where(dx > 0, dx, 1.)
+        record = {}
+        for field in fields:
+            raw = [((row.get("counts") or {}).get(field) if field.startswith("n_") or field == "load_sharing_index"
+                    else row.get(field)) for row in rows]
+            values = np.array([np.nan if v is None else v for v in raw], dtype=float)
+            valid = (dx > 0) & (width > 0) & np.isfinite(values[:-1]) & np.isfinite(values[1:])
+            total_length = float(width[valid].sum())
+            slope = np.diff(values)/denominators
+            integral = float(np.sum(width[valid]*(values[:-1][valid]
+                              + .5*slope[valid]*(left[valid]+right[valid]-2*x[:-1][valid]))))
+            complete = bool(np.isclose(total_length, high-low, rtol=1e-10, atol=0.))
+            record[field] = dict(mean=integral/(high-low) if complete else None,
+                                 observed_mean=integral/total_length if total_length > 0 else None,
+                                 coverage=total_length/(high-low))
+        statistics[key] = record
+    return statistics
 
 
 def simulate(parameters: Mapping[str, Any], *, progress=None) -> CaseOutput:
@@ -284,6 +409,8 @@ def simulate(parameters: Mapping[str, Any], *, progress=None) -> CaseOutput:
     metrics = None
     establishment = None
     metric_config = parameters.get("metrics", {})
+    establishments, window_metrics = evaluate_protocols(
+        x, force, preload=preload, distance=distance, metric_config=metric_config)
     if drag:
         metrics = asdict(integrate_path_resistance(x, force, external_normal_preload_N=preload,
                                                   accepted=[True]*len(x), valid=[True]*len(x),
@@ -316,6 +443,12 @@ def simulate(parameters: Mapping[str, Any], *, progress=None) -> CaseOutput:
                    completed_search_m=float(state.position_m[0]-start_xy[0]),
                    declared_search_m=distance, effective_max_step_m=max_step,
                    metrics=metrics, establishment=establishment,
+                   establishments=establishments, window_metrics=window_metrics,
+                   path_statistics=_weighted_path_statistics(drag, window_metrics),
+                   preload_state=(next((row for row in reversed(rows) if row["phase"] == "preload"), rows[0])),
+                   surface_metadata=dict(getattr(surface, "metadata", {})),
+                   needle_parameters=[asdict(r.parameters) for r in rods],
+                   max_lateral_motion_m=max(abs(r["position_m"][1]-start_xy[1]) for r in rows),
                    final_counts=rows[-1].get("counts"), final_stability=stability,
                    final_total_force_N=state.forces_N.sum(axis=0).tolist(),
                    max_equilibrium_residual=max((r.get("residual", 0.) for r in rows), default=0.),
@@ -332,7 +465,7 @@ def simulate(parameters: Mapping[str, Any], *, progress=None) -> CaseOutput:
                    sample=dict(parameters.get("sample", {})),
                    units={"length":"m", "force":"N", "energy":"J", "angle":"rad"},
                    coordinates="+x drag, +z away from wall; T=-sum(fx), P=sum(fz), L=sum(fy)",
-                   numerical_method="finite rod + incremental material motion + sparse mixed complementarity",
+                   numerical_method="finite rod + incremental material motion + mixed complementarity; direct small-array / sparse large-array linear solves",
                    parameter_status=parameters.get("parameter_status", "uncalibrated"))
     if output_level == "full":
         summary["final_per_spine"] = state.diagnostics.get("per_spine", [])
@@ -348,7 +481,15 @@ def run_case(parameters: Mapping[str, Any], context: RunContext) -> CaseOutput:
     """Existing CampaignRunner callable; mechanics execute on CPU."""
     if context.backend.get("selected") == "cuda":
         raise ValueError("IJMS finite-rod solver uses CPU; pass --backend cpu")
-    output = simulate(parameters)
+    interval = float(parameters.get("output", {}).get("progress_interval_s", 0.))
+    last_report, started = 0., perf_counter()
+    def report(value):
+        nonlocal last_report
+        now = perf_counter()
+        if now-last_report >= interval:
+            print(json.dumps(dict(case_id=context.case_id, elapsed_s=now-started, **value)), flush=True)
+            last_report = now
+    output = simulate(parameters, progress=report if interval > 0 else None)
     output.summary.update(case_id=context.case_id, normalized_input_hash=context.normalized_input_hash,
                           project_schema_version=context.project_schema_version,
                           model_schema_version=context.model_schema_version,

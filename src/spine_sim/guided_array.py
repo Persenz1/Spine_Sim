@@ -17,8 +17,8 @@ from scipy.spatial.transform import Rotation
 
 from .guided_rod import GuidedRod
 
-THEORY_VERSION = "ijms-common-backplate-2026-09-10"
-SOLVER_VERSION = "guided-rod-incremental-contact-1"
+THEORY_VERSION = "ijms-tapered-common-backplate-2026-09-10"
+SOLVER_VERSION = "guided-rod-incremental-contact-2"
 
 
 @dataclass(frozen=True)
@@ -103,7 +103,7 @@ class GuidedArray:
     def __init__(self, rods: list[GuidedRod], surface, settings: PathSettings):
         self.rods, self.surface, self.settings = rods, surface, settings
         self.length_scale = float(np.median([r.parameters.free_length_m for r in rods]))
-        self.nd = [1 + 2 * r.parameters.segments for r in rods]
+        self.nd = [r.dimension for r in rods]
         self.offsets = np.cumsum([0] + [d + 3 for d in self.nd])
         self.ng = 2 if settings.y_mode == "free" else 1
         # Columns belonging to different rods have disjoint local rows, except
@@ -120,11 +120,15 @@ class GuidedArray:
             plus, minus = unknown.copy(), unknown.copy()
             plus[columns] += h
             minus[columns] -= h
-            change = (function(plus) - function(minus)) / (2*h)
+            lower, upper = self._current_bounds
+            plus[columns] = np.minimum(plus[columns], upper[columns])
+            minus[columns] = np.maximum(minus[columns], lower[columns])
+            change = function(plus) - function(minus)
             for i, nd in enumerate(self.nd):
                 if k < nd + 3:
                     a, b = self.offsets[i:i+2]
-                    jac[a:b, a+k] = change[a:b, None]
+                    delta = plus[a+k]-minus[a+k]
+                    jac[a:b, a+k] = change[a:b, None]/delta
         for col in range(size-self.ng, size):
             plus, minus = unknown.copy(), unknown.copy()
             plus[col] += h
@@ -162,19 +166,23 @@ class GuidedArray:
             initial[b-3:b] = previous.forces_N[i] / force_scale
             if previous.preload_N == 0 and preload_N > 0:
                 initial[b-1] = preload_N / len(self.rods) / force_scale
-                initial[a] = min(0.5 * rod.parameters.max_compression_m,
-                                 preload_N / len(self.rods) * max(0., -rod.axis[2])
-                                 / rod.parameters.spring_stiffness_N_per_m) / rod.parameters.free_length_m
-            lower[a] = 0.
-            upper[a] = rod.parameters.max_compression_m / rod.parameters.free_length_m
-            # The upper stop is imposed exactly. A zero-travel rod is specified
-            # as a very short positive travel only if that is the actual device.
-            if upper[a] <= 0:
-                raise ValueError("guided spring max_compression_m must be positive")
+                if rod.parameters.mount_type == "spring":
+                    initial[a] = min(0.5 * rod.parameters.compression_limit_m,
+                                     preload_N / len(self.rods) * max(0., -rod.axis[2])
+                                     / rod.parameters.spring_stiffness_N_per_m) / rod.parameters.free_length_m
+            if rod.parameters.mount_type == "fixed":
+                # This dummy coordinate has the exact equation x_s=0. It is
+                # never a compliant mount or an artificial stiff spring.
+                initial[a] = 0.
+            else:
+                lower[a] = 0.
+                upper[a] = min(rod.parameters.max_compression_m,
+                               rod.parameters.free_length_m-cfg.contact_tolerance_m) / rod.parameters.free_length_m
         initial[-1] = previous.position_m[2] / length
         if self.ng == 2:
             initial[-2] = previous.position_m[1] / length
         initial = np.maximum(lower, np.minimum(upper, initial))
+        self._current_bounds = (lower, upper)
         mu = np.array([cfg.friction_kinetic if mode.startswith("SLIP") else cfg.friction_static
                        for mode in previous.modes])
         cache: dict[str, Any] = {}
@@ -188,7 +196,10 @@ class GuidedArray:
             domain = None
             for i, (rod, nd) in enumerate(zip(self.rods, self.nd)):
                 a, b = self.offsets[i:i+2]
-                coordinates = unknown[a:a+nd]
+                coordinates = unknown[a:a+nd].copy()
+                fixed_mount = rod.parameters.mount_type == "fixed"
+                if fixed_mount:
+                    coordinates[0] = 0.
                 force = unknown[b-3:b] * force_scale
                 total_force += force
                 evaluation = rod.evaluate(coordinates, derivatives=True)
@@ -210,10 +221,13 @@ class GuidedArray:
                          - evaluation.rotation_jacobian.T @ moment) / (force_scale * length)
                 # R_s = -lambda_h*l0 at upper stop, +lambda_0*l0 at
                 # an explicitly present shoulder. No lower reaction otherwise.
-                xmax = upper[a]
-                if rod.parameters.lower_stop:
-                    local[0] = min(local[0], coordinates[0])
-                local[0] = max(local[0], coordinates[0] - xmax)
+                if fixed_mount:
+                    local[0] = unknown[a]
+                else:
+                    xmax = upper[a]
+                    if rod.parameters.lower_stop:
+                        local[0] = min(local[0], coordinates[0])
+                    local[0] = max(local[0], coordinates[0] - xmax)
                 residual[a:a+nd] = local
                 rotation_step = _rotation_increment(evaluation.tip_rotation, previous.rotations[i])
                 mean_normal = normal + previous.normals[i]
@@ -240,9 +254,18 @@ class GuidedArray:
         # Continue kinetic sliding. Return to the static cone only when material
         # motion arrests inside the kinetic disk (e.g. elastic unloading).
         result = None
+        # Small arrays have strongly differing shaft/tip stiffness scales. A
+        # direct trust-region solve avoids inaccurate inner iterative steps;
+        # the same residual and physical tolerances apply to both choices.
+        direct_linear_solve = initial.size <= 1024
+        def jacobian(x):
+            value = self._jacobian(assemble, x)
+            return value.toarray() if direct_linear_solve else value
         for _ in range(3):
             result = least_squares(assemble, initial, bounds=(lower, upper),
-                                   jac=lambda x: self._jacobian(assemble, x), x_scale="jac",
+                                   jac=jacobian, x_scale="jac",
+                                   tr_solver="exact" if direct_linear_solve else "lsmr",
+                                   tr_options={} if direct_linear_solve else {"atol": 1e-10, "btol": 1e-10},
                                    ftol=1e-10, xtol=1e-10, gtol=1e-10,
                                    max_nfev=cfg.max_nfev, diff_step=2e-5)
             residual = assemble(result.x)
@@ -263,6 +286,13 @@ class GuidedArray:
             return EquilibriumTrial(None, "GEOMETRY_DOMAIN", norm, result.nfev,
                                     {"geometry_status": cache["domain"]})
         for i, row in enumerate(cache["rows"]):
+            rod = self.rods[i]
+            if (rod.parameters.mount_type == "spring"
+                    and rod.parameters.max_compression_m >= rod.parameters.free_length_m
+                    and row["evaluation"].exposed_length_m <= 2*cfg.contact_tolerance_m):
+                return EquilibriumTrial(None, "EXPOSED_LENGTH_LIMIT", norm, result.nfev,
+                                        {"spine_index": i, "nominal_spring_stroke_m": rod.parameters.max_compression_m,
+                                         "exposed_length_m": row["evaluation"].exposed_length_m})
             if (row["query"].selected is None and
                     abs(row["contact"].gap_m) <= cfg.contact_tolerance_m):
                 return EquilibriumTrial(None, "MULTIPOINT_CONTACT_LIMIT", norm, result.nfev,
@@ -288,21 +318,36 @@ class GuidedArray:
             energy += evaluation.energy_J
             dissipation += max(0., -float(row["tangential_force"] @ row["tangent_motion"]))
             compression = row["coordinates"][0] * rod.parameters.free_length_m
-            hard_stop = compression >= rod.parameters.max_compression_m - cfg.contact_tolerance_m
+            fixed_mount = rod.parameters.mount_type == "fixed"
+            hard_stop = (not fixed_mount and rod.parameters.max_compression_m < rod.parameters.free_length_m
+                         and compression >= rod.parameters.max_compression_m - cfg.contact_tolerance_m)
             stress = rod.stress(row["coordinates"], row["force"], row["moment"], evaluation=evaluation)
             raw_residual = rod.generalized_residual(row["coordinates"], row["force"], row["moment"], evaluation=evaluation)
             boundary = rod.axial_boundary(row["coordinates"], raw_residual,
                                           compression_tolerance_m=cfg.contact_tolerance_m)
             if stress.model_limit:
                 status = "ELASTIC_MODEL_LIMIT"
+            if (rod.parameters.taper_length_m > 0 and n > force_scale*cfg.residual_tolerance
+                    and contact.gap_m <= cfg.contact_tolerance_m
+                    and float(-np.asarray(contact.normal) @ evaluation.tip_rotation[:, 0]) < -1e-10):
+                # The rear sphere is buried in the taper. Reaching it is a
+                # contact outside this tip-cap model, not an available hook.
+                status = "TIP_CONTACT_DOMAIN"
             body_gap = None
             if cfg.check_body_clearance:
-                centerline, sagitta = rod.clearance_centerline(row["coordinates"],
-                                                               tolerance_m=cfg.contact_tolerance_m/4)
-                clearance = self.surface.query_centerline(centerline + q, rod.parameters.diameter_m/2+sagitta)
+                if rod.parameters.taper_length_m > 0:
+                    from .tapered_geometry import query_tapered_rod_clearance
+                    clearance = query_tapered_rod_clearance(
+                        self.surface, rod, row["coordinates"], q, cfg.contact_tolerance_m)
+                else:
+                    centerline, sagitta = rod.clearance_centerline(row["coordinates"],
+                                                                   tolerance_m=cfg.contact_tolerance_m/4)
+                    clearance = self.surface.query_centerline(centerline + q, rod.parameters.diameter_m/2+sagitta)
                 body_gap = clearance.gap_m
                 if clearance.status in {"out_of_domain", "invalid_surface"}:
                     status = "ROD_GEOMETRY_DOMAIN"
+                elif clearance.status == "indeterminate":
+                    status = "ROD_GEOMETRY_UNRESOLVED"
                 elif body_gap is not None and body_gap < -cfg.contact_tolerance_m:
                     status = "ROD_COLLISION_LIMIT"
             modes.append(mode + ("_HARDSTOP" if hard_stop else ""))
@@ -315,10 +360,17 @@ class GuidedArray:
                                   max_stress_upper_Pa=stress.max_section_von_mises_upper_Pa,
                                   stress_utilization=stress.utilization,
                                   guide_moment_Nm=stress.guide_moment_Nm.tolist(),
-                                  travel_utilization=float(compression/rod.parameters.max_compression_m),
+                                  travel_utilization=(0. if fixed_mount else float(compression/rod.parameters.max_compression_m)),
+                                  mount_type=rod.parameters.mount_type,
+                                  nominal_spring_stroke_m=(None if fixed_mount else rod.parameters.max_compression_m),
+                                  fixed_mount_axial_residual_N=(float(raw_residual[0]/rod.parameters.free_length_m)
+                                                               if fixed_mount else None),
+                                  fixed_mount_reaction_N=((-row["force"]).tolist() if fixed_mount else None),
+                                  fixed_mount_axial_reaction_N=(float(-row["force"] @ rod.axis)
+                                                               if fixed_mount else None),
                                   spring_branch=boundary.branch,
-                                  upper_stop_reaction_N=boundary.upper_reaction_N,
-                                  lower_stop_reaction_N=boundary.lower_reaction_N,
+                                  upper_stop_reaction_N=(0. if fixed_mount else boundary.upper_reaction_N),
+                                  lower_stop_reaction_N=(0. if fixed_mount else boundary.lower_reaction_N),
                                   spring_energy_J=evaluation.spring_energy_J,
                                   bending_energy_J=evaluation.bending_energy_J,
                                   feature_id=str(contact.feature_id),
