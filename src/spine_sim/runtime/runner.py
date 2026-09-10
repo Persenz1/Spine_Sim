@@ -32,6 +32,7 @@ from spine_sim.core.versions import (
     PROJECT_SCHEMA_VERSION,
     RESULT_SCHEMA_VERSION,
     SOLVER_SEMANTICS_VERSION,
+    IJMS_VERSIONS,
 )
 from spine_sim.io.files import utc_now
 from spine_sim.io.results import (
@@ -248,6 +249,9 @@ class CampaignRunner:
             "geometry_version": GEOMETRY_SCHEMA_VERSION,
             "parameter_registry_version": PARAMETER_REGISTRY_VERSION,
         }
+        if campaign.callable == "spine_sim.ijms:run_case":
+            expected_versions.update(IJMS_VERSIONS)
+        self.expected_versions = expected_versions
         for case in campaign.cases:
             mismatches = {
                 name: (getattr(case, name), expected)
@@ -311,11 +315,11 @@ class CampaignRunner:
         self.store.initialize(
             manifest={
                 "schema_version": PROJECT_SCHEMA_VERSION,
-                "model_schema_version": MODEL_SCHEMA_VERSION,
+                "model_schema_version": self.expected_versions["model_schema_version"],
                 "result_schema_version": RESULT_SCHEMA_VERSION,
-                "solver_semantics_version": SOLVER_SEMANTICS_VERSION,
-                "geometry_schema_version": GEOMETRY_SCHEMA_VERSION,
-                "parameter_registry_version": PARAMETER_REGISTRY_VERSION,
+                "solver_semantics_version": self.expected_versions["solver_semantics_version"],
+                "geometry_schema_version": self.expected_versions["geometry_version"],
+                "parameter_registry_version": self.expected_versions["parameter_registry_version"],
                 "campaign_id": self.campaign.campaign_id,
                 "created_at_utc": utc_now(),
                 "backend": self._backend_record,
@@ -381,11 +385,11 @@ class CampaignRunner:
             raise ConfigurationError("campaign manifest must be a JSON object")
         expected_manifest = {
             "schema_version": PROJECT_SCHEMA_VERSION,
-            "model_schema_version": MODEL_SCHEMA_VERSION,
+            "model_schema_version": self.expected_versions["model_schema_version"],
             "result_schema_version": RESULT_SCHEMA_VERSION,
-            "solver_semantics_version": SOLVER_SEMANTICS_VERSION,
-            "geometry_schema_version": GEOMETRY_SCHEMA_VERSION,
-            "parameter_registry_version": PARAMETER_REGISTRY_VERSION,
+            "solver_semantics_version": self.expected_versions["solver_semantics_version"],
+            "geometry_schema_version": self.expected_versions["geometry_version"],
+            "parameter_registry_version": self.expected_versions["parameter_registry_version"],
             "campaign_id": self.campaign.campaign_id,
         }
         mismatches = {

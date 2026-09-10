@@ -2,6 +2,10 @@
 
 这里集中导出从地形候选查询、单根 spine 求解到阵列平衡求解所需的规范类型；
 调用方优先从本模块导入，可减少对包内目录结构的耦合。
+
+这些单刺/阵列函数保留旧机理语义。IJMS 有限导向杆路径从
+``spine_sim.ijms`` 导入；局部新模型从 ``spine_sim.guided_rod`` 和
+``spine_sim.guided_array`` 导入，避免将两种物理链混用。
 """
 
 from .array import (
@@ -97,4 +101,4 @@ __all__ = [
     "stable_hash",
 ]
 
-__version__ = "0.4.0"
+__version__ = "0.5.0"

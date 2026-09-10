@@ -6,10 +6,17 @@
 
 PROJECT_SCHEMA_VERSION = "2"
 MODEL_SCHEMA_VERSION = "canonical-single-array-2"
-RESULT_SCHEMA_VERSION = "canonical-result-2"
+RESULT_SCHEMA_VERSION = "canonical-result-3"
 SOLVER_SEMANTICS_VERSION = "single-array-event-v2"
 GEOMETRY_SCHEMA_VERSION = "contact-candidate-3"
 PARAMETER_REGISTRY_VERSION = "canonical-parameters-2"
+
+IJMS_VERSIONS = {
+    "model_schema_version": "ijms-guided-rod-1",
+    "solver_semantics_version": "guided-rod-incremental-contact-1",
+    "geometry_version": "continuous-triangle-sphere-1",
+    "parameter_registry_version": "ijms-assembly-1",
+}
 
 # 结果中使用的模型层级标签，用于区分单刺和刚性背板阵列输出契约。
 SINGLE_SPINE_MODEL_LEVEL = "single_spine_quasistatic"

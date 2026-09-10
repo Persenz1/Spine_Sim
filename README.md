@@ -1,8 +1,17 @@
 # Spine Sim
 
-Spine Sim 是一套面向钩爪式爬壁机器人微刺抓附的仿真程序，当前版本为 `0.4.0`。
+Spine Sim 是一套面向钩爪式爬壁机器人微刺抓附的仿真程序，当前版本为 `0.5.0`。
 
-当前物理链：
+IJMS 新版入口是 `spine_sim.ijms:run_case`，实现共同背板、轴向压缩弹簧、可回缩空间弯曲杆及连续曲面上的预载—拖动。新研究从 [新版机理与接口](docs/IJMS新版机理与接口.md) 和 [批量仿真交接](docs/IJMS批量仿真交接.md) 开始。`examples/ijms_campaign.json` 是可运行的未标定数值示例。
+
+后续由 DeepSeek / harness 编码时，先读 [AGENTS.md](AGENTS.md) 和 [IJMS 物理约束](docs/IJMS物理约束.md)：可优化实现，保持物理含义；文档末尾提供 harness 任务前缀。
+
+```powershell
+.venv\Scripts\python.exe -B -m spine_sim.cli run-case examples\ijms_campaign.json --backend cpu --output E:\Agent_Tmp_WS\ijms_demo
+```
+
+旧单刺/阵列求解器与解析夹具保留供对照，其物理链为：
+
 
 ```text
 TerrainLibrary / TrackGeometry
@@ -37,6 +46,7 @@ TerrainLibrary / TrackGeometry
 
 - Python 3.11+
 - NumPy 1.26+
+- SciPy 1.14+：新版有限杆稀疏非线性求解
 - 可选 `pyarrow>=15`：Parquet case index 与 trace
 - 可选 `matplotlib>=3.9,<4`：地形绘图
 - 可选 `cupy-cuda13x[ctk]>=14.1,<15`：CUDA 地形生成
@@ -62,9 +72,9 @@ spine-sim summarize results/<campaign_id>
 运行命令支持 `--backend auto|cpu|cuda` 和 `--device-index`。CUDA 当前固定要求
 `--workers 1`；worker 会在执行 case callable 前绑定所选 CuPy device。
 
-`examples/smoke_campaign.json` 只验证通用 runner 和结果存储，不运行物理链。`examples/canonical_campaign.json` 会运行解析平墙候选、单刺和阵列承载，但不查询真实地形。项目仍需要通过 production case callable 连接地形、几何、单刺和阵列；`spine_sim.examples.canonical_module` 是解析 smoke fixture，不是已标定硬件模型。
+`examples/smoke_campaign.json` 只验证通用 runner 和结果存储。`examples/canonical_campaign.json` 是旧机理的解析平墙夹具。新版完整路径使用 `examples/ijms_campaign.json`；粗糙高度场使用 `examples/ijms_rough_campaign.json`。
 
-> **生产运行边界：** 当前仓库不包含把 `TerrainLibrary` 的逐站候选连续接入单刺/阵列求解器的 production full-scan adapter 或可直接运行的完整扫描 campaign。`generate_legacy_full_scan()` 只生成历史设计点，不能单独启动物理仿真。在补齐并验证该 adapter、装配尺寸和初始间隙前，不应把 smoke fixture 的成功解释为完整仿真已经可运行。
+新版直接查询连续表面，不依赖旧固定轨道候选。`generate_legacy_full_scan()` 仍只生成历史设计点。数值示例运行成功不代表实物已标定，设计比较需要声明共同预算、表面样本、搜索窗口并检查路径完成状态。
 
 地形入口示例：
 
