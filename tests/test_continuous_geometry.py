@@ -6,6 +6,21 @@ import pytest
 from spine_sim.continuous_geometry import HeightFieldSurface, PlaneSurface
 
 
+@pytest.mark.parametrize("y", [0., 1e-15, -1e-15])
+def test_near_grid_line_keeps_ramp_and_edge_support(y):
+    x = np.arange(161)*50e-6-.004
+    height = np.broadcast_to(np.where(x < 0., 0., -100e-6), (81, 161)).copy()
+    surface = HeightFieldSurface(height, 50e-6, 50e-6, (-.004, -.002))
+    ramp = surface.query_sphere([-45e-6, y, 0.], 1e-6).selected
+    assert ramp is not None
+    assert ramp.normal == pytest.approx(np.array([2., 0., 1.])/np.sqrt(5), abs=1e-11)
+    assert ramp.gap_m == pytest.approx(10e-6/np.sqrt(5)-1e-6, abs=1e-15)
+    edge = surface.query_sphere([-45e-6, y, 20e-6], 1e-6).selected
+    assert edge is not None
+    assert edge.contact_point_m == pytest.approx([-50e-6, y, 0.], abs=1e-15)
+    assert edge.gap_m == pytest.approx(np.hypot(5e-6, 20e-6)-1e-6, abs=1e-15)
+
+
 def test_plane_uses_unit_normal_distance_and_retains_penetration_sign():
     surface = PlaneSurface((0, 0, 0.2), (-0.3, 0.4, 1.0))
     center = np.array((0.7, -0.2, 1.2))

@@ -13,7 +13,7 @@ PARAMETER_REGISTRY_VERSION = "canonical-parameters-2"
 
 IJMS_VERSIONS = {
     "model_schema_version": "ijms-tapered-rod-2",
-    "solver_semantics_version": "guided-rod-incremental-contact-2",
+    "solver_semantics_version": "guided-rod-incremental-contact-3",
     "geometry_version": "continuous-tapered-cap-2",
     "parameter_registry_version": "ijms-assembly-2",
 }

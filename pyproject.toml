@@ -7,7 +7,7 @@ name = "spine-sim"
 version = "0.6.0"
 description = "Canonical terrain, single-spine, and rigid-backplate array simulator"
 requires-python = ">=3.11"
-dependencies = ["numpy>=1.26", "scipy>=1.14"]
+dependencies = ["numpy>=1.26", "scipy>=1.16"]
 
 [project.optional-dependencies]
 parquet = ["pyarrow>=15"]

@@ -1,0 +1,190 @@
+{
+  "name": "ijms-small-array-material-coarse-v1-fast-4seg-25um",
+  "parameter_status": "declared_numerical_material_scenarios_not_population_calibrated",
+  "tip_radii_m": [
+    5e-05,
+    0.0001
+  ],
+  "angles_deg": [
+    50,
+    60,
+    70,
+    80
+  ],
+  "angle_gradient_deg": {
+    "toe": 60,
+    "heel": 80
+  },
+  "spring_stiffnesses_N_per_m": [
+    100,
+    400,
+    800,
+    1000,
+    2000,
+    5000
+  ],
+  "spring_travel_m": 0.004,
+  "reference_spine": {
+    "free_length_m": 0.004,
+    "diameter_m": 0.001,
+    "taper_length_m": 0.002,
+    "young_modulus_Pa": 200000000000,
+    "allowable_stress_Pa": 1200000000,
+    "segments": 4,
+    "lower_stop": false
+  },
+  "spacings_m": [
+    0.004,
+    0.005,
+    0.006
+  ],
+  "layouts": [
+    [
+      2,
+      2
+    ],
+    [
+      3,
+      3
+    ],
+    [
+      4,
+      4
+    ],
+    [
+      5,
+      5
+    ],
+    [
+      5,
+      2
+    ],
+    [
+      2,
+      5
+    ],
+    [
+      8,
+      2
+    ],
+    [
+      2,
+      8
+    ],
+    [
+      5,
+      3
+    ],
+    [
+      3,
+      5
+    ],
+    [
+      8,
+      3
+    ],
+    [
+      3,
+      8
+    ]
+  ],
+  "main_layout": [
+    4,
+    4
+  ],
+  "main_spacing_m": 0.005,
+  "layout_reference_angle_deg": 70,
+  "layout_reference_stiffnesses_N_per_m": [
+    100,
+    800,
+    5000
+  ],
+  "preloads_N": [
+    0.5,
+    1.0,
+    2.0
+  ],
+  "materials": [
+    {
+      "material": "concrete",
+      "subtype": "rough_wall"
+    },
+    {
+      "material": "red_brick",
+      "subtype": "fired_brick_standard"
+    },
+    {
+      "material": "sandpaper",
+      "subtype": "P40"
+    },
+    {
+      "material": "sandpaper",
+      "subtype": "P100"
+    },
+    {
+      "material": "sandpaper",
+      "subtype": "P240"
+    }
+  ],
+  "surface": {
+    "mode": "synthetic",
+    "resolution_m": 1e-05,
+    "edge_margin_m": 0.008,
+    "realizations_per_material": 64,
+    "seed_start": 2026091000,
+    "placement_xy_m": [
+      0.0,
+      0.0
+    ]
+  },
+  "path": {
+    "start_xy_m": [
+      0.0,
+      0.0
+    ],
+    "search_distance_m": 0.01,
+    "max_step_m": 2.5e-05,
+    "preload_steps": 12,
+    "surface_step_fraction": 2.5
+  },
+  "solver": {
+    "y_mode": "free",
+    "friction_static": 0.5,
+    "friction_kinetic": 0.4,
+    "max_nfev": 200,
+    "residual_tolerance": 2e-06,
+    "slip_tolerance_m": 1e-09,
+    "contact_tolerance_m": 2e-09,
+    "minimum_step_m": 1e-08,
+    "event_tolerance_m": 1e-07,
+    "check_body_clearance": true,
+    "swept_contact_tolerance_m": 1e-08,
+    "max_path_steps": 20000,
+    "stability": "off"
+  },
+  "metrics": {
+    "force_quantile": 0.1,
+    "target_forces_N": [
+      0.5,
+      1.0,
+      2.0
+    ],
+    "target_fractions_P": [
+      1.0
+    ],
+    "persistence_distance_m": 0.0005,
+    "search_windows_m": [
+      0.002,
+      0.005,
+      0.01
+    ]
+  },
+  "execution": {
+    "shard_size": 256,
+    "full_reference_sample_indices": [
+      0
+    ],
+    "progress_interval_s": 30
+  },
+  "numerical_fidelity": "user_authorized_fast_screen_4_segments_25um_steps; retain original physical inputs, surfaces, residual tolerances and event checks; not a converged-reference result"
+}

@@ -83,6 +83,14 @@ def design_table(config: Mapping[str, Any]) -> list[dict[str, Any]]:
     for radius in config["tip_radii_m"]:
         for mount in reference_mounts:
             add(radius, config["layout_reference_angle_deg"], mount, config["main_layout"], config["main_spacing_m"], reference=True)
+    if config.get('design_mode')=='full_factorial':
+        for radius in config['tip_radii_m']:
+            for angle in [*config['angles_deg'],None]:
+                for mount in mounts:
+                    for layout in config['layouts']:
+                        for spacing in config['spacings_m']:
+                            add(radius,angle,mount,layout,spacing)
+        return list(designs.values())
     for radius in config["tip_radii_m"]:
         for angle in [*config["angles_deg"], None]:
             for mount in mounts:
@@ -172,7 +180,7 @@ def freeze_config(output: Path, config: Mapping[str, Any]) -> None:
         _write_json(path, frozen)
 
 
-def prepare_surface(output: Path, config: Mapping[str, Any], shard: Shard) -> dict[str, Any]:
+def prepare_surface(output: Path, config: Mapping[str, Any], shard: Shard, *, terrain_backend: str = "cpu") -> dict[str, Any]:
     material = config["materials"][shard.material_index]
     seed = config["surface"]["seed_start"] + shard.sample_index
     stem = f"{material['material']}-{material['subtype']}-s{shard.sample_index:03d}"
@@ -180,8 +188,8 @@ def prepare_surface(output: Path, config: Mapping[str, Any], shard: Shard) -> di
     metadata_path = path.with_suffix(".json")
     domain = surface_domain(config)
     if not (path.exists() and metadata_path.exists()):
-        print(f"Generating shared surface: {stem}", flush=True)
-        terrain = generate_terrain(**material, seed=seed, mode=config["surface"]["mode"], backend="cpu",
+        print(f"Generating shared surface: {stem} (backend={terrain_backend})", flush=True)
+        terrain = generate_terrain(**material, seed=seed, mode=config["surface"]["mode"], backend=terrain_backend,
                                    **{key: domain[key] for key in ("size_x_m", "size_y_m", "resolution_m")})
         metadata = deepcopy(dict(terrain.metadata))
         metadata["measurement_probe"] = getattr(terrain, "measurement_probe", None)
@@ -257,7 +265,7 @@ def status(output: Path, config: Mapping[str, Any]) -> dict[str, Any]:
 
 
 def execute(config: Mapping[str, Any], output: Path, *, prepare_only: bool, workers: int,
-            max_shards: int | None = None, start_shard: int = 0) -> dict[str, int]:
+            max_shards: int | None = None, start_shard: int = 0, terrain_backend: str = "cpu") -> dict[str, int]:
     output = output.resolve()
     TEMP_ROOT.mkdir(parents=True, exist_ok=True)
     os.environ["TEMP"] = os.environ["TMP"] = str(TEMP_ROOT)
@@ -271,7 +279,7 @@ def execute(config: Mapping[str, Any], output: Path, *, prepare_only: bool, work
             continue
         if max_shards is not None and processed >= max_shards:
             break
-        surface = prepare_surface(output, config, shard)
+        surface = prepare_surface(output, config, shard, terrain_backend=terrain_backend)
         # Workers are an execution override; canonical campaign JSON stays the
         # same when the next resume uses another machine or worker count.
         campaign = build_campaign(config, designs, shard, surface)
@@ -300,6 +308,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("--output-dir", type=Path, default=DEFAULT_OUTPUT,
                         help="process files and results root (default: E:/TestData/IJMS)")
     parser.add_argument("--workers", type=int, default=max(1, min(4, (os.cpu_count() or 2)//2)))
+    parser.add_argument("--terrain-backend", choices=("cpu", "cuda"), default="cpu",
+                        help="backend for new shared surfaces only; mechanics always runs on CPU")
     parser.add_argument("--max-shards", type=int, help="execution prefix only; does not change the registered 64-realization design")
     parser.add_argument("--start-shard", type=int, default=0, help="zero-based operational partition; use the same output directory")
     parser.add_argument("--dry-run", action="store_true", help="describe the plan without generating surfaces or running cases")
@@ -317,7 +327,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         result = status(args.output_dir.resolve(), config)
     else:
         result = execute(config, args.output_dir, prepare_only=args.action == "prepare", workers=args.workers,
-                         max_shards=args.max_shards, start_shard=args.start_shard)
+                         max_shards=args.max_shards, start_shard=args.start_shard, terrain_backend=args.terrain_backend)
     print(json.dumps(result, ensure_ascii=False, indent=2))
     return 0
 

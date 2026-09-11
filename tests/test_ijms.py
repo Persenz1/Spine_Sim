@@ -57,7 +57,7 @@ def test_formal_runner_persists_new_physics_summary_and_resumes(tmp_path):
     assert summary["events"][0]["kind"] == "FIRST_CONTACT"
     assert np.isclose(summary["final_total_force_N"][2], p["load"]["value"], atol=1e-8)
     manifest = json.loads((tmp_path/"formal/manifest.json").read_text())
-    assert manifest["solver_semantics_version"] == "guided-rod-incremental-contact-2"
+    assert manifest["solver_semantics_version"] == "guided-rod-incremental-contact-3"
     resumed = CampaignRunner(campaign, tmp_path/"formal", discover_backend(BackendConfig(preference="cpu")))
     resumed.prepare(raw)
     assert resumed.run(resume=True)[0].result_hash == records[0].result_hash
@@ -72,3 +72,31 @@ def test_continuation_snapshot_preserves_material_history():
     assert restored.modes == state.modes
     assert np.array_equal(restored.rotations[0], state.rotations[0])
     assert np.array_equal(restored.rod_coordinates[0], state.rod_coordinates[0])
+
+
+def test_drag_continuation_keeps_prefix_and_does_not_repeat_preload(monkeypatch,tmp_path):
+    import spine_sim.ijms as ijms
+    from spine_sim.io.results import atomic_write_trace_table,read_trace_table
+    p=deepcopy(template()['cases'][0]['parameters'])
+    p['array'].update(nx=1,per_spine=[])
+    p['array']['spine']['segments']=1
+    p['solver'].update(stability='off',friction_static=0.,friction_kinetic=0.,friction_solver='active_set')
+    p['path'].update(search_distance_m=2e-6,max_step_m=1e-6,preload_steps=1)
+    p['metrics']={'force_quantile':.1}
+    p['output']['level']='full'
+    first=ijms.simulate(p)
+    assert first.summary['status']=='COMPLETED'
+    def no_approach(*args):
+        raise AssertionError('continuation must not repeat approach or preload')
+    monkeypatch.setattr(ijms,'approach_position',no_approach)
+    p['path']['search_distance_m']=4e-6
+    atomic_write_trace_table(tmp_path,first.trace_rows)
+    persisted=read_trace_table(tmp_path)
+    result=ijms.simulate(p,continuation=dict(state=first.summary['continuation_state'],rows=persisted,
+        events=first.events,initial_contact_position_m=first.summary['initial_contact_position_m'],next_step_m=.5e-6))
+    assert result.summary['status']=='COMPLETED',result.summary['failure']
+    assert result.summary['completed_search_m']==4e-6
+    assert [{key:row[key] for key in original} for row,original in zip(result.trace_rows,first.trace_rows)]==first.trace_rows
+    assert sum(row['phase']=='preload' for row in result.trace_rows)==1
+    assert result.summary['reused_accepted_steps']==len(first.trace_rows)
+    assert np.isclose(result.trace_rows[len(first.trace_rows)]['X_m'],2.5e-6,rtol=0.,atol=1e-15)

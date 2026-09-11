@@ -54,6 +54,13 @@ $env:MKL_NUM_THREADS = '1'
 .\.venv\Scripts\python.exe -B scripts/run_ijms_small.py run --output-dir E:\TestData\IJMS --workers 4
 ```
 
+安装CuPy且CUDA可用时，增加`--terrain-backend cuda`可用GPU生成尚未存在的地形；
+力学求解仍由CPU workers执行，已有共享地形直接复用。设置
+`$env:CUPY_CACHE_DIR='E:\TestData\IJMS\tmp\cuda-cache'`可将本轮CUDA编译缓存放在数据目录。
+CPU/CUDA使用相同PCG64采样，CUDA颗粒坐标及轮廓计算采用双精度，最终高度仍为float32再保存为float64。
+全尺寸68×58 mm、seed=2026091000混凝土对照的最大高度差约2.33e-10 m；
+RTX 4060 Ti上本次CUDA生成约2.64秒（不含保存），此计时不代表力学仿真吞吐。
+
 `run` 包含按需准备，通常无需先 `prepare`。只准备第一个分片而不运行可用：
 
 ```powershell

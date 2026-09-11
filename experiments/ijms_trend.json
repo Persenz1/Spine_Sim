@@ -1,0 +1,11 @@
+{
+  "name": "ijms-trend-first",
+  "base_config": "ijms_small_array_ritz.json",
+  "output_dir": "E:/TestData/IJMS/trend",
+  "sample_index": 0,
+  "path_step_m": 0.000025,
+  "envelope_spacing_m": 0.00001,
+  "workers": 8,
+  "purpose": "User-authorized trend illustration, not a strict finite-rod capacity calculation",
+  "stages": "120 fixed references first; then 5250 single-realization cases; no automatic 64-seed expansion"
+}

@@ -5,9 +5,11 @@ The JSON examples are numerical demonstrations, not calibrated device designs.
 """
 from __future__ import annotations
 
-from dataclasses import asdict
+from dataclasses import asdict, replace
 from functools import lru_cache
 import json
+import os
+from datetime import datetime, timezone
 from pathlib import Path
 from time import perf_counter
 from typing import Any, Mapping
@@ -154,12 +156,22 @@ def build_rods(config: Mapping[str, Any]) -> list[GuidedRod]:
             if "free_length_m" in defaults or "free_length_m" in overrides.get(i, {}):
                 raise ValueError("common_mouth_height_m determines free_length_m; omit explicit lengths")
             local["free_length_m"] = (config["common_mouth_height_m"]-local["tip_radius_m"])/np.sin(theta_i)
+        reduction = local.pop("rod_reduction", "none")
         p = GuidedRodParameters(**local)
         if p.mount_type == "spring" and p.max_compression_m <= 0:
             raise ValueError("IJMS guided spring requires positive max_compression_m")
         axis = np.array([np.cos(theta_i)*np.cos(yaw), np.cos(theta_i)*np.sin(yaw), -np.sin(theta_i)])
         center0 = np.array([xy[0], xy[1], p.tip_radius_m])
-        rods.append(GuidedRod(p, center0 - p.free_length_m*axis, axis))
+        if reduction == "force_moment_ritz":
+            from .modal_rod import ModalGuidedRod
+            if p.segments < 2:
+                raise ValueError("force_moment_ritz needs at least two integration segments")
+            rod_class = ModalGuidedRod
+        elif reduction == "none":
+            rod_class = GuidedRod
+        else:
+            raise ValueError(f"unknown rod_reduction: {reduction}")
+        rods.append(rod_class(p, center0 - p.free_length_m*axis, axis))
     return rods
 
 
@@ -195,9 +207,10 @@ def _row(state: PathState, phase: str, origin_x: float, detailed: bool, settings
     data = state.diagnostics
     per_spine = data.get("per_spine", [])
     counts = compute_array_counts([
-        SpineMetricInput.from_force(wall_force_N=item["force_N"], contact_normal=item["normal"],
+        replace(SpineMetricInput.from_force(wall_force_N=item["force_N"], contact_normal=item["normal"],
                                    geometric=True, signed_gap_m=item["gap_m"], engagement=None,
-                                   force_tolerance_N=max(state.preload_N/len(state.modes), 1e-4)*settings.residual_tolerance)
+                                   force_tolerance_N=max(state.preload_N/len(state.modes), 1e-4)*settings.residual_tolerance),
+                normal_force_N=item["N_N"])
         for item in per_spine], gap_tolerance_m=settings.contact_tolerance_m) if per_spine else None
     positive_loads = [max(p["P_N"], 0.) for p in per_spine]
     result = dict(phase=phase, X_m=float(state.position_m[0]),
@@ -290,7 +303,7 @@ def _weighted_path_statistics(rows, windows):
     return statistics
 
 
-def simulate(parameters: Mapping[str, Any], *, progress=None) -> CaseOutput:
+def simulate(parameters: Mapping[str, Any], *, progress=None, continuation=None) -> CaseOutput:
     started = perf_counter()
     rods = build_rods(parameters["array"])
     surface = build_surface(parameters["surface"], parameters.get("sample"))
@@ -311,22 +324,43 @@ def simulate(parameters: Mapping[str, Any], *, progress=None) -> CaseOutput:
     if min(distance, max_step) <= 0:
         raise ValueError("search distance and step must be positive")
     if isinstance(surface, HeightFieldSurface):
-        max_step = min(max_step, 0.25*min(surface.dx_m, surface.dy_m))
+        surface_step_fraction = float(path.get("surface_step_fraction", 0.25))
+        if surface_step_fraction <= 0:
+            raise ValueError("surface_step_fraction must be positive")
+        max_step = min(max_step, surface_step_fraction*min(surface.dx_m, surface.dy_m))
     detailed = parameters.get("output", {}).get("level", "trace") == "full"
     output_level = parameters.get("output", {}).get("level", "trace")
     if output_level not in {"summary", "trace", "full"}:
         raise ValueError("output.level must be summary, trace or full")
-    initial_q = approach_position(model, start_xy)
-    state = model.unloaded(initial_q)
-    rows = [_row(state, "first_contact", start_xy[0], detailed, settings)]
-    events = [dict(kind="FIRST_CONTACT", phase="approach", X_m=float(start_xy[0]), Z_m=float(initial_q[2]))]
+    if continuation is None:
+        initial_q = approach_position(model, start_xy)
+        state = model.unloaded(initial_q)
+        rows = [_row(state, "first_contact", start_xy[0], detailed, settings)]
+        events = [dict(kind="FIRST_CONTACT", phase="approach", X_m=float(start_xy[0]), Z_m=float(initial_q[2]))]
+    else:
+        # Caller supplies a matching full-output drag prefix. Keep every accepted
+        # point and contact history; the failed trial is not a physical state.
+        initial_q = np.asarray(continuation["initial_contact_position_m"], float)
+        state = PathState.from_snapshot(continuation["state"])
+        rows = [dict(row) for row in continuation["rows"]]
+        # Parquet fills absent diagnostic columns in the initial contact row
+        # with nulls. Restore the sparse-row convention used by reductions.
+        for row in rows:
+            if row.get("residual") is None:
+                row.pop("residual", None)
+        events = list(continuation["events"])
+        if state.preload_N != preload or rows[-1]["phase"] != "drag" or rows[-1]["X_m"] != state.position_m[0]:
+            raise ValueError("continuation must end at the matching constant-preload drag state")
+    resumed_x = float(state.position_m[0]-start_xy[0]) if continuation is not None else None
     status, failure = "COMPLETED", None
     stage_start = perf_counter()
 
     def advance(target, phase):
         nonlocal state, status, failure
         current = state.preload_N if phase == "preload" else state.position_m[0]
-        step = target-current
+        step = min(target-current, max_step) if phase == "drag" else target-current
+        if phase == "drag" and continuation is not None:
+            step = min(step, continuation.get("next_step_m", max_step))
         minimum = preload * 1e-7 if phase == "preload" else settings.minimum_step_m
         while target-current > max(1e-14, minimum*1e-4):
             if len(rows) >= settings.max_path_steps:
@@ -336,7 +370,10 @@ def simulate(parameters: Mapping[str, Any], *, progress=None) -> CaseOutput:
                 return False
             proposed = min(target, current+step)
             trial = model.solve(state, state.position_m[0] if phase == "preload" else proposed,
-                                proposed if phase == "preload" else preload)
+                                proposed if phase == "preload" else preload,
+                                progress=(lambda value: progress(dict(phase=phase, target=float(proposed),
+                                                                     step=float(step), **value)))
+                                if progress is not None else None)
             if progress is not None:
                 progress(dict(phase=phase, target=float(proposed), step=float(step),
                               status=trial.status, residual=trial.residual,
@@ -353,7 +390,14 @@ def simulate(parameters: Mapping[str, Any], *, progress=None) -> CaseOutput:
                                               previous_feature=state.features[i] if state.features else None,
                                               feature=next_state.features[i],
                                               penetration_tolerance_m=settings.swept_contact_tolerance_m)
-                    geometry_event |= swept.geometry_event
+                    previous_rows = state.diagnostics.get("per_spine", [])
+                    previous_gap = previous_rows[i]["gap_m"] if previous_rows else float("inf")
+                    current_gap = next_state.diagnostics["per_spine"][i]["gap_m"]
+                    # A nearest-feature switch in free space is not a contact
+                    # event. Keep swept nonpenetration for every tip, but only
+                    # localise normal changes at actual geometric contact.
+                    geometry_event |= (swept.geometry_event and
+                                       min(previous_gap, current_gap) <= settings.contact_tolerance_m)
                     if not swept.admissible:
                         swept_failure = dict(spine_index=i, geometry_status=swept.status,
                                              clearance_m=swept.clearance_m)
@@ -365,6 +409,11 @@ def simulate(parameters: Mapping[str, Any], *, progress=None) -> CaseOutput:
             event_refine = (changed or geometry_event) and step > event_step and state.preload_N > 0
             if trial.status != "ACCEPTED" or event_refine or swept_failure:
                 if step > minimum * 1.01:
+                    if progress is not None:
+                        progress(dict(status="STEP_REFINED", phase=phase, target=float(proposed), step=float(step),
+                                      reason=("swept_contact" if swept_failure else trial.status if trial.status != "ACCEPTED"
+                                              else "contact_mode" if changed else "geometry_feature"),
+                                      residual=trial.residual, details=swept_failure))
                     step *= 0.5
                     continue
                 if event_refine and trial.status == "ACCEPTED" and not swept_failure:
@@ -385,23 +434,32 @@ def simulate(parameters: Mapping[str, Any], *, progress=None) -> CaseOutput:
                                    location_uncertainty=float(step)))
             state = next_state
             rows.append(_row(state, phase, start_xy[0], detailed, settings))
+            if progress is not None and detailed:
+                progress(dict(status="STEP_ACCEPTED", phase=phase, target=float(proposed), step=float(step),
+                              X_m=float(state.position_m[0]), preload_N=float(state.preload_N),
+                              T_N=float(-state.forces_N[:, 0].sum()), P_N=float(state.forces_N[:, 2].sum()),
+                              Y_m=float(state.position_m[1]), Z_m=float(state.position_m[2]),
+                              residual=trial.residual))
             current = state.preload_N if phase == "preload" else state.position_m[0]
-            step = min(target-current, step*2)
+            step = min(target-current, step*2, max_step) if phase == "drag" else min(target-current, step*2)
         return True
 
-    for target in np.linspace(0, preload, int(path.get("preload_steps", 8))+1)[1:]:
-        if not advance(float(target), "preload"):
-            break
+    if continuation is None:
+        for target in np.linspace(0, preload, int(path.get("preload_steps", 8))+1)[1:]:
+            if not advance(float(target), "preload"):
+                break
     preload_time = perf_counter()-stage_start
     stage_start = perf_counter()
     if status == "COMPLETED":
         # The exact preloaded internal state starts drag and is retained on every
         # subsequent call. This row makes the declared [0,Smax] window explicit.
-        rows.append(_row(state, "drag", start_xy[0], detailed, settings))
+        if continuation is None:
+            rows.append(_row(state, "drag", start_xy[0], detailed, settings))
         end = float(start_xy[0]+distance)
-        while state.position_m[0] < end-1e-14:
-            if not advance(min(end, float(state.position_m[0]+max_step)), "drag"):
-                break
+        # Keep the adaptive step across the complete path. Restarting at the
+        # nominal maximum after each output-sized block repeatedly retried
+        # known-too-large steps at contact transitions.
+        advance(end, "drag")
     drag_time = perf_counter()-stage_start
     drag = [row for row in rows if row["phase"] == "drag"]
     x, force = [r["search_distance_m"] for r in drag], [r["T_N"] for r in drag]
@@ -448,10 +506,15 @@ def simulate(parameters: Mapping[str, Any], *, progress=None) -> CaseOutput:
                    preload_state=(next((row for row in reversed(rows) if row["phase"] == "preload"), rows[0])),
                    surface_metadata=dict(getattr(surface, "metadata", {})),
                    needle_parameters=[asdict(r.parameters) for r in rods],
+                   rod_discretization=[dict(integration_segments=r.parameters.segments,
+                                            solved_coordinates=r.dimension,
+                                            reduction=getattr(r, "reduction", "none")) for r in rods],
                    max_lateral_motion_m=max(abs(r["position_m"][1]-start_xy[1]) for r in rows),
                    final_counts=rows[-1].get("counts"), final_stability=stability,
                    final_total_force_N=state.forces_N.sum(axis=0).tolist(),
                    max_equilibrium_residual=max((r.get("residual", 0.) for r in rows), default=0.),
+                   equilibrium_residual_scope=("Ritz_projected_equations" if any(hasattr(r, "reduction") for r in rods)
+                                               else "full_discrete_rod_equations"),
                    max_travel_utilization=max(r["max_travel_utilization"] for r in rows),
                    max_stress_upper_Pa=max(r["max_stress_upper_Pa"] for r in rows),
                    max_stress_utilization=(max(r["max_stress_utilization"] for r in rows[1:])
@@ -467,6 +530,9 @@ def simulate(parameters: Mapping[str, Any], *, progress=None) -> CaseOutput:
                    coordinates="+x drag, +z away from wall; T=-sum(fx), P=sum(fz), L=sum(fy)",
                    numerical_method="finite rod + incremental material motion + mixed complementarity; direct small-array / sparse large-array linear solves",
                    parameter_status=parameters.get("parameter_status", "uncalibrated"))
+    if continuation is not None:
+        summary["continued_from_search_m"] = resumed_x
+        summary["reused_accepted_steps"] = len(continuation["rows"])
     if output_level == "full":
         summary["final_per_spine"] = state.diagnostics.get("per_spine", [])
         summary["continuation_state"] = state.snapshot()
@@ -486,8 +552,10 @@ def run_case(parameters: Mapping[str, Any], context: RunContext) -> CaseOutput:
     def report(value):
         nonlocal last_report
         now = perf_counter()
-        if now-last_report >= interval:
-            print(json.dumps(dict(case_id=context.case_id, elapsed_s=now-started, **value)), flush=True)
+        if value.get("status") == "STEP_ACCEPTED" or now-last_report >= interval:
+            print(json.dumps(dict(case_id=context.case_id, pid=os.getpid(),
+                                  reported_at_utc=datetime.now(timezone.utc).isoformat(),
+                                  elapsed_s=now-started, **value)), flush=True)
             last_report = now
     output = simulate(parameters, progress=report if interval > 0 else None)
     output.summary.update(case_id=context.case_id, normalized_input_hash=context.normalized_input_hash,

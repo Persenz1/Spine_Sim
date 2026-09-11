@@ -5,6 +5,8 @@ __pycache__/
 .coverage
 build/
 dist/
+!monitor/dist/
+!monitor/dist/index.html
 .venv/
 # Stable input examples are versioned.
 output/

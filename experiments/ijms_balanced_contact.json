@@ -1,0 +1,21 @@
+{
+  "name": "ijms-balanced-contact-pilot",
+  "base_config": "ijms_small_array_ritz.json",
+  "output_dir": "E:/TestData/IJMS/balanced_contact",
+  "needle_model": {"spring": "rigid", "fixed": "condensed_elastic"},
+  "path_step_um": 25,
+  "surface_envelope_grid_um": 20,
+  "surface_smoothing_sigma_um": 10,
+  "friction_transition_um": 1,
+  "relative_solver_tolerance": 0.001,
+  "per_case_cpu_budget_s": 45,
+  "fixed_case_cpu_budget_s": 60,
+  "sample_index": 0,
+  "preload_relocation": {
+    "enabled": true,
+    "offsets_m": [[0,0],[0.001,0],[0,0.001],[-0.001,0],[0,-0.001]],
+    "total_cpu_budget_s": 120
+  },
+  "automatic_strict_336000_campaign": false,
+  "stage": "representative_curve_and_cost_comparison"
+}

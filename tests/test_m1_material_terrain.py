@@ -141,10 +141,12 @@ class MaterialGenerationTests(unittest.TestCase):
         "CuPy/GPU is unavailable",
     )
     def test_cuda_material_generation_matches_cpu_and_records_device(self) -> None:
+        # Full campaign width catches float32 feature-centre rounding at large
+        # grid indices, which a sub-millimetre patch cannot expose.
         cpu = generate_terrain(
             material="red_brick",
             subtype="fired_brick_standard",
-            size_x_m=0.6e-3,
+            size_x_m=68e-3,
             size_y_m=0.4e-3,
             resolution_m=10e-6,
             seed=913,
@@ -154,7 +156,7 @@ class MaterialGenerationTests(unittest.TestCase):
         cuda = generate_terrain(
             material="red_brick",
             subtype="fired_brick_standard",
-            size_x_m=0.6e-3,
+            size_x_m=68e-3,
             size_y_m=0.4e-3,
             resolution_m=10e-6,
             seed=913,

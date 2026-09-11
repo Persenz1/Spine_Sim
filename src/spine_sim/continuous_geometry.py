@@ -14,6 +14,7 @@ Feature IDs identify mesh features, not friction anchors or contact episodes.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from collections import OrderedDict
 from typing import Literal, Protocol
 
 import numpy as np
@@ -147,8 +148,13 @@ def _closest_triangles(point: FloatArray, triangles: FloatArray) -> tuple[FloatA
             / np.einsum("ij,ij->i", edge, edge), 0, 1,
         )
         nearest = start + fraction[:, None] * edge
+        nearest[fraction == 1.] = triangles[fraction == 1., second]
         distance = np.sum((point - nearest)**2, axis=1)
-        replace = distance < best_distance
+        # An interior plane projection is already the exact triangle minimum.
+        # Squared-distance rounding must not replace it with a nearby edge:
+        # that can manufacture a tangential normal and lose every support.
+        difference = np.sum((nearest-best)*(nearest+best-2*point), axis=1)
+        replace = (~inside) & (~np.isfinite(best_distance) | (difference < 0.))
         best[replace], best_distance[replace] = nearest[replace], distance[replace]
         edge_bary = np.zeros_like(bary)
         edge_bary[:, first], edge_bary[:, second] = 1 - fraction, fraction
@@ -257,6 +263,7 @@ class HeightFieldSurface:
         self.maximum_xy_m = self.origin_xy_m + np.array(
             [(self.height_m.shape[1]-1)*self.dx_m, (self.height_m.shape[0]-1)*self.dy_m],
         )
+        self._triangle_cache = OrderedDict()
 
     @classmethod
     def from_terrain(cls, terrain, *, origin_xy_m=(0.0, 0.0)) -> HeightFieldSurface:
@@ -287,6 +294,11 @@ class HeightFieldSurface:
         first -= 1
         limits = np.array((self.height_m.shape[1]-2, self.height_m.shape[0]-2))
         first, last = np.clip(first, 0, limits), np.clip(last, 0, limits)
+        key = (*first, *last)
+        cached = self._triangle_cache.get(key)
+        if cached is not None:
+            self._triangle_cache.move_to_end(key)
+            return cached
         rows, cols = np.meshgrid(np.arange(first[1], last[1]+1), np.arange(first[0], last[0]+1), indexing="ij")
         width = self.height_m.shape[1]
         a = (rows*width+cols).ravel()
@@ -297,7 +309,14 @@ class HeightFieldSurface:
         x = self.origin_xy_m[0]+(vertex_ids % width)*self.dx_m
         y = self.origin_xy_m[1]+(vertex_ids // width)*self.dy_m
         z = self.height_m.ravel()[vertex_ids]
-        return np.stack((x, y, z), axis=2), vertex_ids, bool(np.all(valid))
+        result = np.stack((x, y, z), axis=2), vertex_ids, bool(np.all(valid))
+        # Only the immutable mesh window is cached, never a contact or normal.
+        # Exclude large approach windows and bound each worker's cache memory.
+        if len(vertex_ids) <= 16384:
+            self._triangle_cache[key] = result
+            if len(self._triangle_cache) > 32:
+                self._triangle_cache.popitem(last=False)
+        return result
 
     def query_sphere(
         self, center_m: ArrayLike, radius_m: float, *, tie_tolerance_m: float = 1e-10,
@@ -314,6 +333,15 @@ class HeightFieldSurface:
         triangles, ids, complete = self._triangles(center[:2]-reach, center[:2]+reach)
         if not complete:
             return SphereQuery("invalid_surface")
+        # The vertical projection is a known surface point. A triangle whose
+        # bounding box is farther away cannot contain a nearest support. Keep
+        # ties and roundoff margin so incident faces at shared edges survive.
+        lower = np.minimum(np.minimum(triangles[:, 0], triangles[:, 1]), triangles[:, 2])
+        upper = np.maximum(np.maximum(triangles[:, 0], triangles[:, 1]), triangles[:, 2])
+        separation = np.maximum(np.maximum(lower-center, center-upper), 0.)
+        bound = abs(vertical) + tie_tolerance_m + 1e-14
+        candidates = np.sum(separation*separation, axis=1) <= bound*bound
+        triangles, ids = triangles[candidates], ids[candidates]
         closest, barycentric = _closest_triangles(center, triangles)
         distances = np.linalg.norm(center-closest, axis=1)
         nearest = np.flatnonzero(distances <= np.min(distances)+tie_tolerance_m)

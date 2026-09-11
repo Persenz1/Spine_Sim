@@ -6,9 +6,9 @@
   "mode": "small",
   "cases": [{
     "module": "ijms_guided_array",
-    "module_version": "guided-rod-incremental-contact-2",
+    "module_version": "guided-rod-incremental-contact-3",
     "model_schema_version": "ijms-tapered-rod-2",
-    "solver_semantics_version": "guided-rod-incremental-contact-2",
+    "solver_semantics_version": "guided-rod-incremental-contact-3",
     "geometry_version": "continuous-tapered-cap-2",
     "parameter_registry_version": "ijms-assembly-2",
     "terrain_version": "sinusoidal-heightfield-1",

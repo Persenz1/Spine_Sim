@@ -453,20 +453,20 @@ def _cuda_irregular_feature_kernel() -> Any:
             const int x_stop,
             const int y_start,
             const int y_stop,
-            const float center_x,
-            const float center_y,
-            const float dx,
-            const float dy,
-            const float cosine,
-            const float sine,
-            const float semi_major,
-            const float semi_minor,
+            const double center_x,
+            const double center_y,
+            const double dx,
+            const double dy,
+            const double cosine,
+            const double sine,
+            const double semi_major,
+            const double semi_minor,
             const int harmonic,
-            const float phase_a,
-            const float phase_b,
-            const float edge_power,
-            const float boundary_roughness,
-            const float signed_amplitude
+            const double phase_a,
+            const double phase_b,
+            const double edge_power,
+            const double boundary_roughness,
+            const double signed_amplitude
         ) {
             const int width = x_stop - x_start;
             const int feature_size = width * (y_stop - y_start);
@@ -479,33 +479,33 @@ def _cuda_irregular_feature_kernel() -> Any:
                 const int local_x = linear - local_y * width;
                 const int ix = x_start + local_x;
                 const int iy = y_start + local_y;
-                const float x = ((float)ix - center_x) * dx;
-                const float y = ((float)iy - center_y) * dy;
-                const float rotated_x = cosine * x + sine * y;
-                const float rotated_y = -sine * x + cosine * y;
-                const float normalized_x = rotated_x / semi_major;
-                const float normalized_y = rotated_y / semi_minor;
-                const float radius = sqrtf(
+                const double x = ((double)ix - center_x) * dx;
+                const double y = ((double)iy - center_y) * dy;
+                const double rotated_x = cosine * x + sine * y;
+                const double rotated_y = -sine * x + cosine * y;
+                const double normalized_x = rotated_x / semi_major;
+                const double normalized_y = rotated_y / semi_minor;
+                const double radius = sqrt(
                     normalized_x * normalized_x
                     + normalized_y * normalized_y
                 );
-                const float theta = atan2f(normalized_y, normalized_x);
-                const float boundary = 1.0f + boundary_roughness * (
-                    0.62f * sinf((float)harmonic * theta + phase_a)
-                    + 0.38f * sinf(
-                        ((float)harmonic + 2.0f) * theta + phase_b
+                const double theta = atan2(normalized_y, normalized_x);
+                const double boundary = 1.0 + boundary_roughness * (
+                    0.62 * sin((double)harmonic * theta + phase_a)
+                    + 0.38 * sin(
+                        ((double)harmonic + 2.0) * theta + phase_b
                     )
                 );
-                const float normalized_radius = radius / fmaxf(boundary, 0.55f);
-                const float base = fminf(
-                    1.0f,
-                    fmaxf(1.0f - normalized_radius, 0.0f)
+                const double normalized_radius = radius / fmax(boundary, 0.55);
+                const double base = fmin(
+                    1.0,
+                    fmax(1.0 - normalized_radius, 0.0)
                 );
-                float profile = powf(base, edge_power);
-                profile *= 1.0f + 0.10f * sinf(
-                    ((float)harmonic + 3.0f) * theta + phase_b
+                double profile = pow(base, edge_power);
+                profile *= 1.0 + 0.10 * sin(
+                    ((double)harmonic + 3.0) * theta + phase_b
                 ) * base;
-                height[iy * nx + ix] += signed_amplitude * profile;
+                height[iy * nx + ix] += (float)(signed_amplitude * profile);
             }
         }
         """,
@@ -616,20 +616,20 @@ def _add_irregular_features_cuda(
                 np.int32(x_stop),
                 np.int32(y_start),
                 np.int32(y_stop),
-                np.float32(center_x),
-                np.float32(center_y),
-                np.float32(dx_m),
-                np.float32(dy_m),
-                np.float32(cosine),
-                np.float32(sine),
-                np.float32(semi_major),
-                np.float32(semi_minor),
+                np.float64(center_x),
+                np.float64(center_y),
+                np.float64(dx_m),
+                np.float64(dy_m),
+                np.float64(cosine),
+                np.float64(sine),
+                np.float64(semi_major),
+                np.float64(semi_minor),
                 np.int32(harmonic),
-                np.float32(phase_a),
-                np.float32(phase_b),
-                np.float32(edge_power),
-                np.float32(boundary_roughness),
-                np.float32(sign * amplitude),
+                np.float64(phase_a),
+                np.float64(phase_b),
+                np.float64(edge_power),
+                np.float64(boundary_roughness),
+                np.float64(sign * amplitude),
             )
         )
         sampled_diameters.append(diameter)

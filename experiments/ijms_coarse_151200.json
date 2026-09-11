@@ -1,0 +1,26 @@
+{
+  "name": "ijms-coarse-151200",
+  "base_config": "ijms_small_array_ritz.json",
+  "design_mode": "full_factorial",
+  "output_dir": "E:/TestData/IJMS/production_151200",
+  "surface_root": "E:/TestData/IJMS/production_151200",
+  "needle_model": {"spring": "rigid", "fixed": "condensed_elastic"},
+  "path_step_um": 25,
+  "surface_envelope_grid_um": 20,
+  "surface_smoothing_sigma_um": 10,
+  "friction_transition_um": 1,
+  "relative_solver_tolerance": 0.001,
+  "per_case_cpu_budget_s": 45,
+  "fixed_case_cpu_budget_s": 60,
+  "sample_index": 0,
+  "sample_indices": [0,1,2,3],
+  "preload_relocation": {
+    "enabled": true,
+    "offsets_m": [[0,0],[0.001,0],[0,0.001],[-0.001,0],[0,-0.001]],
+    "total_cpu_budget_s": 120
+  },
+  "compress_results": true,
+  "step_logs": false,
+  "workers": 16,
+  "stage": "authorized_full_coarse_scan"
+}

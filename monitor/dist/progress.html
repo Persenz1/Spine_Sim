@@ -1,0 +1,44 @@
+<!doctype html>
+<html lang="zh-CN">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>IJMS · 当前进度</title>
+<style>
+*{box-sizing:border-box}body{margin:0;background:#f3f6f8;color:#163541;font:16px system-ui,"Microsoft YaHei",sans-serif;min-height:100vh;display:grid;place-items:center;padding:24px}main{width:min(720px,100%);background:#fff;border:1px solid #dce5e9;border-radius:20px;padding:38px}header{display:flex;justify-content:space-between;align-items:center;gap:16px}h1{font-size:21px;margin:0}#state{color:#46707a;font-size:14px;background:#edf5f6;padding:7px 12px;border-radius:20px}.label{color:#687d86;font-size:14px;margin:34px 0 10px}.number{font-size:58px;font-weight:650;letter-spacing:-2px;line-height:1.2}.number small{font-size:23px;font-weight:400;color:#73838b;letter-spacing:0;margin-left:8px}.bar{height:12px;background:#e7eef1;border-radius:20px;overflow:hidden;margin:22px 0 13px}#fill{height:100%;width:0;background:#118b91;transition:width .5s}.line{display:flex;justify-content:space-between;color:#647b84;font-size:14px}.counts{display:grid;grid-template-columns:repeat(3,1fr);gap:16px;border-top:1px solid #e5ecef;margin-top:30px;padding-top:24px}.counts span{display:block;font-size:13px;color:#6d7f87}.counts b{font-size:26px;font-weight:550;display:block;margin-top:7px}#success{color:#087c76}#stopped{color:#8b681e}#failed{color:#b54a39}footer{margin-top:28px;font-size:12px;color:#84949b}#error{color:#b54a39;font-size:14px;line-height:1.5;margin-bottom:0}#error:empty{display:none}@media(max-width:480px){body{padding:14px}main{padding:25px}.number{font-size:46px}h1{font-size:18px}}
+</style>
+<main>
+<header><h1>IJMS · 当前进度</h1><span id="state" role="status">正在读取</span></header>
+<p class="label" id="phase">工况处理进度</p>
+<div class="number"><span id="done">—</span><small>/ <span id="total">—</span></small></div>
+<div class="bar" role="progressbar" aria-label="工况处理进度" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0" id="bar"><div id="fill"></div></div>
+<div class="line"><span id="percent">—</span><span id="remaining">—</span></div>
+<div class="counts"><div><span>成功跑完</span><b id="success">—</b></div><div><span>提前终止</span><b id="stopped">—</b></div><div><span>错误</span><b id="failed">—</b></div></div>
+<footer id="updated">每5秒自动更新</footer><p id="error" role="alert"></p>
+</main>
+<script>
+const $=id=>document.getElementById(id);
+async function refresh(){
+  try{
+    const response=await fetch('/api/status',{cache:'no-store'});
+    if(!response.ok)throw new Error('服务未响应');
+    const data=await response.json(),b=data.batch;
+    if(data.refresh_error||!b)throw new Error('进度暂时无法读取');
+    const done=b.completed_cases,total=b.planned_cases,c=b.counts||{};
+    const success=c.BALANCED_COMPLETE||0;
+    const stopped=(c.BALANCED_AXIAL_RANGE||0)+(c.BALANCED_BUDGET_LIMIT||0);
+    const failed=Object.entries(c).reduce((n,[k,v])=>n+(['BALANCED_COMPLETE','BALANCED_AXIAL_RANGE','BALANCED_BUDGET_LIMIT'].includes(k)?0:v),0);
+    const pct=total?Math.min(100,100*done/total):0;
+    $('phase').textContent=b.wave_number?'持续扫描 · 工况处理进度':b.phase==='reference'?'参考试跑 · 工况处理进度':'设计扫描 · 工况处理进度';
+    $('done').textContent=done.toLocaleString();$('total').textContent=total.toLocaleString();
+    $('percent').textContent=pct.toFixed(1)+'%';$('remaining').textContent='剩余 '+Math.max(0,total-done).toLocaleString()+' 个';
+    $('fill').style.width=pct+'%';$('bar').setAttribute('aria-valuenow',pct.toFixed(1));
+    $('success').textContent=success;$('stopped').textContent=stopped;$('failed').textContent=failed;
+    $('state').textContent=b.status==='COMPLETED'?'全部已结束':b.status==='PAUSED'?(b.pause_reason==='TIME_LIMIT'?'分段接续中':'已暂停'):b.status==='DRAINING'?'收尾中':!data.running?'已停止':b.status==='PREPARING'?'准备中':'运行中';
+    const wave=b.wave_number?' · '+(b.status==='COMPLETED'?'全批次已结束':b.pause_reason==='TIME_LIMIT'&&['PAUSED','DRAINING'].includes(b.status)?'当前段自然收尾后自动接续':['RUNNING','PREPARING'].includes(b.status)&&data.running?'持续运行，分段自动接续':'已停止派发，保留当前进度'):'';
+    $('updated').textContent='更新于 '+new Date(data.updated_at).toLocaleTimeString('zh-CN')+wave;
+    $('error').textContent='';
+  }catch(e){$('state').textContent='连接中断';$('error').textContent='暂时无法更新进度，5秒后重试。'}
+}
+refresh();setInterval(refresh,5000);
+</script>
+</html>

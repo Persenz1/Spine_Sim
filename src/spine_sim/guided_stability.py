@@ -55,6 +55,8 @@ def assess_stick_stability(array, state) -> dict[str, Any]:
                 local_matrix_units="J per dimensionless coordinate squared")
     if any(mode.startswith("SLIP") for mode in state.modes):
         return dict(base, status="SLIDING_NONCONSERVATIVE", sufficient_condition=False)
+    if any(sum(c.get("mode") != "OPEN" for c in row) > 1 for row in state.contact_history):
+        return dict(base, status="MULTICONTACT_STABILITY_NOT_IMPLEMENTED", sufficient_condition=False)
     directions = np.eye(3)[:, [1, 2] if ng == 2 else [2]]
     global_schur = np.zeros((ng, ng))
     global_constraints = []
