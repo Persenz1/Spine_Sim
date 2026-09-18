@@ -1,0 +1,28 @@
+<!doctype html><html lang="zh-CN"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>IJMS 小阵列最终确认</title>
+<style>body{margin:0;background:#edf3f5;color:#183b46;font:16px system-ui,'Microsoft YaHei',sans-serif}main{max-width:860px;margin:40px auto;padding:30px;background:white;border-radius:18px}h1{font-size:24px}small,.muted{color:#627e88}section{margin:25px 0;padding-top:20px;border-top:1px solid #e1eaed}.grid{display:flex;gap:24px;flex-wrap:wrap}.grid div{flex:1;min-width:130px}b{font-size:26px;display:block;margin-top:8px}input,select,button{font:inherit;padding:10px;border-radius:7px;border:1px solid #aebfc5;max-width:210px}label{display:block;margin:14px 0}button{background:#087f86;color:white;cursor:pointer;margin-right:10px}button.stop{background:#8c6034}button:disabled{opacity:.4;cursor:default}progress{width:100%;height:24px;accent-color:#07878c}#error{color:#af3434;white-space:pre-wrap}#state{float:right;font-size:15px;color:#087f86}footer{font-size:13px;color:#627e88;overflow-wrap:anywhere}</style>
+<main><h1>IJMS 小阵列最终确认 <span id="state">读取中</span></h1><p class="muted">地形驻内存 · 完整轨迹压缩 · 已落盘工况接续</p>
+<div class="grid"><div><small>正式批次已入账</small><b id="total">—</b></div><div><small>可用内存 / 磁盘</small><b id="resources">—</b></div><div><small>逻辑CPU / 自动上限</small><b id="cpu">—</b></div></div>
+<section><div class="grid"><div><small>本次进度</small><b id="session">—</b></div><div><small>预计剩余时间</small><b id="eta">待积累</b></div><div><small>处理速度</small><b id="rate">—</b></div></div><p><progress id="bar" max="100" value="0"></progress></p><p id="detail" class="muted"></p><div class="grid"><div><small>完整路径</small><b id="success">—</b></div><div><small>范围 / 预算停止</small><b id="stopped">—</b></div><div><small>数值 / 执行错误</small><b id="failed">—</b></div></div></section>
+<section><label>运行方式 <select id="mode"><option value="production">继续正式批次</option><option value="test">独立短程测试（0.1 mm，不写入正式结果）</option></select></label><label>本次新增case数 <input id="count" type="number" min="0" max="90000" value="0"> <small>0＝全部剩余；测试1～90例</small></label><label>并发worker数 <input id="workers" type="number" min="0" value="0"> <small>0＝全部可用逻辑线程；每worker单线程</small></label><button id="start" onclick="startRun()">启动 / 接续</button><button class="stop" id="stop" onclick="stopRun()">停止新增派发</button><p class="muted">沿冻结队列依次执行；case数不是随机抽样方案。停止后等待已派发case全部自然结束。11种构型、18个构型—预载组合、5000张新地形，共90000例；已入账的范围停止也不会重算。</p><p id="error"></p></section>
+<footer id="path"></footer><footer>随包运行时，无需安装Python或CUDA工具包；CUDA模式需要兼容的NVIDIA驱动。停止后等待在途case保存；断电会丢失尚未落盘的工作。</footer></main>
+<script>
+const $=id=>document.getElementById(id);let first=true;
+const gb=n=>(n/2**30).toFixed(1)+' GiB';
+function duration(n){if(n==null)return '待积累';if(n<60)return Math.ceil(n)+'秒';if(n<3600)return Math.ceil(n/60)+'分钟';return (n/3600).toFixed(1)+'小时';}
+async function post(path,value){const r=await fetch(path,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(value)});const d=await r.json();if(!r.ok)throw Error(d.error||'请求失败');return d;}
+async function startRun(){try{$('error').textContent='';await post('/api/start',{count:Number($('count').value),workers:Number($('workers').value),test:$('mode').value==='test'});await refresh();}catch(e){$('error').textContent=e.message;}}
+async function stopRun(){try{await post('/api/stop',{});await refresh();}catch(e){$('error').textContent=e.message;}}
+$('mode').onchange=()=>{$('count').value=$('mode').value==='test'?4:0;};
+async function refresh(){try{const r=await fetch('/api/status',{cache:'no-store'}),d=await r.json();if(!r.ok)throw Error(d.error);const s=d.state||{},h=d.hardware,c=s.counts||d.counts,n=Object.values(d.counts).reduce((a,b)=>a+b,0);
+if(first&&d.test_default){$('mode').value='test';$('count').value=4;}first=false;
+$('total').textContent=n.toLocaleString()+' / '+(d.planned_cases||90000);$('resources').textContent=gb(h.available_memory)+' / '+gb(h.disk_free);$('cpu').textContent=h.cpus+' / '+h.auto_workers;
+$('state').textContent=({RUNNING:s.phase==='preparing_surface'?'准备地形':'运行中',DRAINING:'等待在途结束',PAUSED:'已暂停',COMPLETED:'本次已结束',INTERRUPTED:'意外中断',STARTING:'启动中'})[s.status]||'等待启动';
+$('session').textContent=(s.session_done||0)+' / '+(s.session_target??'—');$('bar').value=s.session_target?100*s.session_done/s.session_target:s.status==='COMPLETED'?100:0;
+$('eta').textContent=s.status==='COMPLETED'?'已结束':duration(s.eta_seconds);$('rate').textContent=s.cases_per_hour?Math.round(s.cases_per_hour)+'例/小时':'待积累';
+$('detail').textContent=(s.mode==='test'?'独立测试':'正式批次')+' · 在途 '+(s.in_flight||0)+' · 并发 '+(s.workers||0)+(s.adaptive_workers?' / 上限 '+s.max_workers:'')+' · CPU '+(s.cpu_utilization_percent==null?'—':Math.round(s.cpu_utilization_percent)+'%')+' · 内存地形 '+(s.resident_surfaces||0)+' / '+(s.surface_window||'—')+' · 本次已生成 '+(s.prepared_surfaces||0)+' · 待落盘 '+(s.buffered_cases||0)+' · 已运行 '+duration(s.elapsed_s)+(s.pause_reason?' · '+s.pause_reason:'');
+const live=s.in_flight_progress||[];if(live.length){$('detail').textContent+=' · 预载 '+live.filter(v=>v.phase==='preload').length+' / 拖动 '+live.filter(v=>v.phase==='drag').length+' · 最远 '+Math.max(...live.map(v=>v.x_mm)).toFixed(2)+' mm';}
+$('success').textContent=c.BALANCED_COMPLETE||0;$('stopped').textContent=(c.BALANCED_AXIAL_RANGE||0)+(c.BALANCED_BUDGET_LIMIT||0);$('failed').textContent=Object.entries(c).reduce((n,[k,v])=>n+(['BALANCED_COMPLETE','BALANCED_AXIAL_RANGE','BALANCED_BUDGET_LIMIT'].includes(k)?0:v),0);
+$('start').disabled=d.running;$('stop').disabled=!d.running;$('path').textContent='目录：'+(s.output_dir||d.package);if(s.error)$('error').textContent=s.error;
+}catch(e){$('error').textContent=e.message;}}
+refresh();setInterval(refresh,5000);
+</script></html>

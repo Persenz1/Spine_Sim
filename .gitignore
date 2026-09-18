@@ -1,0 +1,23 @@
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.coverage
+build/
+dist/
+!monitor/dist/
+!monitor/dist/index.html
+.venv/
+# Stable input examples are versioned.
+output/
+results/
+/reports/
+/data/raw/
+/data/derived/
+*.part
+node_modules/
+/report_build/previews/
+/report_build/previews_terminal/
+
+# Local cleanup staging; safe to delete manually.
+/_cleanup_pending_delete/

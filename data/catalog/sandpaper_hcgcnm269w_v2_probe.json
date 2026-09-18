@@ -1,0 +1,145 @@
+{
+  "checked_date": "2026-07-29",
+  "dataset_id": "hcgcnm269w",
+  "dataset_version": 2,
+  "doi": "10.17632/hcgcnm269w.2",
+  "files": [
+    {
+      "comparison": {
+        "file_id_matches": true,
+        "sha256_matches": true,
+        "size_matches": true
+      },
+      "download_url": "https://data.mendeley.com/public-files/datasets/hcgcnm269w/files/c14550e5-b38f-4c1a-9c85-e2287c50654b/file_downloaded",
+      "file_id": "c14550e5-b38f-4c1a-9c85-e2287c50654b",
+      "filename": "P40.csv",
+      "header": {
+        "height_unit": "um",
+        "lateral_calibration_um_per_pixel": 1.08954,
+        "measured_date": "2016/11/15 11:56",
+        "x_size": 8879,
+        "y_size": 926
+      },
+      "sha256": "919ab87e037c41e0c63a65e9dcf0144cf7d077520cce2d746c240544ebf83aeb",
+      "size_bytes": 64216747,
+      "status": "verified_metadata"
+    },
+    {
+      "comparison": {
+        "file_id_matches": true,
+        "sha256_matches": true,
+        "size_matches": true
+      },
+      "download_url": "https://data.mendeley.com/public-files/datasets/hcgcnm269w/files/87b880f3-beaa-43f0-8364-21797c29c75d/file_downloaded",
+      "file_id": "87b880f3-beaa-43f0-8364-21797c29c75d",
+      "filename": "P60.csv",
+      "header": {
+        "height_unit": "um",
+        "lateral_calibration_um_per_pixel": 1.08954,
+        "measured_date": "2016/11/15 11:06",
+        "x_size": 11205,
+        "y_size": 915
+      },
+      "sha256": "38d886371e459c8d2d3337f53f7167054669735ad3f32f4d2c7783197372bb43",
+      "size_bytes": 80661252,
+      "status": "verified_metadata"
+    },
+    {
+      "comparison": {
+        "file_id_matches": true,
+        "sha256_matches": true,
+        "size_matches": true
+      },
+      "download_url": "https://data.mendeley.com/public-files/datasets/hcgcnm269w/files/154152c0-fbc7-4550-b61b-0d28d09871b7/file_downloaded",
+      "file_id": "154152c0-fbc7-4550-b61b-0d28d09871b7",
+      "filename": "P100.csv",
+      "header": {
+        "height_unit": "um",
+        "lateral_calibration_um_per_pixel": 1.08954,
+        "measured_date": "2016/11/15 14:02",
+        "x_size": 9421,
+        "y_size": 930
+      },
+      "sha256": "a085c14fbbae9999dd29395d69f6ce77c655a5ed8d541c5e62e4a5a59bce1d18",
+      "size_bytes": 68274019,
+      "status": "verified_metadata"
+    },
+    {
+      "comparison": {
+        "file_id_matches": true,
+        "sha256_matches": true,
+        "size_matches": true
+      },
+      "download_url": "https://data.mendeley.com/public-files/datasets/hcgcnm269w/files/08fe3024-30be-47f6-a1ed-e8cb09250822/file_downloaded",
+      "file_id": "08fe3024-30be-47f6-a1ed-e8cb09250822",
+      "filename": "P120.csv",
+      "header": {
+        "height_unit": "um",
+        "lateral_calibration_um_per_pixel": 1.08954,
+        "measured_date": "2016/11/15 11:43",
+        "x_size": 8698,
+        "y_size": 927
+      },
+      "sha256": "aab3065a2efdd483ee7d231c29b9f7c3ecb39246ace6015c25b5ce21f3f176e2",
+      "size_bytes": 62972724,
+      "status": "verified_metadata"
+    },
+    {
+      "comparison": {
+        "file_id_matches": true,
+        "sha256_matches": true,
+        "size_matches": true
+      },
+      "download_url": "https://data.mendeley.com/public-files/datasets/hcgcnm269w/files/fbed499f-8e92-419a-b6f9-a6780896d43f/file_downloaded",
+      "file_id": "fbed499f-8e92-419a-b6f9-a6780896d43f",
+      "filename": "P180.csv",
+      "header": {
+        "height_unit": "um",
+        "lateral_calibration_um_per_pixel": 1.08954,
+        "measured_date": "2016/11/15 12:06",
+        "x_size": 9739,
+        "y_size": 935
+      },
+      "sha256": "3e716caafafcb13df9b1eace19f34b754015bed800860d2fd857ad6e7965e6e8",
+      "size_bytes": 70729475,
+      "status": "verified_metadata"
+    },
+    {
+      "comparison": {
+        "file_id_matches": true,
+        "sha256_matches": true,
+        "size_matches": true
+      },
+      "download_url": "https://data.mendeley.com/public-files/datasets/hcgcnm269w/files/610f3b48-6a9e-41bf-b3c1-4beedb2db0c6/file_downloaded",
+      "file_id": "610f3b48-6a9e-41bf-b3c1-4beedb2db0c6",
+      "filename": "P240.csv",
+      "header": {
+        "height_unit": "um",
+        "lateral_calibration_um_per_pixel": 1.08954,
+        "measured_date": "2016/11/15 13:48",
+        "x_size": 9440,
+        "y_size": 933
+      },
+      "sha256": "585fc5e128689f5444b32996703c2d38b103a7c34465d0ed0dc81f269e7fce46",
+      "size_bytes": 68515861,
+      "status": "verified_metadata"
+    },
+    {
+      "comparison": {
+        "file_id_matches": true,
+        "sha256_matches": true,
+        "size_matches": true
+      },
+      "download_url": "https://data.mendeley.com/public-files/datasets/hcgcnm269w/files/75846188-5cd6-4bdb-879c-28342a7113c6/file_downloaded",
+      "file_id": "75846188-5cd6-4bdb-879c-28342a7113c6",
+      "filename": "ReadMe.txt",
+      "sha256": "ced061a185abf5f232b836f69ddfa1b25562735cc68013fbda8104170d4d9981",
+      "size_bytes": 2092,
+      "status": "verified_metadata"
+    }
+  ],
+  "landing_page": "https://data.mendeley.com/datasets/hcgcnm269w/2",
+  "p80_csv_listed": false,
+  "public_api_file_count": 127,
+  "public_api_url": "https://data.mendeley.com/public-api/datasets/hcgcnm269w"
+}

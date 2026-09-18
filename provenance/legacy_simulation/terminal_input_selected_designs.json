@@ -1,0 +1,312 @@
+{
+  "schema_version": "m3-full-selected-designs-v1",
+  "stage": "reviewed_terminal_input",
+  "selected_design_ids": [
+    "m3_full_design_b1417f0abdd7ab61b2b1",
+    "m3_full_design_4f0c3f82336e077e90bc",
+    "m3_full_design_60bc3108fbb407b1815c",
+    "m3_full_design_84bc8db4f9902f13b75c",
+    "m3_full_design_10af3f726401a9407f30",
+    "m3_full_design_165e033132586fff1c48",
+    "m3_full_design_acc60e377b0cca874e29",
+    "m3_full_design_679df696f2811efa84f4",
+    "m3_full_design_5b14632013cae856bf1f",
+    "m3_full_design_373480a2081564f5a91e",
+    "m3_full_design_ddb66bd524680d765f5c",
+    "m3_full_design_7c8a201bbcbd0989e2b1"
+  ],
+  "selected_designs": [
+    {
+      "design_id": "m3_full_design_b1417f0abdd7ab61b2b1",
+      "package": {
+        "tip_radius_m": 0.0001,
+        "diameter_m": 0.0006,
+        "fixed_angle_deg": 70.0,
+        "spring_stiffness_N_per_m": null,
+        "package_id": "rt100um_d600um_a70deg_rigid",
+        "spring_family": "rigid"
+      },
+      "geometry": {
+        "nx": 4,
+        "ny": 4,
+        "spacing_m": 0.005,
+        "angle_pattern": "fixed",
+        "array_shape": "4x4",
+        "geometry_id": "4x4_s5mm_fixed"
+      }
+    },
+    {
+      "design_id": "m3_full_design_4f0c3f82336e077e90bc",
+      "package": {
+        "tip_radius_m": 5e-05,
+        "diameter_m": 0.0008,
+        "fixed_angle_deg": 60.0,
+        "spring_stiffness_N_per_m": null,
+        "package_id": "rt50um_d800um_a60deg_rigid",
+        "spring_family": "rigid"
+      },
+      "geometry": {
+        "nx": 5,
+        "ny": 2,
+        "spacing_m": 0.005,
+        "angle_pattern": "fixed",
+        "array_shape": "5x2",
+        "geometry_id": "5x2_s5mm_fixed"
+      }
+    },
+    {
+      "design_id": "m3_full_design_60bc3108fbb407b1815c",
+      "package": {
+        "tip_radius_m": 0.0001,
+        "diameter_m": 0.0006,
+        "fixed_angle_deg": 80.0,
+        "spring_stiffness_N_per_m": 2000.0,
+        "package_id": "rt100um_d600um_a80deg_k2000",
+        "spring_family": "stiff"
+      },
+      "geometry": {
+        "nx": 6,
+        "ny": 6,
+        "spacing_m": 0.006,
+        "angle_pattern": "fixed",
+        "array_shape": "6x6",
+        "geometry_id": "6x6_s6mm_fixed"
+      }
+    },
+    {
+      "design_id": "m3_full_design_84bc8db4f9902f13b75c",
+      "package": {
+        "tip_radius_m": 0.0001,
+        "diameter_m": 0.0006,
+        "fixed_angle_deg": 80.0,
+        "spring_stiffness_N_per_m": 300.0,
+        "package_id": "rt100um_d600um_a80deg_k300",
+        "spring_family": "compliant"
+      },
+      "geometry": {
+        "nx": 5,
+        "ny": 2,
+        "spacing_m": 0.004,
+        "angle_pattern": "fixed",
+        "array_shape": "5x2",
+        "geometry_id": "5x2_s4mm_fixed"
+      }
+    },
+    {
+      "design_id": "m3_full_design_10af3f726401a9407f30",
+      "package": {
+        "tip_radius_m": 0.0001,
+        "diameter_m": 0.0008,
+        "fixed_angle_deg": 60.0,
+        "spring_stiffness_N_per_m": 800.0,
+        "package_id": "rt100um_d800um_a60deg_k800",
+        "spring_family": "stiff"
+      },
+      "geometry": {
+        "nx": 2,
+        "ny": 2,
+        "spacing_m": 0.006,
+        "angle_pattern": "60_to_80",
+        "array_shape": "2x2",
+        "geometry_id": "2x2_s6mm_60_to_80"
+      }
+    },
+    {
+      "design_id": "m3_full_design_165e033132586fff1c48",
+      "package": {
+        "tip_radius_m": 0.0001,
+        "diameter_m": 0.0006,
+        "fixed_angle_deg": 60.0,
+        "spring_stiffness_N_per_m": null,
+        "package_id": "rt100um_d600um_a60deg_rigid",
+        "spring_family": "rigid"
+      },
+      "geometry": {
+        "nx": 2,
+        "ny": 2,
+        "spacing_m": 0.005,
+        "angle_pattern": "fixed",
+        "array_shape": "2x2",
+        "geometry_id": "2x2_s5mm_fixed"
+      }
+    },
+    {
+      "design_id": "m3_full_design_acc60e377b0cca874e29",
+      "package": {
+        "tip_radius_m": 0.0001,
+        "diameter_m": 0.0006,
+        "fixed_angle_deg": 60.0,
+        "spring_stiffness_N_per_m": null,
+        "package_id": "rt100um_d600um_a60deg_rigid",
+        "spring_family": "rigid"
+      },
+      "geometry": {
+        "nx": 4,
+        "ny": 4,
+        "spacing_m": 0.006,
+        "angle_pattern": "60_to_80",
+        "array_shape": "4x4",
+        "geometry_id": "4x4_s6mm_60_to_80"
+      }
+    },
+    {
+      "design_id": "m3_full_design_679df696f2811efa84f4",
+      "package": {
+        "tip_radius_m": 5e-05,
+        "diameter_m": 0.0008,
+        "fixed_angle_deg": 60.0,
+        "spring_stiffness_N_per_m": 300.0,
+        "package_id": "rt50um_d800um_a60deg_k300",
+        "spring_family": "compliant"
+      },
+      "geometry": {
+        "nx": 2,
+        "ny": 2,
+        "spacing_m": 0.006,
+        "angle_pattern": "fixed",
+        "array_shape": "2x2",
+        "geometry_id": "2x2_s6mm_fixed"
+      }
+    },
+    {
+      "design_id": "m3_full_design_5b14632013cae856bf1f",
+      "package": {
+        "tip_radius_m": 5e-05,
+        "diameter_m": 0.0008,
+        "fixed_angle_deg": 60.0,
+        "spring_stiffness_N_per_m": 800.0,
+        "package_id": "rt50um_d800um_a60deg_k800",
+        "spring_family": "stiff"
+      },
+      "geometry": {
+        "nx": 2,
+        "ny": 2,
+        "spacing_m": 0.006,
+        "angle_pattern": "fixed",
+        "array_shape": "2x2",
+        "geometry_id": "2x2_s6mm_fixed"
+      }
+    },
+    {
+      "design_id": "m3_full_design_373480a2081564f5a91e",
+      "package": {
+        "tip_radius_m": 5e-05,
+        "diameter_m": 0.0008,
+        "fixed_angle_deg": 60.0,
+        "spring_stiffness_N_per_m": 2000.0,
+        "package_id": "rt50um_d800um_a60deg_k2000",
+        "spring_family": "stiff"
+      },
+      "geometry": {
+        "nx": 2,
+        "ny": 2,
+        "spacing_m": 0.006,
+        "angle_pattern": "fixed",
+        "array_shape": "2x2",
+        "geometry_id": "2x2_s6mm_fixed"
+      }
+    },
+    {
+      "design_id": "m3_full_design_ddb66bd524680d765f5c",
+      "package": {
+        "tip_radius_m": 0.0001,
+        "diameter_m": 0.0006,
+        "fixed_angle_deg": 60.0,
+        "spring_stiffness_N_per_m": 2000.0,
+        "package_id": "rt100um_d600um_a60deg_k2000",
+        "spring_family": "stiff"
+      },
+      "geometry": {
+        "nx": 2,
+        "ny": 5,
+        "spacing_m": 0.005,
+        "angle_pattern": "60_to_80",
+        "array_shape": "2x5",
+        "geometry_id": "2x5_s5mm_60_to_80"
+      }
+    },
+    {
+      "design_id": "m3_full_design_7c8a201bbcbd0989e2b1",
+      "package": {
+        "tip_radius_m": 0.0001,
+        "diameter_m": 0.0006,
+        "fixed_angle_deg": 60.0,
+        "spring_stiffness_N_per_m": 2000.0,
+        "package_id": "rt100um_d600um_a60deg_k2000",
+        "spring_family": "stiff"
+      },
+      "geometry": {
+        "nx": 5,
+        "ny": 2,
+        "spacing_m": 0.005,
+        "angle_pattern": "60_to_80",
+        "array_shape": "5x2",
+        "geometry_id": "5x2_s5mm_60_to_80"
+      }
+    }
+  ],
+  "selection_count": 12,
+  "selection_rule": "mechanism-reviewed selection: five advantage candidates and seven matched/mechanism controls",
+  "roles": {
+    "m3_full_design_b1417f0abdd7ab61b2b1": {
+      "role": "优势候选A1",
+      "mechanism": "刚性快速起载/中等阵列",
+      "reason": "稳定起载成功率100%，中位起载距离0.2 mm；用于检验刚性快速承载。"
+    },
+    "m3_full_design_4f0c3f82336e077e90bc": {
+      "role": "优势候选A2",
+      "mechanism": "刚性高累计承载/沿+x五列",
+      "reason": "正向累计承载和净承载均高，起载中位距离0.5 mm。"
+    },
+    "m3_full_design_60bc3108fbb407b1815c": {
+      "role": "优势候选A3",
+      "mechanism": "高刚度柔顺/大阵列/固定80°",
+      "reason": "无支撑缺口、净承载为正，兼顾持续性和载荷共享。"
+    },
+    "m3_full_design_84bc8db4f9902f13b75c": {
+      "role": "优势候选A4",
+      "mechanism": "低刚度柔顺/高均载",
+      "reason": "300 N/m中表现突出，起载成功率高、均载好，用于检验柔顺增益。"
+    },
+    "m3_full_design_10af3f726401a9407f30": {
+      "role": "优势候选A5",
+      "mechanism": "中刚度/角度梯度/小阵列",
+      "reason": "800 N/m、60→80°梯度的高成功率代表，制造规模小。"
+    },
+    "m3_full_design_165e033132586fff1c48": {
+      "role": "机理对照C1",
+      "mechanism": "最小刚性阵列",
+      "reason": "2×2刚性仍可快速承载；用于区分阵列冗余与刚性起载效应。"
+    },
+    "m3_full_design_acc60e377b0cca874e29": {
+      "role": "机理对照C2",
+      "mechanism": "刚性角度梯度",
+      "reason": "与刚性固定角方案比较角度梯度对起载和恢复的影响。"
+    },
+    "m3_full_design_679df696f2811efa84f4": {
+      "role": "刚度对照C3",
+      "mechanism": "匹配几何/300 N/m",
+      "reason": "2×2、6 mm、固定60°、d0.8/r50刚度三联对照之一。"
+    },
+    "m3_full_design_5b14632013cae856bf1f": {
+      "role": "刚度对照C4",
+      "mechanism": "匹配几何/800 N/m",
+      "reason": "2×2、6 mm、固定60°、d0.8/r50刚度三联对照之一。"
+    },
+    "m3_full_design_373480a2081564f5a91e": {
+      "role": "刚度对照C5",
+      "mechanism": "匹配几何/2000 N/m",
+      "reason": "2×2、6 mm、固定60°、d0.8/r50刚度三联对照之一。"
+    },
+    "m3_full_design_ddb66bd524680d765f5c": {
+      "role": "方向对照C6",
+      "mechanism": "2×5梯度阵列",
+      "reason": "与5×2完全匹配，用于隔离阵列长边方向效应。"
+    },
+    "m3_full_design_7c8a201bbcbd0989e2b1": {
+      "role": "方向对照C7",
+      "mechanism": "5×2梯度阵列",
+      "reason": "与2×5完全匹配，用于隔离阵列长边方向效应。"
+    }
+  }
+}

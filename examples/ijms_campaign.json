@@ -1,0 +1,48 @@
+{
+  "name": "ijms-guided-demo",
+  "module_version": "ijms-guided-campaign-1",
+  "callable": "spine_sim.ijms:run_case",
+  "workers": 1,
+  "mode": "small",
+  "cases": [
+    {
+      "module": "ijms_guided_array",
+      "module_version": "guided-rod-incremental-contact-3",
+      "model_schema_version": "ijms-tapered-rod-2",
+      "solver_semantics_version": "guided-rod-incremental-contact-3",
+      "geometry_version": "continuous-tapered-cap-2",
+      "parameter_registry_version": "ijms-assembly-2",
+      "terrain_version": "analytic-plane-1",
+      "tags": ["numerical_demonstration", "uncalibrated"],
+      "parameters": {
+        "parameter_status": "uncalibrated_numerical_demonstration",
+        "array": {
+          "nx": 2,
+          "ny": 1,
+          "spacing_x_m": 0.001,
+          "spacing_y_m": 0.001,
+          "theta_deg": 60,
+          "loaded_area_m2": 0.000004,
+          "spine": {
+            "free_length_m": 0.004,
+            "diameter_m": 0.0002,
+            "young_modulus_Pa": 200000000000,
+            "spring_stiffness_N_per_m": 300,
+            "max_compression_m": 0.001,
+            "tip_radius_m": 0.00012,
+            "segments": 3,
+            "lower_stop": false,
+            "allowable_stress_Pa": 1200000000
+          },
+          "per_spine": [{"index": 1, "spring_stiffness_N_per_m": 450}]
+        },
+        "surface": {"kind": "plane", "point_m": [0, 0, 0], "normal": [0, 0, 1], "version": "analytic-plane-1"},
+        "load": {"mode": "total_force", "value": 0.04},
+        "path": {"start_xy_m": [0, 0], "search_distance_m": 0.00004, "max_step_m": 0.00001, "preload_steps": 4},
+        "solver": {"y_mode": "free", "friction_static": 0.5, "friction_kinetic": 0.4, "event_tolerance_m": 0.0000005, "minimum_step_m": 0.00000001, "stability": "final"},
+        "metrics": {"target_fraction_P": 0.25, "persistence_distance_m": 0.00001, "force_quantile": 0.1},
+        "output": {"level": "full"}
+      }
+    }
+  ]
+}

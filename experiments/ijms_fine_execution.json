@@ -1,0 +1,14 @@
+{
+  "name": "ijms-fine-206-284300-v6",
+  "model": "ijms-balanced-condensed-contact-6",
+  "path_step_um": 25,
+  "surface_envelope_grid_um": 20,
+  "surface_smoothing_sigma_um": 10,
+  "friction_transition_um": 1,
+  "relative_solver_tolerance": 0.001,
+  "preload_attempt_cpu_s": 600,
+  "preload_total_cpu_s": 3000,
+  "drag_chunk_cpu_s": 600,
+  "preload_relocation": {"offsets_m": [[0,0],[0.001,0],[0,0.001],[-0.001,0],[0,-0.001]]},
+  "description": "CPU-only solve; budget-limited drag resumes accepted history until 10 mm or actual numerical/geometric stop; no global drag time cap. Five ordered preload locations, first successful preload. No restart of coarse results."
+}

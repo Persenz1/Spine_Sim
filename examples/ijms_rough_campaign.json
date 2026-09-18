@@ -1,0 +1,43 @@
+{
+  "name": "ijms-guided-rough-demo",
+  "module_version": "ijms-guided-campaign-1",
+  "callable": "spine_sim.ijms:run_case",
+  "workers": 1,
+  "mode": "small",
+  "cases": [{
+    "module": "ijms_guided_array",
+    "module_version": "guided-rod-incremental-contact-3",
+    "model_schema_version": "ijms-tapered-rod-2",
+    "solver_semantics_version": "guided-rod-incremental-contact-3",
+    "geometry_version": "continuous-tapered-cap-2",
+    "parameter_registry_version": "ijms-assembly-2",
+    "terrain_version": "sinusoidal-heightfield-1",
+    "tags": ["numerical_demonstration", "uncalibrated", "continuous_surface"],
+    "parameters": {
+      "parameter_status": "uncalibrated_numerical_demonstration",
+      "array": {
+        "nx": 1, "ny": 1, "theta_deg": 60,
+        "spine": {
+          "free_length_m": 0.004, "diameter_m": 0.0002,
+          "young_modulus_Pa": 200000000000,
+          "spring_stiffness_N_per_m": 300,
+          "max_compression_m": 0.001, "tip_radius_m": 0.00012,
+          "segments": 3, "lower_stop": false,
+          "allowable_stress_Pa": 1200000000
+        }
+      },
+      "surface": {
+        "kind": "sinusoidal", "version": "sinusoidal-heightfield-1",
+        "origin_xy_m": [-0.004, -0.003], "shape": [31, 51],
+        "dx_m": 0.0002, "dy_m": 0.0002,
+        "amplitude_m": 0.00004, "wavelength_m": 0.002,
+        "orientation_deg": 15, "phase_rad": 0.4
+      },
+      "load": {"mode": "total_force", "value": 0.02},
+      "path": {"start_xy_m": [0.00037, 0.00017], "search_distance_m": 0.00004, "max_step_m": 0.00001, "preload_steps": 4},
+      "solver": {"y_mode": "free", "friction_static": 0.5, "friction_kinetic": 0.4, "event_tolerance_m": 0.0000005, "stability": "final"},
+      "metrics": {"target_fraction_P": 0.25, "persistence_distance_m": 0.00001},
+      "output": {"level": "full"}
+    }
+  }]
+}

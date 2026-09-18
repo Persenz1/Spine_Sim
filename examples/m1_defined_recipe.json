@@ -1,0 +1,18 @@
+{
+  "generator_name": "defined_geometry",
+  "generator_version": "defined-geometry-v1-canonical5um-stride2-nodal",
+  "seed": 20260727,
+  "global_origin_x_m": 0.0,
+  "global_origin_y_m": 0.0,
+  "canonical_dx_m": 0.000005,
+  "canonical_dy_m": 0.000005,
+  "production_dx_m": 0.00001,
+  "production_dy_m": 0.00001,
+  "target_rms_height_m": 0.00003,
+  "correlation_length_x_m": 0.00005,
+  "correlation_length_y_m": 0.00005,
+  "kernel_kind": "separable_gaussian",
+  "kernel_truncate_sigma": 3.0,
+  "amplitude_scale": 1.0,
+  "coordinate_convention": "global_xy_nodes_origin_aligned"
+}

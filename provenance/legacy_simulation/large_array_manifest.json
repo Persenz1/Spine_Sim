@@ -1,0 +1,80 @@
+{
+  "array_sizes": [
+    20,
+    40,
+    60
+  ],
+  "artifacts": {
+    "cases_csv": "D:\\Pdrive\\Document\\论文\\爪刺啮合仿真数据及报告\\m3_array_scaling_20_40_60\\cases.csv",
+    "cases_parquet": "D:\\Pdrive\\Document\\论文\\爪刺啮合仿真数据及报告\\m3_array_scaling_20_40_60\\cases.parquet",
+    "fits": "D:\\Pdrive\\Document\\论文\\爪刺啮合仿真数据及报告\\m3_array_scaling_20_40_60\\fits.json",
+    "plot": "D:\\Pdrive\\Document\\论文\\爪刺啮合仿真数据及报告\\m3_array_scaling_20_40_60\\array_scaling_fit.png",
+    "report": "D:\\Pdrive\\Document\\论文\\爪刺啮合仿真数据及报告\\m3_array_scaling_20_40_60\\report.md",
+    "terrain_catalog": "D:\\Pdrive\\Document\\论文\\爪刺啮合仿真数据及报告\\m3_array_scaling_20_40_60\\terrain_catalog.json"
+  },
+  "completed_case_count": 180,
+  "completed_terrain_count": 10,
+  "configurations": [
+    {
+      "configuration_id": "fixed_60deg_rigid",
+      "fixed_angle_deg": 60.0,
+      "spring_stiffness_N_per_m": null
+    },
+    {
+      "configuration_id": "fixed_80deg_k2000",
+      "fixed_angle_deg": 80.0,
+      "spring_stiffness_N_per_m": 2000.0
+    }
+  ],
+  "cumulative_case_simulation_time_s": 1005.886013600044,
+  "cumulative_terrain_generation_time_s": 190.83970660006162,
+  "diameter_m": 0.0006,
+  "expected_case_count": 180,
+  "last_resume_elapsed_s": 4.604911500005983,
+  "output": "D:\\Pdrive\\Document\\论文\\爪刺啮合仿真数据及报告\\m3_array_scaling_20_40_60",
+  "path_settings": {
+    "backplate_travel_m": 0.006,
+    "contact_clearance_m": 1e-12,
+    "dx_m": 5e-05,
+    "path_length_m": 0.01,
+    "path_start_x_m": 0.0,
+    "preload_N": 2.0,
+    "relanding_search_steps": 5
+  },
+  "preload_design": {
+    "policy": "fixed_total_normal_preload_per_array",
+    "preloads_N": [
+      2.0,
+      5.0,
+      10.0
+    ]
+  },
+  "preloads_N": [
+    2.0,
+    5.0,
+    10.0
+  ],
+  "schema_version": "m3-array-scaling-supplement-v2",
+  "seeds": [
+    52001,
+    52002,
+    52003,
+    52004,
+    52005,
+    52006,
+    52007,
+    52008,
+    52009,
+    52010
+  ],
+  "spacing_m": 0.004,
+  "status": "complete",
+  "terrain_resolution_m": 2e-05,
+  "terrain_statistics": {
+    "correlation_length_x_m": 5e-05,
+    "correlation_length_y_m": 5e-05,
+    "target_rms_height_m": 3e-05
+  },
+  "tip_radius_m": 0.0001,
+  "updated_at_utc": "2026-07-30T12:31:32.988942+00:00"
+}

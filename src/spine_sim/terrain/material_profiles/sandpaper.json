@@ -1,0 +1,233 @@
+{
+  "schema_version": "material-profile-v1",
+  "material": "sandpaper",
+  "default_subtype": "P100",
+  "defaults": {
+    "orientation_policy": "preserve_measured_axes_no_90_degree_rotation",
+    "source_data": [],
+    "generation": {
+      "patch_overlap_fraction": 0.25,
+      "patch_candidates": 8,
+      "bounded_psd_residual_fraction": 0.06,
+      "grain_aspect_ratio_log_sigma": 0.22,
+      "grain_height_log_sigma": 0.32,
+      "grain_edge_power": 1.35
+    }
+  },
+  "subtypes": {
+    "P40": {
+      "status": "partially_validated",
+      "parameter_basis": "one_public_Hirox_sample_morphology_fit",
+      "limitations": [
+        "One specimen/scan cannot validate the population distribution.",
+        "The strong scan-axis anisotropy may include acquisition or stitching effects.",
+        "Exact-zero samples are provisionally treated as instrument invalid."
+      ],
+      "source_data": [
+        {
+          "source_id": "mendeley_hcgcnm269w_v2_P40_Hirox",
+          "doi": "10.17632/hcgcnm269w.2",
+          "license": "CC BY 4.0",
+          "relative_path": "data/raw/mendeley_hcgcnm269w_v2/P40.csv",
+          "sha256": "919ab87e037c41e0c63a65e9dcf0144cf7d077520cce2d746c240544ebf83aeb",
+          "height_unit": "um",
+          "spacing_x_m": 1.08954e-6,
+          "spacing_y_m": 1.08954e-6,
+          "dataset_zero_is_invalid": true,
+          "invalid_margin_samples": 12,
+          "preprocessing": "dataset-specific zero mask plus 12-sample invalid-boundary margin; robust rigid-plane removal; no high-pass filtering"
+        }
+      ],
+      "generation": {
+        "rms_height_m": 1.0429244162667076e-4,
+        "correlation_x_m": 3.050712e-4,
+        "correlation_y_m": 1.525356e-4,
+        "grain_diameter_m": 4.25e-4,
+        "grain_spacing_m": 4.70e-4,
+        "patch_size_m": 7.5e-4,
+        "height_quantiles_m": {
+          "1": -1.675585182965733e-4,
+          "5": -1.3155092528904788e-4,
+          "25": -7.831165930838324e-5,
+          "50": -2.8427986762835644e-5,
+          "75": 6.693406794511247e-5,
+          "95": 2.0292291446821764e-4,
+          "99": 3.132831960101612e-4
+        }
+      }
+    },
+    "P60": {
+      "status": "provisional",
+      "parameter_basis": "FEPA_grain_scale_and_P40_P100_interpolation_public_Hirox_not_yet_fitted",
+      "limitations": ["Public P60 height data exist but this profile has not been fitted to it."],
+      "generation": {
+        "rms_height_m": 8.5e-5,
+        "correlation_x_m": 2.4e-4,
+        "correlation_y_m": 1.15e-4,
+        "grain_diameter_m": 2.69e-4,
+        "grain_spacing_m": 3.1e-4,
+        "patch_size_m": 6.5e-4,
+        "height_quantiles_m": {
+          "1": -1.75e-4, "5": -1.18e-4, "25": -5.8e-5, "50": -1.2e-5,
+          "75": 5.5e-5, "95": 1.55e-4, "99": 2.35e-4
+        }
+      }
+    },
+    "P100": {
+      "status": "partially_validated",
+      "parameter_basis": "one_public_Hirox_sample_morphology_fit",
+      "limitations": [
+        "One specimen/scan cannot validate the population distribution.",
+        "The strong scan-axis anisotropy may include acquisition or stitching effects.",
+        "Exact-zero samples are provisionally treated as instrument invalid."
+      ],
+      "source_data": [
+        {
+          "source_id": "mendeley_hcgcnm269w_v2_P100_Hirox",
+          "doi": "10.17632/hcgcnm269w.2",
+          "license": "CC BY 4.0",
+          "relative_path": "data/raw/mendeley_hcgcnm269w_v2/P100.csv",
+          "sha256": "a085c14fbbae9999dd29395d69f6ce77c655a5ed8d541c5e62e4a5a59bce1d18",
+          "height_unit": "um",
+          "spacing_x_m": 1.08954e-6,
+          "spacing_y_m": 1.08954e-6,
+          "dataset_zero_is_invalid": true,
+          "invalid_margin_samples": 12,
+          "preprocessing": "dataset-specific zero mask plus 12-sample invalid-boundary margin; robust rigid-plane removal; no high-pass filtering"
+        }
+      ],
+      "generation": {
+        "rms_height_m": 5.7294269137308215e-5,
+        "correlation_x_m": 6.2321688e-4,
+        "correlation_y_m": 1.1767032e-4,
+        "grain_diameter_m": 1.49e-4,
+        "grain_spacing_m": 1.82e-4,
+        "patch_size_m": 5.0e-4,
+        "height_quantiles_m": {
+          "1": -1.1336960305925458e-4,
+          "5": -9.5969122776296e-5,
+          "25": -3.856527109746821e-5,
+          "50": 9.967374126063078e-7,
+          "75": 4.199695467832498e-5,
+          "95": 8.858654036885128e-5,
+          "99": 1.1687950405757872e-4
+        }
+      }
+    },
+    "P120": {
+      "status": "provisional",
+      "parameter_basis": "FEPA_grain_scale_and_P100_P180_interpolation_public_Hirox_not_yet_fitted",
+      "limitations": ["Public P120 height data exist but this profile has not been fitted to it."],
+      "generation": {
+        "rms_height_m": 5.2e-5,
+        "correlation_x_m": 4.8e-4,
+        "correlation_y_m": 7.0e-5,
+        "grain_diameter_m": 1.25e-4,
+        "grain_spacing_m": 1.55e-4,
+        "patch_size_m": 4.5e-4,
+        "height_quantiles_m": {
+          "1": -1.7e-4, "5": -8.0e-5, "25": -3.0e-5, "50": 2.0e-6,
+          "75": 3.7e-5, "95": 7.8e-5, "99": 1.05e-4
+        }
+      }
+    },
+    "P180": {
+      "status": "provisional",
+      "parameter_basis": "FEPA_grain_scale_and_P100_P240_interpolation_public_Hirox_not_yet_fitted",
+      "limitations": ["Public P180 height data exist but this profile has not been fitted to it."],
+      "generation": {
+        "rms_height_m": 3.5e-5,
+        "correlation_x_m": 5.8e-4,
+        "correlation_y_m": 4.5e-5,
+        "grain_diameter_m": 8.2e-5,
+        "grain_spacing_m": 1.02e-4,
+        "patch_size_m": 3.5e-4,
+        "height_quantiles_m": {
+          "1": -1.55e-4, "5": -4.8e-5, "25": -1.7e-5, "50": 2.0e-6,
+          "75": 2.2e-5, "95": 4.8e-5, "99": 7.0e-5
+        }
+      }
+    },
+    "P200": {
+      "status": "provisional",
+      "parameter_basis": "explicit_interpolation_between_P180_and_P240_not_relabeled_measurement",
+      "limitations": [
+        "No P200 measured height is used.",
+        "This is an interpolation model and must be recalibrated with an actual P200 scan."
+      ],
+      "generation": {
+        "rms_height_m": 3.2e-5,
+        "correlation_x_m": 6.5e-4,
+        "correlation_y_m": 3.5e-5,
+        "grain_diameter_m": 7.0e-5,
+        "grain_spacing_m": 8.8e-5,
+        "patch_size_m": 3.2e-4,
+        "height_quantiles_m": {
+          "1": -1.58e-4, "5": -3.9e-5, "25": -1.4e-5, "50": 2.0e-6,
+          "75": 1.8e-5, "95": 4.0e-5, "99": 6.0e-5
+        }
+      }
+    },
+    "P240": {
+      "status": "partially_validated",
+      "parameter_basis": "one_public_Hirox_sample_morphology_fit",
+      "limitations": [
+        "One specimen/scan cannot validate the population distribution.",
+        "The strong scan-axis anisotropy may include acquisition or stitching effects.",
+        "Exact-zero samples are provisionally treated as instrument invalid."
+      ],
+      "source_data": [
+        {
+          "source_id": "mendeley_hcgcnm269w_v2_P240_Hirox",
+          "doi": "10.17632/hcgcnm269w.2",
+          "license": "CC BY 4.0",
+          "relative_path": "data/raw/mendeley_hcgcnm269w_v2/P240.csv",
+          "sha256": "585fc5e128689f5444b32996703c2d38b103a7c34465d0ed0dc81f269e7fce46",
+          "height_unit": "um",
+          "spacing_x_m": 1.08954e-6,
+          "spacing_y_m": 1.08954e-6,
+          "dataset_zero_is_invalid": true,
+          "invalid_margin_samples": 12,
+          "preprocessing": "dataset-specific zero mask plus 12-sample invalid-boundary margin; robust rigid-plane removal; no high-pass filtering"
+        }
+      ],
+      "generation": {
+        "rms_height_m": 2.0340166722067757e-5,
+        "correlation_x_m": 7.62678e-4,
+        "correlation_y_m": 7.844688e-5,
+        "grain_diameter_m": 5.85e-5,
+        "grain_spacing_m": 7.3e-5,
+        "patch_size_m": 3.0e-4,
+        "height_quantiles_m": {
+          "1": -3.4650093948584984e-5,
+          "5": -2.2509009249915833e-5,
+          "25": -1.0965418823616346e-5,
+          "50": 9.045075444191752e-7,
+          "75": 1.0221618595096515e-5,
+          "95": 2.4603050587757017e-5,
+          "99": 4.487808495468926e-5
+        }
+      }
+    },
+    "P300": {
+      "status": "provisional",
+      "parameter_basis": "explicit_extrapolation_beyond_P240_not_relabeled_or_scaled_measurement",
+      "limitations": [
+        "No P300 measured height is used.",
+        "This is an extrapolation model and must be recalibrated with an actual P300 scan."
+      ],
+      "generation": {
+        "rms_height_m": 2.1e-5,
+        "correlation_x_m": 5.5e-4,
+        "correlation_y_m": 2.5e-5,
+        "grain_diameter_m": 4.6e-5,
+        "grain_spacing_m": 5.8e-5,
+        "patch_size_m": 2.5e-4,
+        "height_quantiles_m": {
+          "1": -1.05e-4, "5": -2.0e-5, "25": -7.0e-6, "50": 1.5e-6,
+          "75": 9.0e-6, "95": 2.0e-5, "99": 3.6e-5
+        }
+      }
+    }
+  }
+}

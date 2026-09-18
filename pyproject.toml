@@ -1,0 +1,27 @@
+[build-system]
+requires = ["setuptools>=69"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "spine-sim"
+version = "0.6.0"
+description = "Canonical terrain, single-spine, and rigid-backplate array simulator"
+requires-python = ">=3.11"
+dependencies = ["numpy>=1.26", "scipy>=1.16"]
+
+[project.optional-dependencies]
+parquet = ["pyarrow>=15"]
+test = ["pytest>=8", "pyarrow>=15"]
+gpu-cuda13 = ["cupy-cuda13x[ctk]>=14.1,<15"]
+plot = ["matplotlib>=3.9,<4"]
+
+[project.scripts]
+spine-sim = "spine_sim.cli:main"
+spine-terrain = "spine_sim.terrain.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+"spine_sim.terrain" = ["material_profiles/*.json"]
+"spine_sim.parameters" = ["registry.json"]

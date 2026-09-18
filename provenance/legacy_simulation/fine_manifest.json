@@ -1,0 +1,47 @@
+{
+  "schema_version": "m3-full-scan-stage-v1",
+  "status": "complete",
+  "stage": "fine",
+  "catalog_path": "D:\\Code\\Spine_Sim\\results\\m1_material_formal_300\\terrain_catalog.json",
+  "output_root": "D:\\Code\\Spine_Sim\\results\\m3_fast\\full_scan",
+  "condition_count": 150,
+  "design_count": 96,
+  "preloads_N": [
+    0.5,
+    1.0,
+    2.0
+  ],
+  "expected_case_count": 43200,
+  "path_settings": {
+    "preload_N": 1.0,
+    "path_length_m": 0.01,
+    "dx_m": 0.0001,
+    "path_start_x_m": 0.0,
+    "backplate_travel_m": 0.006,
+    "contact_clearance_m": 1e-12,
+    "relanding_search_steps": 5
+  },
+  "model_settings": {
+    "young_modulus_Pa": 200000000000.0,
+    "poisson_ratio": 0.29,
+    "shear_correction": 0.8571428571428571,
+    "static_friction": 0.45,
+    "kinetic_friction": 0.35,
+    "spring_delta_max_m": 0.004
+  },
+  "capture_full_paths": true,
+  "solver_semantics": "constant-preload-reseat-v3",
+  "formal_catalog_ranking_eligible_upstream": false,
+  "upstream_limitations": [
+    "Red-brick and concrete profiles remain provisional pending project measurement calibration.",
+    "Material-hybrid 10/5 um same-realization convergence must be closed for final M3 candidates.",
+    "M1 terrain completeness does not close M3 numerical or physical calibration gates."
+  ],
+  "observed_case_count": 43200,
+  "selected_design_count": 24,
+  "max_station_evaluations_observed": 9,
+  "max_station_total_evaluations_observed": 107,
+  "max_station_attempts_observed": 12,
+  "resumed_condition_count": 0,
+  "elapsed_s": 1044.1747859999887
+}

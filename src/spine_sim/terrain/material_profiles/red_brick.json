@@ -1,0 +1,52 @@
+{
+  "schema_version": "material-profile-v1",
+  "material": "red_brick",
+  "default_subtype": "fired_brick_standard",
+  "defaults": {
+    "status": "provisional",
+    "parameter_basis": "material_specific_engineering_prior_pending_project_brick_scans",
+    "source_data": [],
+    "limitations": [
+      "No accessible absolute-scale red-brick height matrix was available for population calibration.",
+      "Parameters are explicit engineering priors and must not be described as validated measurements."
+    ]
+  },
+  "subtypes": {
+    "fired_brick_standard": {
+      "target_surface": "ordinary fired red-brick exterior; no major weathering, cracks, or spall",
+      "generation": {
+        "base_field": {
+          "rms_height_m": 1.6e-4,
+          "correlation_x_m": 2.4e-3,
+          "correlation_y_m": 1.5e-3,
+          "secondary_scale_fraction": 0.32
+        },
+        "directional_texture": {
+          "enabled": true,
+          "rms_height_m": 4.5e-5,
+          "correlation_x_m": 2.2e-3,
+          "correlation_y_m": 2.8e-4
+        },
+        "pores": {
+          "density_per_m2": 1200000.0,
+          "diameter_median_m": 5.5e-4,
+          "diameter_log_sigma": 0.48,
+          "aspect_ratio_median": 1.55,
+          "aspect_ratio_log_sigma": 0.32,
+          "depth_median_m": 2.6e-4,
+          "depth_log_sigma": 0.52,
+          "edge_power": 1.15,
+          "cluster_probability": 0.28,
+          "boundary_roughness": 0.17
+        },
+        "fine_roughness": {
+          "rms_height_m": 3.2e-5,
+          "correlation_x_m": 6.5e-5,
+          "correlation_y_m": 5.0e-5,
+          "non_gaussian_exponent": 0.72,
+          "skew_bias": 0.18
+        }
+      }
+    }
+  }
+}

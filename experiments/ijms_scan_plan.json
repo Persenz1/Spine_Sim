@@ -1,0 +1,544 @@
+{
+  "schema": "ijms-array-research-plan-3",
+  "status": "small_array_coarse_implemented_ready_to_run",
+  "purpose": "Research planning input, not a runnable CampaignSpec. Run the small-array study first; specify the large-array campaign from its results.",
+  "forward_callable": "spine_sim.ijms:run_case",
+  "authority": "User and scientific planning determine physical inputs and research ranges. Downstream coding agents implement, execute declared configurations, and monitor; they do not select the later large-array science.",
+  "legacy_use": "Organization and pairing ideas only. The user explicitly reselected tip radii 50 and 100 micrometres.",
+  "confirmed_scope": {
+    "single_spine_research_campaign": false,
+    "existing_single_spine_code_and_tests": "retain",
+    "tip_geometry": "rounded hemispherical cap joined to a linearly tapered circular section and cylindrical steel shaft",
+    "tip_radius_m": [
+      0.00005,
+      0.0001
+    ],
+    "max_nx": 30,
+    "max_ny": 30,
+    "max_spine_count": 900,
+    "no_spring_mount": {
+      "modelled_region": "exposed segment only",
+      "support": "fixed position and tangent at exposed root",
+      "axial_retraction_m": 0,
+      "spring_energy_J": 0,
+      "exposed_rod_bending": "same elastic model and material as paired spring array",
+      "embedded_segment_compliance": false,
+      "implementation_status": "implemented"
+    },
+    "large_array_execution": "deferred_until_small_array_results_and_scientific_plan_update",
+    "shaft_diameter_m": 0.001,
+    "taper_length_m": 0.002,
+    "exposed_length_rule": {
+      "uniform_angle_l0_m": 0.004,
+      "definition": "Unloaded guide/root-to-equivalent-tip-sphere-centre arclength, including the taper.",
+      "gradient_heel_l0_m": 0.004,
+      "common_height": "H = r_heel + 0.004*sin(theta_heel)",
+      "other_lengths": "li = (H-ri)/sin(theta_i)",
+      "example_gradient_deg": {
+        "toe": 60,
+        "heel": 80
+      },
+      "default_order": "+X leading row is toe, trailing row is heel; interpolate angle by row.",
+      "material_rule": "Taper fixed in material coordinates; retraction truncates exposed root material even when the taper partly enters ideal guide. Fixed tangent at guide remains the model assumption; fully retracted rod is EXPOSED_LENGTH_LIMIT, not a hard stop."
+    },
+    "variable_section": {
+      "radius": "a(u)=r+(0.0005-r)*u/0.002 for 0<=u<=0.002; a=0.0005 beyond; u measured from sphere centre toward root",
+      "area": "pi*a^2",
+      "second_moment": "pi*a^4/4",
+      "bending_energy": "0.5*integral(E*I(u)*curvature^2*d_arclength)",
+      "contact_cap": "front hemisphere only, not the obscured rear sphere",
+      "numerical_reference": "Cb=integral_0^l u^2/(E*I(u)) du; Kneedle=1/Cb, without sphere-end moment",
+      "implementation_status": "implemented"
+    },
+    "small_array_preload_N": [
+      0.5,
+      1,
+      2
+    ],
+    "large_array_max_preload_N": 10,
+    "nominal_spring_stroke_m": 0.004
+  },
+  "small_array_proposal": {
+    "reference_layout": [
+      4,
+      4
+    ],
+    "size_layouts": [
+      [
+        2,
+        2
+      ],
+      [
+        3,
+        3
+      ],
+      [
+        4,
+        4
+      ],
+      [
+        5,
+        5
+      ]
+    ],
+    "directional_layouts": [
+      [
+        5,
+        2
+      ],
+      [
+        2,
+        5
+      ],
+      [
+        4,
+        4
+      ],
+      [
+        8,
+        2
+      ],
+      [
+        2,
+        8
+      ]
+    ],
+    "primary_design_axes": [
+      "tip_radius_m",
+      "theta_deg",
+      "mount_type",
+      "spring_stiffness_N_per_m"
+    ],
+    "secondary_axes": [
+      "max_compression_m",
+      "spacing_x_m",
+      "spacing_y_m",
+      "nx",
+      "ny"
+    ],
+    "numerical_scenario_proposals_not_execution_config": {
+      "theta_deg": [
+        50,
+        60,
+        70,
+        80
+      ],
+      "spring_stiffness_N_per_m": [
+        100,
+        400,
+        800,
+        1000,
+        2000,
+        5000
+      ],
+      "max_compression_m": 0.004,
+      "spacing_levels_m": [
+        0.004,
+        0.005,
+        0.006
+      ],
+      "reference_spacing_m": 0.005,
+      "total_preload_N": [
+        0.5,
+        1,
+        2
+      ],
+      "young_modulus_Pa": 200000000000,
+      "allowable_stress_Pa": 1200000000,
+      "parameter_basis": "User-fixed geometry/design/loading; declared steel and friction scenarios."
+    },
+    "pairing": "Identical raw surface, global coordinates, landing and load history within each comparison.",
+    "unresolved_table_items": []
+  },
+  "large_array_proposal": {
+    "candidate_layouts": [
+      [
+        8,
+        8
+      ],
+      [
+        10,
+        10
+      ],
+      [
+        15,
+        15
+      ],
+      [
+        20,
+        20
+      ],
+      [
+        30,
+        30
+      ]
+    ],
+    "status": "candidate_sizes_only_not_scheduled",
+    "design_scope": "Only representative designs and pitches selected after the small-array study; retain fixed-mount and spring comparisons.",
+    "preload_grid": null,
+    "samples_per_family": null,
+    "required_small_stage_outputs": [
+      "participation and load sharing versus P and N",
+      "sustained establishment versus P and S",
+      "travel/elastic/geometry scope",
+      "Y motion and exposed-body footprint",
+      "representative design and spacing comparison"
+    ],
+    "budgets": [
+      "fixed total P",
+      "fixed actual footprint and pressure",
+      "fixed pitch with total P / pressure / nominal P per spine reported separately"
+    ],
+    "constraints": [
+      "Do not assume P required is proportional to N.",
+      "Do not assume performance is globally monotone in P.",
+      "Reuse equal physical cases under equivalent budget labels."
+    ],
+    "max_preload_N": 10,
+    "preload_grid_proposal_not_scheduled": [
+      0.5,
+      1,
+      2,
+      4,
+      6,
+      8,
+      10
+    ]
+  },
+  "terrain_plan": {
+    "strategy": "Generate only the surface size required by the current stage. On later large surfaces rerun necessary small-array references for paired scale comparisons.",
+    "query_size_estimate_m": {
+      "x": "(nx-1)*px + S + 2*Mx",
+      "y": "(ny-1)*py + 2*My"
+    },
+    "margin_definition": "Actual full exposed-rod geometry and deformation, tip radius, allowed Y drift and geometry-query margin; may be asymmetric.",
+    "generator_padding": "Additional recipe-dependent buffer outside query region.",
+    "same_seed_caution": "Changing FFT grid or domain does not preserve the same surface realization.",
+    "prohibitions": [
+      "Do not tile a small periodic patch as an independent large wall.",
+      "Do not assign independent walls to individual needles.",
+      "Do not normalize each crop separately.",
+      "Do not coarsen the grid or shrink physical pitch solely to fit a large array."
+    ],
+    "required_engineering": [
+      "shared raw-height reads",
+      "preserve measured/synthetic and source/probe/uncertainty semantics",
+      "correct final-surface roughness and correlation statistics"
+    ],
+    "memory_examples_only": {
+      "search_distance_m": 0.01,
+      "each_side_margin_m": 0.005,
+      "caution": "Margins and grid spacings are illustrations, not established production limits. Values below are height-array decimal GB only, excluding buffers, FFT, masks and solver.",
+      "cases": [
+        {
+          "layout": [
+            5,
+            5
+          ],
+          "pitch_m": 0.001,
+          "query_size_m": [
+            0.024,
+            0.014
+          ],
+          "float64_GB_at_10um": 0.027,
+          "float64_GB_at_5um": 0.108
+        },
+        {
+          "layout": [
+            30,
+            30
+          ],
+          "pitch_m": 0.001,
+          "query_size_m": [
+            0.049,
+            0.039
+          ],
+          "float64_GB_at_10um": 0.153,
+          "float64_GB_at_5um": 0.612
+        },
+        {
+          "layout": [
+            30,
+            30
+          ],
+          "pitch_m": 0.004,
+          "query_size_m": [
+            0.136,
+            0.126
+          ],
+          "float64_GB_at_10um": 1.371,
+          "float64_GB_at_5um": 5.484
+        }
+      ]
+    }
+  },
+  "geometry_implementation_issue": {
+    "previous_implementation": "Uniform-section elastic rod and full-sphere query; equal-radius capsules were not the new needle shape.",
+    "target": "Variable cross-section energy and derivatives, local stress, actual tapered body clearance and exposed rounded-cap contact, plus heel-anchored assembly.",
+    "status": "implemented_true_sections_with_bounded_axial_clearance"
+  },
+  "output_protocol_proposals": {
+    "target_force_N": 1,
+    "persistence_distance_m": 0.0005,
+    "primary_search_limit_m": 0.002,
+    "full_search_distance_m": 0.01,
+    "success_definition": "The complete holding window must end within the search limit.",
+    "repeat_counts_per_family_proposal": {
+      "exploration": 64,
+      "candidate_comparison": 256,
+      "held_out_confirmation": 1024
+    },
+    "no_inherited_total_request_count": true,
+    "required_outputs": [
+      "preload state",
+      "T(X)",
+      "participation and load sharing",
+      "per-spine contact and slip events",
+      "exposed bending and retraction",
+      "fixed reaction or spring travel limits",
+      "J+ and J-",
+      "stress utilization",
+      "sustained establishment",
+      "scope and unresolved status"
+    ],
+    "unknown_policy": "Retain all planned samples; report [k/n,(k+u)/n], not unknown-as-observed-failure.",
+    "target_force_role": "One of fixed absolute targets .5/1/2 N; all also compared with T/P>=1 and paired P conditions. No sole winner-selection rule is automated.",
+    "primary_comparisons": [
+      "sustained T at fixed P",
+      "T/P",
+      "paired plane difference",
+      "participation and load sharing",
+      "establishment trajectory"
+    ],
+    "absolute_task_requirement_for_inverse_design": "Multiple declared absolute targets .5/1/2 N are computed; scientific selection from them is not automated.",
+    "executed_protocol_definition": {
+      "target_forces_N": [
+        0.5,
+        1,
+        2
+      ],
+      "target_fractions_P": [
+        1
+      ],
+      "persistence_distance_m": 0.0005,
+      "search_windows_m": [
+        0.002,
+        0.005,
+        0.01
+      ]
+    }
+  },
+  "implementation_tasks": [],
+  "work_performed_this_revision": "Variable-section rod, fixed mount, actual taper body/cap domain, heel compensation, multiple protocols and recoverable material coarse scan implemented; targeted checks only, full research queue not launched.",
+  "screening_proposal": {
+    "material_condition_count": 5,
+    "material_conditions": [
+      {
+        "id": "concrete",
+        "subtype": "rough_wall",
+        "basis": "engineering morphology prior"
+      },
+      {
+        "id": "red_brick",
+        "subtype": "fired_brick_standard",
+        "basis": "engineering morphology prior"
+      },
+      {
+        "id": "sandpaper_P40",
+        "grade": "P40",
+        "basis": "public measured-morphology-conditioned synthesis; one original scan per grade"
+      },
+      {
+        "id": "sandpaper_P100",
+        "grade": "P100",
+        "basis": "public measured-morphology-conditioned synthesis; one original scan per grade"
+      },
+      {
+        "id": "sandpaper_P240",
+        "grade": "P240",
+        "basis": "public measured-morphology-conditioned synthesis; one original scan per grade"
+      }
+    ],
+    "material_aggregation": "Report each condition. If ranking across materials, concrete/red_brick/sandpaper each 1/3; sandpaper grades each 1/3 within sandpaper.",
+    "controlled_family_count": 12,
+    "controlled_families": [
+      {
+        "ids": [
+          "S01",
+          "S02",
+          "S03"
+        ],
+        "rms_um": 60,
+        "gaussian_scale_um": [
+          120,
+          480,
+          1920
+        ]
+      },
+      {
+        "ids": [
+          "S04",
+          "S05"
+        ],
+        "rms_um": [
+          15,
+          240
+        ],
+        "gaussian_scale_um": 480
+      },
+      {
+        "ids": [
+          "S06",
+          "S07",
+          "S08"
+        ],
+        "rms_um": 60,
+        "geometric_mean_scale_um": 480,
+        "anisotropy_ratio": 4,
+        "direction_deg": [
+          0,
+          45,
+          90
+        ]
+      },
+      {
+        "ids": [
+          "S09",
+          "S10"
+        ],
+        "rms_um": 60,
+        "gaussian_scale_um": 480,
+        "transform": "g+0.35*(g^2-1) and its negative, normalized; retain intentional cross-family pairing"
+      },
+      {
+        "ids": [
+          "S11",
+          "S12"
+        ],
+        "rms_um": 60,
+        "component_scales_um": [
+          120,
+          1920
+        ],
+        "short_scale_variance_fraction": [
+          0.25,
+          0.75
+        ]
+      }
+    ],
+    "new_controlled_family_candidates": [
+      {
+        "rms_um": 30,
+        "scale_um": 240
+      },
+      {
+        "rms_um": 120,
+        "scale_um": 3840
+      },
+      {
+        "rms_um": 60,
+        "geometric_mean_scale_um": 480,
+        "anisotropy_ratio": 8,
+        "direction_deg": 30
+      },
+      {
+        "rms_um": 60,
+        "scales_um": [
+          120,
+          480,
+          1920
+        ],
+        "variance_fractions": [
+          0.2,
+          0.3,
+          0.5
+        ]
+      }
+    ],
+    "stages": {
+      "coarse": {
+        "material_surface_count": 320,
+        "per_material_condition": 64,
+        "max_unique_design_count": 350,
+        "preload_N": [
+          0.5,
+          1,
+          2
+        ],
+        "cases": 336000,
+        "shards": 1605,
+        "full_reference_cases": 120
+      },
+      "fine": {
+        "material_surface_count": 1280,
+        "per_material_condition": 256,
+        "max_designs": 96,
+        "allocation": "24 candidates + up to 24 fixed-mount pairs + 8 fixed representatives + up to 40 local refinements; deduplicate",
+        "preload_N": [
+          0.5,
+          1,
+          2
+        ],
+        "status": "not_scheduled_pending_scientific_selection"
+      },
+      "confirmation": {
+        "material_surface_count": 5120,
+        "per_material_condition": 1024,
+        "max_designs": 16,
+        "allocation": "8 fixed representatives + 4 finalists + up to 4 fixed-mount pairs; deduplicate",
+        "preload_N": [
+          0.5,
+          1,
+          2
+        ],
+        "status": "not_scheduled_pending_scientific_selection"
+      }
+    },
+    "controlled_mechanism_arm": {
+      "surface_count": 768,
+      "per_family": 64,
+      "reference_array_designs": 70,
+      "preload_N": [
+        0.5,
+        1,
+        2
+      ],
+      "scope": "Reference 4x4 angle/stiffness/tip-radius and gradient comparison; do not re-cross all layout candidates. Additional final confirmation will be specified separately.",
+      "status": "not_in_current_executable_queue"
+    },
+    "fixed_representatives": "r50/100 crossed with fixed mount and ks100/800/5000 at uniform theta70, 4x4, spacing5mm, rated spring travel4mm",
+    "count_note": "Prior seven-load path totals are withdrawn. Current organization is scientific planning, not executed batches.",
+    "precision": "Coarse/fine changes candidate coverage and independent repeats; not lower physical discretization."
+  },
+  "sandpaper_evidence": {
+    "doi": "10.17632/hcgcnm269w.2",
+    "source_url": "https://data.mendeley.com/datasets/hcgcnm269w/2",
+    "instrument": "Hirox RH-2000",
+    "local_raw_directory": "data/raw/mendeley_hcgcnm269w_v2",
+    "measured_grades": [
+      "P40",
+      "P100",
+      "P240"
+    ],
+    "original_scans_per_grade": 1,
+    "lateral_sampling_m": 0.00000108954,
+    "raw_spans_xy_mm": {
+      "P40": [
+        9.67293612,
+        1.0078245
+      ],
+      "P100": [
+        10.2634668,
+        1.01218266
+      ],
+      "P240": [
+        10.28416806,
+        1.01545128
+      ]
+    },
+    "array_use": "Original short side is about 1 mm, insufficient for current array footprints. Use explicitly measured-conditioned synthetic large fields, not 'measured large wall'.",
+    "independent_repetition": "Random synthesis repeats are not independent measured specimens.",
+    "experimental_role": "Controlled material benchmark with P40/P100/P240; independent future specimens validate array mechanics. Grade alone does not guarantee identical topography or friction."
+  },
+  "executable_small_array_recipe": "experiments/ijms_small_array.json"
+}
